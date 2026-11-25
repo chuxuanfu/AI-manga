@@ -1,0 +1,77 @@
+"""Compare finish at matched viewing sizes without treating the reference as the requested scene."""
+from pathlib import Path
+import json
+from PIL import Image, ImageDraw, ImageOps
+from evidence import ask, backend, available
+from illustration import REFERENCE
+
+BENCHMARK=Path(__file__).resolve().parents[1]/'ComfyUI/input'/REFERENCE
+AXES=('form_and_contact','material_construction','lighting','depth_and_finish')
+GRADE={'type':'object','properties':{'level':{'type':'string','enum':['left','right','tie','unclear']},'evidence':{'type':'string'}},'required':['level','evidence']}
+SCHEMA={'type':'object','properties':{key:GRADE for key in AXES},'required':list(AXES)}
+
+
+def comparison(im,regions,target):
+    with Image.open(BENCHMARK) as img:
+        ref=img.convert('RGB')
+    page=Image.new('RGB',(1152,1104),'#f4f2eb');d=ImageDraw.Draw(page)
+    def panel(image,x,title,boxes):
+        d.text((x+8,6),title,fill='black')
+        copy=ImageOps.contain(image,(558,730),Image.Resampling.LANCZOS)
+        page.paste(copy,(x+(576-copy.width)//2,27+(730-copy.height)//2))
+        for i,(name,box) in enumerate(boxes[:2]):
+            l,t,r,b=box
+            crop=image.crop((round(l*image.width),round(t*image.height),round(r*image.width),round(b*image.height)))
+            tile=ImageOps.contain(crop,(274,286),Image.Resampling.LANCZOS)
+            sx=x+i*286;page.paste(tile,(sx+(286-tile.width)//2,798+(286-tile.height)//2))
+            d.text((sx+5,775),str(name)[:40],fill='black')
+    panel(ref,0,'REFERENCE',[
+        ('hands / sleeve',(.295,.535,.578,.728)),('knit / folds',(.18,.65,.445,.842))])
+    boxes=[]
+    # Show two different subjects whenever possible, rather than two detections of the same hand.
+    families=(('corrected','hand','paw','face'),('fabric','apron','clothing','cardigan','coat','skirt','fur','ceramic','wood','animal'))
+    for family in families:
+        selected=None
+        for token in family:
+            for row in regions.values():
+                coords=tuple(v/1000 for v in row['box'])
+                if token in row['label'].lower() and coords not in [bounds for _,bounds in boxes]:
+                    selected=(row['label'],coords)
+                    break
+            if selected:break
+        if selected:boxes.append(selected)
+    if len(boxes)<2:boxes.append(('middle distance',(.18,.28,.75,.64)))
+    if len(boxes)<2:boxes.append(('foreground',(.15,.59,.77,.90)))
+    panel(im,576,'NEW ILLUSTRATION',boxes)
+    page.save(target,quality=93)
+    return page
+
+
+def compare(im,regions,path,brief=''):
+    board=comparison(im,regions,path)
+    if not available():return {'decision':'review','reason':'参考图比较模型未就绪'}
+    instruction=('Compare these two illustrations as peers. They may show identical art or different scenes. For each axis indicate which side demonstrates visibly stronger workmanship, or tie when both are comparable. '
+                 'Use unclear only if the evidence is too small. Check form and contact, clothing construction and folds, light and cast shadows, then spatial depth and fine finishing. '
+                 'Ignore personal preferences, differences in subject matter, relative zoom of detail crops and which painting appears first. '
+                 'Give under twelve words of concrete evidence per axis. Use left, right, tie or unclear.')
+    if brief:
+        instruction+=' The new image has its own requested medium: '+brief+'. Evaluate construction and deliberate marks within each medium. Spare ink, flat cel shading, paper cutouts, monochrome or visible print dots may be fully resolved. Do not reward merely having more texture.'
+    # Mask identifying headings and evaluate in both orders to detect position bias.
+    neutral=board.copy()
+    draw=ImageDraw.Draw(neutral)
+    draw.rectangle((0,0,1151,24),fill='#f4f2eb')
+    draw.rectangle((0,768,1151,797),fill='#f4f2eb')
+    reverse=Image.new('RGB',neutral.size)
+    reverse.paste(neutral.crop((576,0,1152,1104)),(0,0))
+    reverse.paste(neutral.crop((0,0,576,1104)),(576,0))
+    try:
+        with backend() as url:
+            forward=json.loads(ask(url,[neutral],instruction,SCHEMA))
+            backward=json.loads(ask(url,[reverse],instruction,SCHEMA))
+        levels={key:(forward[key]['level'],backward[key]['level']) for key in AXES}
+        deficits=[key for key,pair in levels.items() if pair==('left','right')]
+        supported=all(pair in (('right','left'),('tie','tie'),('tie','left'),('right','tie')) for pair in levels.values())
+        decision='below' if deficits else ('candidate' if supported else 'review')
+        return {'decision':decision,'consistent_deficits':deficits,'reference_on_left':forward,'reference_on_right':backward}
+    except (RuntimeError,OSError,ValueError,KeyError) as exc:
+        return {'decision':'review','reason':str(exc)[:180]}

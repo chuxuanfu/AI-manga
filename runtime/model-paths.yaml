@@ -1,0 +1,4 @@
+studio:
+  base_path: models
+  checkpoints: checkpoints
+  upscale_models: upscale_models
