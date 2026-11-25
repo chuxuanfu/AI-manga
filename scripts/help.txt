@@ -13,6 +13,7 @@ AI Manga Studio
   --native-4k             Draw on a native 4K canvas
   --full-8k-diffusion     Use tiled diffusion on the full 8K canvas
   --draft                 Stop after producing and checking drafts
+  --background            Run in the background and print the job directory
   --job DIR               Resume a project job
   --from-image PNG        Start from an existing image
   --set-output-dir DIR    Save a default export folder; use --reset-output-dir to clear it

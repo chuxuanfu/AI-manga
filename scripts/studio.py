@@ -69,6 +69,10 @@ def set_output(value):
 
 def main(args):
     interactive=not args
+    background = '--background' in args
+    if background:
+        args=[arg for arg in args if arg!='--background']
+        if not args:raise SystemExit('--background requires a prompt or --job')
     if interactive:
         print('AI Manga Studio\n\n1  生成壁纸（默认）\n2  打开图库\n3  设置成品位置\n4  仅生成底图\n5  打开节点编辑器\n0  退出')
         choice=input('选择 [1] ').strip() or '1'
@@ -108,11 +112,22 @@ def main(args):
     server(port)
     cmd=protected([PYTHON,PIPELINE/'run.py',*args])
     if MAC:cmd=['/usr/bin/caffeinate','-i',*cmd]
-    if interactive:
+    if interactive or background:
         folder=IMAGES/'new-jobs';folder.mkdir(parents=True,exist_ok=True)
-        job=Path(tempfile.mkdtemp(prefix=time.strftime('%Y%m%d-%H%M%S-'),dir=folder))
-        with (job/'run.log').open('wb') as log:
-            subprocess.Popen([*cmd,'--job',job],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
+        supplied=next((arg.split('=',1)[1] for arg in args if arg.startswith('--job=')),None)
+        if '--job' in args:
+            index=args.index('--job')
+            if index+1>=len(args):raise SystemExit('--job requires a directory')
+            supplied=args[index+1]
+        if supplied:
+            job=Path(supplied).expanduser().resolve()
+            if not job.is_relative_to(IMAGES):raise SystemExit('--job must be inside images/')
+            job.mkdir(parents=True,exist_ok=True)
+        else:
+            job=Path(tempfile.mkdtemp(prefix=time.strftime('%Y%m%d-%H%M%S-'),dir=folder))
+            cmd.extend(['--job',job])
+        with (job/'run.log').open('ab') as log:
+            subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
         print('任务已在后台启动。进度和日志保存在',job)
     else:
         os.execv(str(cmd[0]),list(map(str,cmd)))

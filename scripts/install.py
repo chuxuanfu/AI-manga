@@ -1,11 +1,9 @@
 """Install the pinned upstream engine, local inference dependencies, and model files."""
-from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
-import platform
 import shutil
 import socket
 import subprocess
