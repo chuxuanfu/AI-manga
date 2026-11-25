@@ -139,7 +139,7 @@ def review(im,brief,regions,path,detected=(),observed_people=0):
                 arms=trace_arms(url,im,detected,tag)
                 if arms:
                     result['bilateral_trace']=arms
-                    if 'abrupt_end' in (arms['left_end'],arms['right_end']):
+                    if 'abrupt_end' in (arms['left_end'],arms['right_end']) or ('initial_detail' in arms and 'unclear' in (arms['left_end'],arms['right_end'])):
                         result['verdict']='unclear'
                         result['observation']='独立的两侧前臂追踪提示有轮廓突然结束，需核实袖口到手的连接。'
             return result
@@ -169,12 +169,22 @@ def trace_arms(url,im,detected,tag):
     if min(r-l,b-t)<60:return None
     w,h=r-l,b-t
     # Cover both shoulder-to-wrist routes even if no hand detector fires at a missing endpoint.
-    crop=im.crop((max(0,int(l-.14*w)),max(0,int(t+.08*h)),min(im.width,int(r+.14*w)),min(im.height,int(t+.85*h))))
+    crop=im.crop((max(0,int(l-.18*w)),max(0,int(t-.05*h)),min(im.width,int(r+.18*w)),min(im.height,int(b+.13*h))))
     crop.thumbnail((980,980),Image.Resampling.LANCZOS)
     instruction=('Describe the two arms of the main person in this crop independently. Start each path at a shoulder, then name each visible sleeve, elbow, forearm, wrist, and actual hand or named occluding surface. Follow the visible outline. '
                  'Do not assign one visible hand to both arms. Describe what immediately follows each cuff. For a bare skin stump with no hand and no occluding edge use abrupt_end. For a real overlap, identify the object hiding it. '
                  'A crop edge is frame_edge. Do not infer invisible joints or treat a mitten as a missing hand. Use image-left and image-right, not the subject’s anatomical left and right. Be concise.')
-    return json.loads(ask(url,[crop],instruction,ARM_SCHEMA,tag=tag))
+    detail=json.loads(ask(url,[crop],instruction,ARM_SCHEMA,tag=tag))
+    if any(detail[key] in ('abrupt_end','frame_edge') for key in ('left_end','right_end')):
+        whole=ImageOps.contain(im,(1152,1152),Image.Resampling.LANCZOS)
+        question=('Inspect the original, uncropped illustration. Independently trace both arms from shoulder to their visible endpoints. '
+                  'Frame means the actual outer edge of this entire image. Use frame_edge when a continuous sleeve or arm goes out of frame there. '
+                  'For a concealed hand, name the actual intervening body, pocket, fabric or object. Use abrupt_end only for an unexplained visible termination inside the image. '
+                  'An ambiguous contour is unclear. State what follows each cuff and name the edge or occluding object.')
+        confirmed=json.loads(ask(url,[whole],question,ARM_SCHEMA,tag=tag))
+        confirmed['initial_detail']=detail
+        return confirmed
+    return detail
 
 HAND_INVENTORY={'type':'object','properties':{'people':{'type':'integer'},'hands':{'type':'array','items':{
     'type':'array','items':{'type':'integer'},'minItems':2,'maxItems':2}}},'required':['people','hands']}
