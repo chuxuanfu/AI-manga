@@ -389,6 +389,26 @@ def main():
         return assessment['status']=='pass' and assessment['score']>=75
     approved=None
     focus=args.repair_box
+    def check_composition(path,label):
+        result=check(path,label)
+        duplicate=duplicate_box(result) if rec.get('画法自适应') and not args.repair_box and ERASE_MODEL.exists() else None
+        if not duplicate and args.round_worker and ERASE_MODEL.is_file() and any(
+            c.get('requested')==0 and (c.get('observed') or 0)>0 for c in result.get('count_conflicts',[])
+        ):
+            # The blind inventory saw a forbidden subject. Localize it on real pixels before erasing.
+            from print_judge import inspect
+            inspected=inspect(path,prompt,job,result)
+            finding=inspected.get('issue',{})
+            if inspected['status']=='local' and finding.get('operation')=='remove_forbidden':
+                duplicate=region(finding,result)
+        if duplicate:
+            repaired=job/(label+'-removed-duplicate.png')
+            with Image.open(path) as source:
+                masked_candidate(source,duplicate).save(repaired)
+            checked=check(repaired,label+'-count-repair',duplicate)
+            if usable(checked):return repaired,checked
+        return path,result
+
     if args.candidate_image:
         if not args.from_image:parser.error('选区合成需要 --from-image 提供原图')
         with Image.open(args.from_image[0]) as before, Image.open(args.candidate_image) as candidate, Image.open(args.selection_mask) as selection:
@@ -422,23 +442,7 @@ def main():
                 if local not in native:native.append(local)
                 save(manifest,rec)
                 print('原生底图',path,flush=True)
-            result=check(path,label)
-            duplicate=duplicate_box(result) if rec.get('画法自适应') and not args.repair_box and ERASE_MODEL.exists() else None
-            if not duplicate and args.round_worker and ERASE_MODEL.is_file() and any(
-                c.get('requested')==0 and (c.get('observed') or 0)>0 for c in result.get('count_conflicts',[])
-            ):
-                # The blind inventory saw a forbidden subject. Localize it on real pixels before erasing.
-                from print_judge import inspect
-                inspected=inspect(path,prompt,job,result)
-                finding=inspected.get('issue',{})
-                if inspected['status']=='local' and finding.get('operation')=='remove_forbidden':
-                    duplicate=region(finding,result)
-            if duplicate:
-                repaired=job/(label+'-removed-duplicate.png')
-                with Image.open(path) as source:
-                    masked_candidate(source,duplicate).save(repaired)
-                checked=check(repaired,label+'-count-repair',duplicate)
-                if usable(checked):path,result=repaired,checked
+            path,result=check_composition(path,label)
             if args.repair_box and i==0:
                 result={'status':'local','score':100,'issues':[{'box':args.repair_box,'fix':args.repair_text,'target':args.object}]}
             if usable(result) and not args.repair_box:
@@ -478,7 +482,8 @@ def main():
                 if avoid and not reference_style:graph.api['3']['inputs']['text']+=', '+avoid
                 hist=post_graph(graph.api,args.port,job,label,graph.ui() if reference_style else None)
                 new_path=output_image(hist[str(len(graph.nodes))])
-                if usable(check(new_path,label)):
+                new_path,result=check_composition(new_path,label)
+                if usable(result):
                     approved=new_path;break
     if not approved:
         rec['终审退回原因']=next((v['review']['note'] for v in reversed(rec['reviews']) if v['review'].get('status')!='pass' and v['review'].get('note')), 'No draft cleared the composition review.')
