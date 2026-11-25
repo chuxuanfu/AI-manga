@@ -70,6 +70,7 @@ def inspect_structure(im,detected,proof,observed_counts=None):
             located_person=any(r['name']=='person' for r in detected)
             observed_people=(observed_counts or {}).get('person',0)
             model_framing=result['framing']
+            initial_verdict=result['verdict']
             # Use independently observed people, never the number requested by the user.
             # In fallback mode, an explicit anatomical description is stronger evidence than
             # a bare noun which may occur in a sentence such as "no human figures present".
@@ -99,6 +100,20 @@ def inspect_structure(im,detected,proof,observed_counts=None):
                 if result['verdict']=='coherent':
                     result['verdict']='unclear'
                     result['support_or_occlusion']='独立读图见到人物，但检测器未定位到人物，结构审查也未确认人物画幅，需目检。'
-            return result
+        if initial_verdict=='coherent' and result['verdict']=='unclear' and observed_people==1:
+            # A three-quarter portrait can show hips while its feet are beyond the frame.
+            # Resolve contradictions on the uncropped original instead of assuming support.
+            whole=ImageOps.contain(im,(1080,1080),Image.Resampling.LANCZOS)
+            schema={'type':'object','properties':{'outcome':{'enum':['visible_frame_exit','defect','unclear']},
+                    'edge':{'enum':['top','bottom','left','right','none']},'evidence':{'type':'string'}},'required':['outcome','edge','evidence']}
+            instruction=('Trace this single human figure in the whole illustration to the actual image border. Do hips, thighs or lower garments visibly continue across the frame so the feet are outside the picture? '
+                         'Choose visible_frame_exit only when the contour reaches a named outer edge and the visible parts connect continuously to the torso. '
+                         'A limb ending or dissolving inside the image, changing into clothing or merging into the ground is not a frame exit. Judge only the visible anatomy. Describe the specific crossing.')
+            with backend('qwen3.8:27b') as address:
+                boundary=json.loads(ask(address,[whole],instruction,schema,tag='qwen3.8:27b'))
+            result['frame_boundary_check']=boundary
+            if boundary.get('outcome')=='visible_frame_exit' and boundary.get('edge') in ('top','bottom','left','right') and boundary.get('evidence','').strip():
+                result.update(verdict='coherent',support_or_occlusion=boundary['evidence'])
+        return result
     except (OSError,RuntimeError,KeyError,ValueError) as exc:
         return {'verdict':'unclear','reason':str(exc)[:200]}

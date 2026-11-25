@@ -69,6 +69,24 @@ def reference_draft(text, seed, width, height, prefix, reference=REFERENCE, layo
     return flux_canvas(g,positive,negative,vae,seed,width,height,prefix)
 
 
+ANIME_PAINT='animagine-xl-4.0-opt.safetensors'
+
+
+def anime_color_pass(tags,seed,prefix,layout,strength=.64):
+    """Retain a layout while painting its materials with an anime-specialized SDXL checkpoint."""
+    g=Graph('studio-animagine-key-visual')
+    model=g.checkpoint('商业插画上色',(0,0),ANIME_PAINT)
+    positive=g.text('场景与颜色标签',(350,0),model,tags+', painterly anime illustration, delicate colored lineart, reflected light, precise material highlights, detailed background, safe, masterpiece, high score, great score, absurdres')
+    negative=g.text('负向提示词',(350,200),model,'lowres, blurry focal subject, bad anatomy, bad hands, extra limbs, watermark, low quality, worst quality, color banding, uniform heavy outlines')
+    source=g.add('LoadImage','本次构图',(0,320),['IMAGE','MASK'],values={'image':layout},widgets=[layout,'image'])
+    guide=g.scale('上色画布',(350,430),source,1536)
+    latent=g.encode('构图编码',(690,300),guide,model)
+    sample=g.sample('保留构图并上色',(1010,100),model,positive,negative,latent,seed,25,5,strength,'euler_ancestral')
+    picture=g.decode('解码',(1350,100),sample,model)
+    g.save('上色校样',(1680,100),picture,prefix)
+    return g
+
+
 def paint_key_visual(brief,seed,size,prefix,layout):
     """Use the selected layout and an independent brushwork sheet for the color pass."""
     scale=max(1,2304/max(size))

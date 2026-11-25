@@ -55,6 +55,6 @@ bash Studio.command
 
 FLUX.2 klein 和 Anima 负责生成及精绘。初审结合本地视觉模型、数量核对、接触和遮挡检查，常规底图先经过本地超分，再在 4K 分块画布上重绘。8K 重绘区覆盖模型定位的焦点以及全图中有可辨结构的区域，平坦背景可以略过重绘。两级精绘还从底图取回超分时损失的局部色调变化，以保留水彩、版画等画材的痕迹。终审使用 Qwen3.8 27B 对照底图、4K、8K 的整幅色调和同位置的原像素裁切，并检查全图和所有重叠的原像素图块。每个原像素图块先记录判断和依据，疑似缺陷再定位和复核。焦点模糊先按位置局部重画。若问题遍及画面或局部重画后仍模糊，工具可用已选构图作参考，重新采样高分辨率底图。它会核对主体、姿势、构图和画法，再重新精绘并终审。初审或终审退回的任务可换种子重试。模型可能误判；复杂提示词可能经历多轮仍无定稿。种子可复用，跨硬件和依赖版本的像素结果可能不同。
 
-节点编辑器附带文字起稿、参考图起稿、商业插画上色和 4K 精绘工作流。使用命令行的 anime-key-visual 风格时，会先构图，再以构图和笔触样片为两份独立参考完成上色。在节点编辑器打开 anime-key-visual-color.json，可替换「本次构图」并修改画面描述。安装包内的画法参考和灰度材质样片是运行所需的图像资源。模型由安装器从原发布站点获取，各模型沿用上游许可。下载地址、固定版本与 SHA-256 可在 `scripts/models.json` 和安装脚本中查看。
+节点编辑器附带文字起稿、参考图起稿、商业插画上色和 4K 精绘工作流。使用命令行的 anime-key-visual 风格时，会先构图，再由本地模型把人物、物体、颜色和动作转成标签，并用 Animagine XL 4.0 Opt 根据构图上色。原生 4K 模式使用构图与笔触样片的双参考上色。旧安装缺少新版权重时也可走双参考路线，执行 `./Studio.command --install` 可补齐约 6.94 GB 的新权重。在节点编辑器打开 anime-key-visual-color.json，可替换「本次构图」并修改画面描述。安装包内的画法参考和灰度材质样片是运行所需的图像资源。模型由安装器从原发布站点获取，各模型沿用上游许可。下载地址、固定版本与 SHA-256 可在 `scripts/models.json` 和安装脚本中查看。
 
-[ComfyUI](https://github.com/Comfy-Org/ComfyUI) · [FLUX.2 klein](https://huggingface.co/Comfy-Org/Flux-2-Klein-4B) · [Anima](https://huggingface.co/circlestone-labs/Anima) · [Ollama 视觉模型](https://ollama.com/library/qwen3.8:27b) · [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)
+[ComfyUI](https://github.com/Comfy-Org/ComfyUI) · [FLUX.2 klein](https://huggingface.co/Comfy-Org/Flux-2-Klein-4B) · [Anima](https://huggingface.co/circlestone-labs/Anima) · [Animagine XL 4.0 Opt](https://huggingface.co/cagliostrolab/animagine-xl-4.0) · [Ollama 视觉模型](https://ollama.com/library/qwen3.8:27b) · [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)

@@ -17,7 +17,7 @@ import torch
 
 from gallery import write_gallery, write_focus_proof
 from graphs import draft, finish
-from illustration import KEY_VISUAL, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
+from illustration import KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
 from reference_review import compare
 from structure import inspect_structure
 from construction_review import review as review_construction
@@ -355,11 +355,35 @@ def main():
             graph=reference_draft(caption,draw_seed,*size,name,layout=None if index==2 and not own_first else True)
         save(job/(label+'workflow.json'),graph.ui())
         return graph
+    def color_candidate(path,label,draw_seed):
+        if KEY_VISUAL not in prompt or not reference_style or args.repair_box or args.from_image:
+            return path
+        with Image.open(path) as layout:
+            source=local_image(layout.convert('RGB'))
+            size=layout.size
+        destination=prefix+'/candidates/'+label+'-painted'
+        if (RUNTIME/'models/checkpoints'/ANIME_PAINT).is_file() and max(size)<3840:
+            if not rec.get('上色标签'):
+                from evidence import ask,backend
+                schema={'type':'object','properties':{'tags':{'type':'array','items':{'type':'string'},'minItems':6,'maxItems':50}},'required':['tags']}
+                request_tags=('Translate the brief into concise English anime illustration tags, ordered by subject counts, identity, individual colors, action, materials, setting and lighting. '
+                              'Keep each interaction intact, for example a named animal sitting on a named surface in one phrase. Follow the actual request. Preserve object-specific color names. '
+                              'Do not introduce people into an empty scene. Brief: '+prompt.split(' · '+KEY_VISUAL)[0])
+                with backend() as address:items=json.loads(ask(address,[],request_tags,schema))['tags']
+                rec['上色标签']=', '.join(t.strip() for t in items if isinstance(t,str) and t.strip())
+                save(manifest,rec)
+            paint=anime_color_pass(rec['上色标签'],draw_seed,destination,source)
+        else:
+            paint=paint_key_visual(prompt,draw_seed,size,destination,source)
+        stage=label+'-color'
+        save(job/(stage+'workflow.json'),paint.ui())
+        history=post_graph(paint.api,args.port,job,stage,paint.ui())
+        return output_image(history[str(len(paint.nodes))])
     if args.native_only:
         args.proof_only=True
     def check(path,stage,focus=None):
         key = hashlib.sha256(path.read_bytes()).hexdigest()
-        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v10' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v3-blind-pair'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
+        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v10' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v4-frame-boundary'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'
@@ -462,13 +486,7 @@ def main():
                 if local not in native:native.append(local)
                 save(manifest,rec)
                 print('原生底图',path,flush=True)
-            if KEY_VISUAL in prompt and reference_style and not args.repair_box and not args.from_image:
-                with Image.open(path) as layout:
-                    paint=paint_key_visual(prompt,seed+373+i,layout.size,prefix+'/candidates/'+label+'-painted',local_image(layout.convert('RGB')))
-                stage=label+'-color'
-                save(job/(stage+'workflow.json'),paint.ui())
-                hist=post_graph(paint.api,args.port,job,stage,paint.ui())
-                path=output_image(hist[str(len(paint.nodes))])
+            path=color_candidate(path,label,seed+373+i)
             path,result=check_composition(path,label)
             if args.repair_box and i==0:
                 result={'status':'local','score':100,'issues':[{'box':args.repair_box,'fix':args.repair_text,'target':args.object}]}
@@ -509,6 +527,7 @@ def main():
                 if avoid and not reference_style:graph.api['3']['inputs']['text']+=', '+avoid
                 hist=post_graph(graph.api,args.port,job,label,graph.ui() if reference_style else None)
                 new_path=output_image(hist[str(len(graph.nodes))])
+                new_path=color_candidate(new_path,label,seed+1173+i)
                 new_path,result=check_composition(new_path,label)
                 if usable(result):
                     approved=new_path;break
