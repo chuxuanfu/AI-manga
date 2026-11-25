@@ -17,6 +17,7 @@
 !/workflows/text-to-wallpaper.json
 !/workflows/reference-to-wallpaper.json
 !/workflows/refine-to-4K.json
+!/workflows/anime-key-visual-color.json
 **/__pycache__/
 *.pyc
 .DS_Store

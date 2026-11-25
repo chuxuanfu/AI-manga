@@ -1,5 +1,9 @@
 """Offline illustration graphs based on the publishers' ComfyUI examples."""
-from graphs import Graph
+from graphs import Graph, UP
+
+KEY_VISUAL = ('Japanese anime key visual, clean tapered linework with varied line weight. Group fine strokes into readable forms, picking out a few crisp accents at the focal point. '
+              'Model materials with deliberate shadow shapes, controlled highlights and restrained reflected light. Keep requested local colors identifiable in light and shadow. '
+              'Maintain a clear value hierarchy and quieter distant edges. Follow the scene lighting and palette in the brief.')
 
 REFERENCE = 'Studio-illustration-reference.png'
 BRUSHWORK = 'Studio-illustration-brushwork.png'
@@ -65,6 +69,16 @@ def reference_draft(text, seed, width, height, prefix, reference=REFERENCE, layo
     return flux_canvas(g,positive,negative,vae,seed,width,height,prefix)
 
 
+def paint_key_visual(brief,seed,size,prefix,layout):
+    """Use the selected layout and an independent brushwork sheet for the color pass."""
+    scale=max(1,2304/max(size))
+    width,height=(round(v*scale/16)*16 for v in size)
+    direction=('High-end painted anime key visual. Refine the approved framing and objects of reference 1. Let planes of color model the forms. Selective fine colored contours lose and find their edges in the light. '
+               'Let highlights break across overlapping forms, use delicate reflected color in shadow, varied satin and matte surfaces, intentional close details and atmospheric separation. '
+               'Avoid uniform black outlines, flat sticker-like shapes and repeated hatching. Keep all requested local colors. ')
+    return reference_draft(direction+brief,seed,width,height,prefix,layout=layout,reference=BRUSHWORK)
+
+
 def text_draft(text,seed,width,height,prefix):
     """Independent text composition for briefs with their own medium and palette."""
     g=Graph('studio-independent-flux-illustration')
@@ -91,7 +105,7 @@ def flux_canvas(g,positive,negative,vae,seed,width,height,prefix):
     sample=g.add('SamplerCustomAdvanced','参考图条件生成',(1790,360),['LATENT','LATENT'],
                  [('noise',(noise,0)),('guider',(guide,0)),('sampler',(sampler,0)),('sigmas',(sigma,0)),('latent_image',(lat,0))])
     inputs=[('samples',(sample,0)),('vae',(vae,0))]
-    if max(width,height)>=3840:
+    if max(width,height)>=3840 or width*height>2048*1152:
         image=g.add('VAEDecodeTiled','分块解码',(2130,360),['IMAGE'],inputs,dict(tile_size=768,overlap=96,temporal_size=64,temporal_overlap=8))
     else:
         image=g.add('VAEDecode','解码',(2130,360),['IMAGE'],inputs)
@@ -119,10 +133,16 @@ def print_graph(reference,prefix,seed,native_four=False,medium='',four_steps=4,e
         decoded=g.add('VAEDecode','解码图块',(x+1380,0),['IMAGE'],[('samples',(sample,0)),('vae',(vae,0))])
         return g.add('MangaStudioMaterialComposite','保留原稿线条与明暗',(x+1710,0),['IMAGE'],
                      [('base',(guide,0)),('painted',(decoded,0)),('plan',(split,2))])
-    four=src if native_four else pass_at(src,3840,four_steps,.23,750)
+    if native_four:
+        four=src
+    else:
+        # Restore contours on the input lattice before diffusion sees a 4K canvas.
+        up=g.add('UpscaleModelLoader','构图轮廓超分',(300,-300),['UPSCALE_MODEL'],values={'model_name':UP})
+        restored=g.upscale((630,-300),src,up)
+        four=pass_at(restored,3840,four_steps,.34,750)
     small=g.save('4K 分块精绘',(2820,0),four,prefix+'/4K')
     if four_only:return g,dict(small=str(small))
-    eight=pass_at(four,7680,eight_steps,.16,2820)
+    eight=pass_at(four,7680,eight_steps,.32,2820)
     master=g.save('8K 分块精绘',(4910,0),eight,prefix+'/8K')
     return g,dict(master=str(master),small=str(small))
 

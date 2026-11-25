@@ -26,9 +26,13 @@ Example output: {"caption":"a child reading on a bench beside a copper kettle","
 # Preserve common palette names when a local translator generalizes the shade.
 COLOR_TERMS={"青绿":"blue-green","青綠":"blue-green","草莓红":"strawberry red","草莓紅":"strawberry red","奶油白":"cream white","黑白":"black and white","靛蓝":"indigo","靛藍":"indigo","朱红":"vermilion","朱紅":"vermilion","赭石":"ochre","群青":"ultramarine"}
 
+def english_request(prompt):
+    return prompt.replace(" · ", " ").isascii()
+
+
 def clean_plan(plan,prompt):
-    caption=prompt if prompt.isascii() else str(plan.get("caption","")).strip()
-    if not caption or (not prompt.isascii() and re.search(r"[\u3040-\u30ff\u3400-\u9fff]",caption)):
+    caption=prompt if english_request(prompt) else str(plan.get("caption","")).strip()
+    if not caption or (not english_request(prompt) and re.search(r"[\u3040-\u30ff\u3400-\u9fff]",caption)):
         return None
     surfaces=[]
     for entry in plan.get("surfaces",[]):
@@ -39,8 +43,8 @@ def clean_plan(plan,prompt):
         if (part,material) not in surfaces:surfaces.append((part,material))
     medium=plan.get("medium","")
     medium=medium.strip()[:200] if isinstance(medium,str) else ""
-    if not prompt.isascii() and medium and medium.casefold() not in caption.casefold():caption=medium+". "+caption
-    if not prompt.isascii():
+    if not english_request(prompt) and medium and medium.casefold() not in caption.casefold():caption=medium+". "+caption
+    if not english_request(prompt):
         palette=plan.get("palette",[])
         if isinstance(palette,list):
             shades=[COLOR_TERMS.get(v["source"],v["english"].strip()) for v in palette if isinstance(v,dict) and isinstance(v.get("source"),str) and isinstance(v.get("english"),str) and v["source"] and v["source"] in prompt and v["english"].strip()]
@@ -97,7 +101,7 @@ def _plan(request):
         except ValueError:
             continue
     # Keep English art direction exactly as entered. Translate other languages locally.
-    if prompt.isascii():
+    if english_request(prompt):
         caption = prompt
     else:
         caption = str(plan.get("caption") or "").strip()

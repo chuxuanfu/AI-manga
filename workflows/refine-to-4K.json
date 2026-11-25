@@ -1,8 +1,8 @@
 {
   "id": "cb78814e-a4cf-5a1c-a3f4-a30397c61a73",
   "revision": 1,
-  "last_node_id": 13,
-  "last_link_id": 17,
+  "last_node_id": 15,
+  "last_link_id": 19,
   "nodes": [
     {
       "id": 1,
@@ -25,7 +25,7 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            3
+            4
           ],
           "slot_index": 0
         },
@@ -33,7 +33,7 @@
           "name": "MASK",
           "type": "MASK",
           "links": [
-            5
+            7
           ],
           "slot_index": 1
         }
@@ -67,7 +67,7 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            8
+            10
           ],
           "slot_index": 0
         }
@@ -136,8 +136,8 @@
           "name": "VAE",
           "type": "VAE",
           "links": [
-            7,
-            13
+            9,
+            15
           ],
           "slot_index": 0
         }
@@ -177,7 +177,7 @@
           "type": "CONDITIONING",
           "links": [
             2,
-            9
+            11
           ],
           "slot_index": 0
         }
@@ -216,7 +216,7 @@
           "name": "CONDITIONING",
           "type": "CONDITIONING",
           "links": [
-            10
+            12
           ],
           "slot_index": 0
         }
@@ -228,6 +228,81 @@
     },
     {
       "id": 7,
+      "type": "UpscaleModelLoader",
+      "title": "构图轮廓超分",
+      "pos": [
+        300,
+        -300
+      ],
+      "size": [
+        285,
+        125
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "UPSCALE_MODEL",
+          "type": "UPSCALE_MODEL",
+          "links": [
+            3
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UpscaleModelLoader"
+      },
+      "widgets_values": [
+        "RealESRGAN_x4plus_anime_6B.pth"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "ImageUpscaleWithModel",
+      "title": "本机动漫超分",
+      "pos": [
+        630,
+        -300
+      ],
+      "size": [
+        285,
+        125
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "upscale_model",
+          "type": "UPSCALE_MODEL",
+          "link": 3
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            5
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageUpscaleWithModel"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 9,
       "type": "ImageScaleToMaxDimension",
       "title": "3840 像素画布",
       "pos": [
@@ -239,13 +314,13 @@
         125
       ],
       "flags": {},
-      "order": 6,
+      "order": 8,
       "mode": 0,
       "inputs": [
         {
           "name": "image",
           "type": "IMAGE",
-          "link": 3
+          "link": 5
         }
       ],
       "outputs": [
@@ -253,8 +328,8 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            4,
-            14
+            6,
+            16
           ],
           "slot_index": 0
         }
@@ -268,7 +343,7 @@
       ]
     },
     {
-      "id": 8,
+      "id": 10,
       "type": "MangaStudioMaterialTiles",
       "title": "全幅均匀分块",
       "pos": [
@@ -280,18 +355,18 @@
         125
       ],
       "flags": {},
-      "order": 7,
+      "order": 9,
       "mode": 0,
       "inputs": [
         {
           "name": "image",
           "type": "IMAGE",
-          "link": 4
+          "link": 6
         },
         {
           "name": "source_mask",
           "type": "MASK",
-          "link": 5
+          "link": 7
         }
       ],
       "outputs": [
@@ -299,7 +374,7 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            6
+            8
           ],
           "slot_index": 0
         },
@@ -313,7 +388,7 @@
           "name": "MANGA_TILE_PLAN",
           "type": "MANGA_TILE_PLAN",
           "links": [
-            16
+            18
           ],
           "slot_index": 2
         }
@@ -328,7 +403,7 @@
       ]
     },
     {
-      "id": 9,
+      "id": 11,
       "type": "VAEEncode",
       "title": "编码图块",
       "pos": [
@@ -340,18 +415,18 @@
         125
       ],
       "flags": {},
-      "order": 8,
+      "order": 10,
       "mode": 0,
       "inputs": [
         {
           "name": "pixels",
           "type": "IMAGE",
-          "link": 6
+          "link": 8
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 7
+          "link": 9
         }
       ],
       "outputs": [
@@ -359,7 +434,7 @@
           "name": "LATENT",
           "type": "LATENT",
           "links": [
-            11
+            13
           ],
           "slot_index": 0
         }
@@ -370,7 +445,7 @@
       "widgets_values": []
     },
     {
-      "id": 10,
+      "id": 12,
       "type": "KSampler",
       "title": "按新像素重绘",
       "pos": [
@@ -382,28 +457,28 @@
         265
       ],
       "flags": {},
-      "order": 9,
+      "order": 11,
       "mode": 0,
       "inputs": [
         {
           "name": "model",
           "type": "MODEL",
-          "link": 8
+          "link": 10
         },
         {
           "name": "positive",
           "type": "CONDITIONING",
-          "link": 9
+          "link": 11
         },
         {
           "name": "negative",
           "type": "CONDITIONING",
-          "link": 10
+          "link": 12
         },
         {
           "name": "latent_image",
           "type": "LATENT",
-          "link": 11
+          "link": 13
         }
       ],
       "outputs": [
@@ -411,7 +486,7 @@
           "name": "LATENT",
           "type": "LATENT",
           "links": [
-            12
+            14
           ],
           "slot_index": 0
         }
@@ -426,11 +501,11 @@
         1.0,
         "euler",
         "simple",
-        0.23
+        0.34
       ]
     },
     {
-      "id": 11,
+      "id": 13,
       "type": "VAEDecode",
       "title": "解码图块",
       "pos": [
@@ -442,65 +517,18 @@
         125
       ],
       "flags": {},
-      "order": 10,
+      "order": 12,
       "mode": 0,
       "inputs": [
         {
           "name": "samples",
           "type": "LATENT",
-          "link": 12
+          "link": 14
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 13
-        }
-      ],
-      "outputs": [
-        {
-          "name": "IMAGE",
-          "type": "IMAGE",
-          "links": [
-            15
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "VAEDecode"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 12,
-      "type": "MangaStudioMaterialComposite",
-      "title": "保留原稿线条与明暗",
-      "pos": [
-        2460,
-        0
-      ],
-      "size": [
-        285,
-        125
-      ],
-      "flags": {},
-      "order": 11,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "base",
-          "type": "IMAGE",
-          "link": 14
-        },
-        {
-          "name": "painted",
-          "type": "IMAGE",
           "link": 15
-        },
-        {
-          "name": "plan",
-          "type": "MANGA_TILE_PLAN",
-          "link": 16
         }
       ],
       "outputs": [
@@ -514,12 +542,59 @@
         }
       ],
       "properties": {
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 14,
+      "type": "MangaStudioMaterialComposite",
+      "title": "保留原稿线条与明暗",
+      "pos": [
+        2460,
+        0
+      ],
+      "size": [
+        285,
+        125
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "base",
+          "type": "IMAGE",
+          "link": 16
+        },
+        {
+          "name": "painted",
+          "type": "IMAGE",
+          "link": 17
+        },
+        {
+          "name": "plan",
+          "type": "MANGA_TILE_PLAN",
+          "link": 18
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            19
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
         "Node name for S&R": "MangaStudioMaterialComposite"
       },
       "widgets_values": []
     },
     {
-      "id": 13,
+      "id": 15,
       "type": "SaveImage",
       "title": "4K 分块精绘",
       "pos": [
@@ -531,13 +606,13 @@
         310
       ],
       "flags": {},
-      "order": 12,
+      "order": 14,
       "mode": 0,
       "inputs": [
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 17
+          "link": 19
         }
       ],
       "outputs": [
@@ -575,121 +650,137 @@
     ],
     [
       3,
-      1,
-      0,
-      7,
-      0,
-      "IMAGE"
-    ],
-    [
-      4,
       7,
       0,
       8,
       0,
+      "UPSCALE_MODEL"
+    ],
+    [
+      4,
+      1,
+      0,
+      8,
+      1,
       "IMAGE"
     ],
     [
       5,
-      1,
-      1,
       8,
+      0,
+      9,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      9,
+      0,
+      10,
+      0,
+      "IMAGE"
+    ],
+    [
+      7,
+      1,
+      1,
+      10,
       1,
       "MASK"
     ],
     [
-      6,
       8,
+      10,
       0,
-      9,
+      11,
       0,
       "IMAGE"
     ],
     [
-      7,
+      9,
       4,
       0,
-      9,
+      11,
       1,
       "VAE"
     ],
     [
-      8,
+      10,
       2,
       0,
-      10,
+      12,
       0,
       "MODEL"
     ],
     [
-      9,
+      11,
       5,
       0,
-      10,
+      12,
       1,
       "CONDITIONING"
     ],
     [
-      10,
+      12,
       6,
       0,
-      10,
+      12,
       2,
       "CONDITIONING"
     ],
     [
+      13,
       11,
-      9,
       0,
-      10,
+      12,
       3,
       "LATENT"
     ],
     [
+      14,
       12,
-      10,
       0,
-      11,
+      13,
       0,
       "LATENT"
     ],
     [
-      13,
+      15,
       4,
       0,
-      11,
+      13,
       1,
       "VAE"
     ],
     [
-      14,
-      7,
+      16,
+      9,
       0,
-      12,
+      14,
       0,
       "IMAGE"
     ],
     [
-      15,
-      11,
+      17,
+      13,
       0,
-      12,
+      14,
       1,
       "IMAGE"
     ],
     [
-      16,
-      8,
+      18,
+      10,
       2,
-      12,
+      14,
       2,
       "MANGA_TILE_PLAN"
     ],
     [
-      17,
-      12,
+      19,
+      14,
       0,
-      13,
+      15,
       0,
       "IMAGE"
     ]

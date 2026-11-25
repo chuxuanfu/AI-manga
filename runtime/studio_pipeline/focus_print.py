@@ -9,7 +9,7 @@ from illustration import TURBO
 
 ENGINE=Path(__file__).resolve().parents[1]/'models/anime_superres'
 PATCH=1152
-PRINT_REVISION=3
+PRINT_REVISION=5
 
 def neural_double(source,destination):
     subprocess.run([str(ENGINE/'realesrgan-ncnn-vulkan'),'-i',str(source),'-o',str(destination),
@@ -31,6 +31,31 @@ def centers(points,size):
             boxes.append((name,l,t))
     return boxes[:3]
 
+def sampled_surfaces(source,size,focus):
+    """Cover structured image regions between the semantic landmarks at print scale."""
+    import cv2
+    scaled=source.convert('L')
+    scaled.thumbnail((768,768),Image.Resampling.LANCZOS)
+    tone=cv2.GaussianBlur(np.asarray(scaled,np.float32),(0,0),1)
+    dx=cv2.Sobel(tone,cv2.CV_32F,1,0,ksize=3)/8
+    dy=cv2.Sobel(tone,cv2.CV_32F,0,1,ksize=3)/8
+    edges=cv2.magnitude(dx,dy)
+    def starts(length):
+        span=length-PATCH
+        if span<=0:return [0]
+        return np.linspace(0,span,1+int(np.ceil(span/(PATCH-144)))).round().astype(int).tolist()
+    result=[]
+    for y in starts(size[1]):
+        for x in starts(size[0]):
+            if any(abs(x-l)<PATCH*.25 and abs(y-t)<PATCH*.25 for _,l,t in focus):continue
+            l,r=[round(v*scaled.width/size[0]) for v in (x,x+PATCH)]
+            t,b=[round(v*scaled.height/size[1]) for v in (y,y+PATCH)]
+            patch=edges[t:b,l:r]
+            if patch.size and np.mean(patch>3.0)>=.025:
+                result.append(('surface',x,y))
+    return result
+
+
 def detail_graph(inputs,medium,seed,prefix,roles=None):
     graph=Graph('studio-native-focus-print')
     model=graph.add('UNETLoader','局部扩散',(0,0),['MODEL'],values={'unet_name':TURBO,'weight_dtype':'default'})
@@ -45,6 +70,7 @@ def detail_graph(inputs,medium,seed,prefix,roles=None):
         guidance={
             'animal':'Resolve the existing animal at close range, including tapered fur or feather groups, eye rims, muzzle and small anatomical transitions when visible. Interpret them in the specified medium.',
             'contact':'Follow only the hand, cuff, or boundary that is already visible. Preserve empty air, empty hands, silhouettes, depth of field and all areas of blur. Refine existing marks without adding anything to grasp.',
+            'surface':'Work at the scale of the visible crop. Subdivide existing structures into fine, legible strokes; trace their taper, layering and junctions. Keep broad flat or out-of-focus areas quiet. Match the original medium.',
             'support':'Resolve the materials and layered edges actually present near the supporting surface. Follow the existing perspective and illumination.',
             'face':'Resolve the existing eye contours, locks of hair, and fabric folds, keeping the expression and skin smooth.',
             'secondary_subject':'Resolve characteristic material marks of the secondary subject already visible in this crop. Preserve its anatomy or construction.',
@@ -147,15 +173,18 @@ def blend_detail(master,patch,left,top,role=None):
 def neural_weight(medium):
     medium=medium.casefold()
     if any(term in medium for term in ('watercolor','wash','pencil','pastel','chalk','graphite','charcoal','etched','etching','copperplate','woodblock','lithograph','silk','sanguine','wool','quilt','embroider','水彩','铅笔','木刻','水墨','粉彩','刺绣')):
-        return .18
+        return .58
     if any(term in medium for term in ('cel animation','cel shading','pixel art','stained glass','cut-paper','screen-print','赛璐璐','剪纸','像素')):
-        return .52
-    return .32
+        return .85
+    return .78
 
 
 def combine_source(source,neural,medium):
     base=source.convert('RGB').resize(neural.size,Image.Resampling.LANCZOS)
-    return Image.blend(base,neural.convert('RGB'),neural_weight(medium))
+    scale_ratio=max(neural.size)/max(source.size)
+    # Full-size originals supply every base pixel. Fade in neural SR as magnification approaches 2x.
+    weight=neural_weight(medium)*min(1,max(0,scale_ratio-1))
+    return Image.blend(base,neural.convert('RGB'),weight)
 
 
 def finish_neural(small,neural,patches,target,medium=''):
@@ -172,3 +201,41 @@ def finish_neural(small,neural,patches,target,medium=''):
         if max(verified.size)!=7680:raise ValueError('8K 成图尺寸错误')
         verified.verify()
     tmp.replace(target)
+
+def preserve_source_marks(reference, print_path):
+    """Return aligned fine pigment that neural super-resolution removed inside forms."""
+    import cv2
+    with Image.open(reference) as source, Image.open(print_path) as printed:
+        if max(source.size)>=max(printed.size):
+            return print_path
+        source.thumbnail((1536,1536),Image.Resampling.LANCZOS)
+        observed=np.asarray(source.convert('RGB'),np.float32)
+        reduced=np.asarray(printed.convert('RGB').resize(source.size,Image.Resampling.BOX),np.float32)
+        residual=observed-reduced
+        residual-=cv2.GaussianBlur(residual,(0,0),4)
+        tone=cv2.cvtColor(observed,cv2.COLOR_RGB2GRAY)
+        edge=cv2.magnitude(cv2.Sobel(tone,cv2.CV_32F,1,0)/8,cv2.Sobel(tone,cv2.CV_32F,0,1)/8)
+        # A contour shifted by half a source pixel can leave a bright/dark echo.
+        residual*=np.exp(-np.square(edge/27))[:,:,None]
+        np.clip(residual,-32,32,out=residual)
+        result=printed.convert('RGB')
+        x=np.arange(printed.width,dtype=np.float32)
+        x=(x+.5)*source.width/printed.width-.5
+        for y in range(0,printed.height,256):
+            end=min(y+256,printed.height)
+            top=max(0,y-12)
+            bottom=min(printed.height,end+12)
+            strip=np.asarray(printed.crop((0,top,printed.width,bottom)).convert('RGB'),np.float32)
+            gray=cv2.cvtColor(strip,cv2.COLOR_RGB2GRAY)
+            guard=np.clip(1-np.abs(gray-cv2.GaussianBlur(gray,(0,0),3))/14,0,1)
+            span=slice(y-top,end-top)
+            rows=(np.arange(y,end,dtype=np.float32)+.5)*source.height/printed.height-.5
+            xx,yy=np.meshgrid(x,rows)
+            marks=cv2.remap(residual,xx,yy,cv2.INTER_CUBIC,borderMode=cv2.BORDER_REPLICATE)
+            restored=strip[span]+.85*guard[span,:,None]*marks
+            result.paste(Image.fromarray(restored.round().clip(0,255).astype('uint8')),(0,y))
+    destination=print_path.with_name(print_path.stem+'-source-marks.png')
+    temporary=destination.with_suffix('.partial.png')
+    result.save(temporary,compress_level=3)
+    temporary.replace(destination)
+    return destination

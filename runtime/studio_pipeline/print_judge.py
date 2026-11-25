@@ -3,13 +3,14 @@ import hashlib
 import json
 import math
 import re
+import time
 from pathlib import Path
 from PIL import Image, ImageDraw
 
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-7'
+REVISION = 'print-inspection-13'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -18,6 +19,8 @@ FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
           **{key: {'type': 'integer', 'minimum': 0, 'maximum': 1000}
              for key in ('left', 'top', 'right', 'bottom')}}
 SCHEMA = {'type': 'object', 'properties': FIELDS, 'required': list(FIELDS)}
+NATIVE_SCREEN = {'type': 'object', 'properties': {key: FIELDS[key] for key in ('decision', 'evidence')},
+                 'required': ['decision', 'evidence']}
 GUIDE = """You are an illustration print editor. Inspect visual evidence for the supplied artwork,
 including invented contours, merged or extra parts, impossible connections, false lettering when a
 legible inscription was requested, copied texture, seams, ringing and inconsistent light or perspective.
@@ -29,7 +32,13 @@ Use global for overall composition failure; uncertain for a material unresolved 
 Do not mark a crop uncertain simply because the rest of the subject is outside it.
 If a small object, background animal, person, lettering or other feature explicitly forbidden by the brief is present,
 use local and remove_forbidden even if it is otherwise well drawn. Use redraw for a malformed requested subject.
-Use under 32 words in evidence. For clear give zero coordinates and operation none."""
+Use under 32 words in evidence. When coordinates are requested, a clear view has zero coordinates and operation none."""
+
+SOFT_HANDLING=re.compile(r'blur(?:red|ry)?|out[- ]of[- ]focus|defocus|bokeh|shallow depth|soft(?:ened|ness|ly|[- ](?:focus|edges|background|blended))|flat[- ](?:colou?r|fills?|shading)|negative space|虚化|虚焦|失焦|浅景深|朦胧|柔焦|模糊|平涂|留白|ぼけ|ボケ',re.I)
+
+def requested_handling(phrase,brief):
+    return bool(isinstance(phrase,str) and phrase.strip() and phrase.strip().casefold() in brief.casefold()
+                and SOFT_HANDLING.search(phrase))
 
 def fingerprint(path):
     with Path(path).open('rb') as src:
@@ -85,14 +94,63 @@ def map_box(row, rect, size):
     return [round(v*1000/n) for v,n in zip((l+(r-l)*a/1000,t+(b-t)*c/1000,
                         l+(r-l)*d/1000,t+(b-t)*e/1000),size*2)]
 
-def judge_view(url, image, prompt, *, reason=False):
-    row=json.loads(ask(url,[image],prompt,SCHEMA,tag=MODEL,reason=reason))
+def judge_view(url, image, prompt, *, reason=False, overview=None):
+    images=list(image) if isinstance(image,(list,tuple)) else [image]
+    if overview is not None:images.append(overview)
+    row=json.loads(ask(url,images,prompt,SCHEMA,tag=MODEL,reason=reason))
     if row.get('decision') not in FIELDS['decision']['enum'] or not isinstance(row.get('evidence'),str) or not row['evidence'].strip():
         raise ValueError('终审模型返回了无效的目检判断')
     return row
 
 
-def inspect(path, brief, root, preliminary, *, small=None, focus=None):
+def inspect_native(url,image,prompt):
+    """Inspect every pixel window. Generate localization coordinates only for suspected defects."""
+    row=json.loads(ask(url,[image],prompt+' Report the decision and a brief concrete observation.',
+                       NATIVE_SCREEN,tag=MODEL))
+    if row.get('decision') not in FIELDS['decision']['enum'] or not str(row.get('evidence') or '').strip():
+        raise ValueError('原像素初检缺少有效目检记录')
+    if row['decision']!='clear':
+        localized=judge_view(url,image,prompt+' Locate this possible issue if visible: '+row['evidence'])
+        if localized['decision']!='clear':return localized
+        # Keep the original suspicion until the existing wider-context check resolves it.
+    return dict(row,operation='none',target='',fix='',left=0,top=0,right=0,bottom=0)
+
+def detail_sites(image):
+    """Locate separated, structured areas without relying on figure-specific landmarks."""
+    import cv2
+    import numpy as np
+    thumb=image.convert('L')
+    thumb.thumbnail((512,512),Image.Resampling.LANCZOS)
+    y=np.asarray(thumb,dtype=np.float32)
+    dx=cv2.Sobel(y,cv2.CV_32F,1,0,ksize=3)
+    dy=cv2.Sobel(y,cv2.CV_32F,0,1,ksize=3)
+    scores=cv2.boxFilter(np.minimum(cv2.magnitude(dx,dy),120),-1,(25,25))
+    sites=[]
+    for _ in range(3):
+        _,peak,_,(x,y)=cv2.minMaxLoc(scores)
+        if peak<5:break
+        sites.append(((x+.5)/thumb.width,(y+.5)/thumb.height))
+        cv2.circle(scores,(x,y),max(20,min(thumb.size)//5),0,-1)
+    return sites
+
+def centered_crop(size,point,span):
+    w,h=size
+    cw,ch=min(w,span),min(h,span)
+    l=max(0,min(w-cw,round(point[0]*w-cw/2)))
+    t=max(0,min(h-ch,round(point[1]*h-ch/2)))
+    return l,t,l+cw,t+ch
+
+def compare_pixels(low,high,rect,master_size):
+    """Display the new crop at 1:1; enlarge the matching old field to the same size."""
+    def mapped(size):
+        return tuple(v*n/k for v,n,k in zip(rect,size*2,master_size*2))
+    bounds=tuple(round(v) for v in mapped(high.size))
+    right=high.crop(bounds)
+    left=low.resize(right.size,Image.Resampling.LANCZOS,box=mapped(low.size))
+    return left,right
+
+
+def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None):
     digest=fingerprint(path)
     model_id=model_identity(MODEL)
     if not model_id:raise RuntimeError('缺少已安装的 Qwen3.8-27B 终审模型')
@@ -103,33 +161,59 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None):
     dispute='' if preliminary.get('status')=='pass' else preliminary.get('note','')
     focals=(focus or {}).get('8K局部',[])
     prior_id=fingerprint(small) if small else None
-    key=hashlib.sha256(json.dumps([REVISION,model_id,brief,regions,dispute,prior_id,focals,constraints],sort_keys=True,
+    draft_id=fingerprint(draft) if draft and small else None
+    key=hashlib.sha256(json.dumps([REVISION,model_id,brief,regions,dispute,prior_id,draft_id,focals,constraints],sort_keys=True,
                                  ensure_ascii=False).encode()).hexdigest()[:16]
     directory=root/'print-review'
     directory.mkdir(exist_ok=True)
     report=directory/(digest+'-'+key+'.json')
     result=json.loads(report.read_text()) if report.exists() else dict(
         model=MODEL,model_id=model_id,revision=REVISION,sha256=digest,source=str(path),
-        brief=brief,views=[],status='running',report=str(report.relative_to(root)),comparison_sha256=prior_id)
+        brief=brief,views=[],status='running',report=str(report.relative_to(root)),comparison_sha256=prior_id,draft_sha256=draft_id)
     if result['status'] in ('pass','local','global','uncertain'):return result
     with Image.open(path) as source, backend(MODEL) as url:
         image=source.convert('RGB')
+        overview_image=image.copy()
+        overview_image.thumbnail((1152,1152),Image.Resampling.LANCZOS)
         windows=list(print_windows(image.size,regions))
         if small:
             with Image.open(small) as fp:before=fp.convert('RGB')
             w,h=image.size
-            focus_rects=[(max(0,x),max(0,y),min(w,x+1152),min(h,y+1152)) for _,x,y in focals]
-            if not focus_rects:focus_rects=[(w//2-SIDE//2,h//2-SIDE//2,w//2+SIDE//2,h//2+SIDE//2)]
-            windows[1:1]=[('comparison',r) for r in focus_rects if r[0]<r[2] and r[1]<r[3]]
+            sites=detail_sites(before)
+            # Also cover semantic subjects whose tones are quieter than the background.
+            span=(focus or {}).get('8K图块',1152)
+            for _,left,top in focals:
+                center=((left+span/2)/w,(top+span/2)/h)
+                if all(abs(x-center[0])*w>448 or abs(y-center[1])*h>448 for x,y in sites):
+                    sites.append(center)
+            if not sites:sites=[(.5,.5)]
+            comparisons=[('comparison',centered_crop(image.size,site,448)) for site in sites]
+            if draft_id:
+                with Image.open(draft) as fp:draft_image=fp.convert('RGB')
+                if max(draft_image.size)<max(before.size):
+                    comparisons+=[('draft-comparison',centered_crop(image.size,site,896)) for site in sites]
+                comparisons.append(('palette',(0,0,w,h)))
+            windows[1:1]=list(dict.fromkeys(comparisons))
         result.update(size=list(image.size),planned=len(windows),planned_native=sum(k=='native' for k,_ in windows))
         print(f'本机逐块终审 {len(result["views"])}/{len(windows)}，原像素 {result["planned_native"]} 块',flush=True)
         for i,(kind,rect) in enumerate(windows):
             if i<len(result['views']):continue
-            view=image.crop(rect)
-            if kind!='native':view.thumbnail((1152,1152),Image.Resampling.LANCZOS)
+            started=time.monotonic()
+            if kind in ('whole','construction'):
+                view=overview_image
+            elif kind not in ('comparison','draft-comparison','palette'):
+                view=image.crop(rect)
+                if kind!='native':view.thumbnail((1152,1152),Image.Resampling.LANCZOS)
             if kind=='whole':
                 question=('Judge the whole composition, subject identity and count, depicted actions, connections, visual hierarchy, light and requested style. '
                           'Independently verify this earlier observation if present: '+dispute)
+            elif kind=='palette':
+                panels=[im.resize((max(1,round(im.width*360/max(im.size))),max(1,round(im.height*360/max(im.size)))),Image.Resampling.LANCZOS)
+                        for im in (draft_image,before,image)]
+                view=panels
+                question=('Image 1 is the approved draft, image 2 is 4K, image 3 is 8K. Compare object colors, hue relationships, shadow temperature, highlights and contrast. '
+                          'Flag a visible hue drift, washed-out darks, clipped highlight shapes, or a named color contradicted by the images. Respect the requested medium and lighting. '
+                          'Coordinates refer to the affected area in the last image. Ignore pixel-level sharpness in these overview images.')
             elif kind=='construction':
                 question=('Independently inventory individual visible hands, feet, animal limbs, and rigid implements when present. '
                           'For each visible hand trace it to a specific wrist, elbow and shoulder; for each animal trace separate paws to its torso. '
@@ -139,21 +223,21 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None):
                 question=('Inventory all distinct palm-and-finger clusters actually visible in this interaction. Scan from left to right, including loose fingers behind and between objects. '
                           'For each cluster trace where its wrist physically continues. Flag a stray third cluster with no attached arm, an impossible grip or a fused tool only when visible. '
                           'Hands entering the edges of the crop can belong to people outside it.')
-            elif kind=='comparison':
-                bounds=tuple(round(v*k/n) for v,k,n in zip(rect,before.size*2,image.size*2))
-                older=before.crop(bounds)
-                view.thumbnail((576,576),Image.Resampling.LANCZOS)
-                pair=Image.new('RGB',(view.width*2,view.height))
-                pair.paste(older.resize(view.size,Image.Resampling.LANCZOS),(0,0));pair.paste(view,(view.width,0))
-                view=pair
-                question=('Two matching crops: left the 4K proof, right the 8K master. Did refinement introduce a false contour, a new object or incoherent material detail? '
-                          'Allow modest improvements or unchanged clean edges. Any coordinates must refer solely to the right crop as if viewed by itself.')
+            elif kind in ('comparison','draft-comparison'):
+                low,high=(before,image) if kind=='comparison' else (draft_image,before)
+                view=compare_pixels(low,high,rect,image.size)
+                question=('Image 1 is the lower resolution enlarged to match; image 2 is the same field at final pixel scale. Compare these separately supplied images. '
+                          'Identify physically coherent separated tips, fine strokes or edges in image 2. '
+                          'Flag smeared focal boundaries, a soft enlarged silhouette with unresolved internal structures, '
+                          'invented detail, halos, doubled edges or noisy sharpening. Even if BOTH sides have the same blur, '
+                          'hold an unresolved focal subject. Respect intentional softness appropriate to the brief. '
+                          'If the author expressly requested this area out of focus or flat, judge the smooth tonal transitions and its role in the composition. Coordinates refer to image 2 alone.')
             else:
                 question=('Inspect this actual detail from the same artwork. Apply explicit exclusions to anything actually visible here, including small background figures. A requested subject outside this crop is not missing. '
                           'Trace the physical connections visible here and inspect print quality.')
-            guidance=brief if kind in ('whole','construction') else constraints
+            guidance=brief+'\n'+constraints
             prompt=GUIDE+'\n'+question+' A quiet or intentionally blurred surface can pass on its own. Never guess what is outside the crop.\n'+guidance
-            row=judge_view(url,view,prompt)
+            row=inspect_native(url,view,prompt) if kind=='native' else judge_view(url,view,prompt)
             record={'view':kind,'pixels':list(rect),'observation':row}
             if row['decision']!='clear':
                 # Inspect wider context separately using source pixels.
@@ -166,10 +250,20 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None):
                 region.thumbnail((1280,1280),Image.Resampling.LANCZOS)
                 claim=row['evidence']
                 verify=GUIDE+'\nRe-examine the pixels in this view. An earlier view proposed: '+claim+'. Trace the visible contour or texture. If contradicted or only ordinary depth of field is visible, clear it. '+guidance
-                second=judge_view(url,region,verify)
+                overview=None
+                if kind in ('comparison','draft-comparison','palette'):
+                    # Recheck both original pixel fields for this claim, including during arbitration.
+                    region=view
+                    context=rect
+                    overview=overview_image.copy()
+                    overview.thumbnail((800,800),Image.Resampling.LANCZOS)
+                    draw=ImageDraw.Draw(overview)
+                    draw.rectangle(tuple(round(v*n/k) for v,n,k in zip(rect,overview.size*2,image.size*2)),outline='#ec407a',width=2)
+                    verify=GUIDE+' '+question+' The last image locates the inspected area in the full composition. Use it to identify deliberate softness. Previous claim: '+claim+' Brief: '+brief
+                second=judge_view(url,region,verify,overview=overview)
                 record['context_pixels']=list(context)
                 record['corroboration']=second
-                if second['decision']=='uncertain':
+                if second['decision']=='uncertain' and kind not in ('comparison','draft-comparison','palette'):
                     # Identify the disputed shape without priming the reader with the brief or the alleged defect.
                     identify={'type':'object','properties':{'visible':{'type':'string'},'attachment':{'type':'string'}},
                               'required':['visible','attachment']}
@@ -177,7 +271,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None):
                         'Describe the actual objects and contours in this enlargement in under 32 words. What does the small shape attach to? If it is unidentifiable, say so. No target description is available.',
                         identify,tag=MODEL))
                     record['blind_zoom_inventory']=observation
-                    overview=image.copy()
+                    overview=overview_image.copy()
                     overview.thumbnail((616,660),Image.Resampling.LANCZOS)
                     draw=ImageDraw.Draw(overview)
                     draw.rectangle(tuple(round(v*n/k) for v,n,k in zip(context,overview.size*2,image.size*2)),outline='#f04b73',width=2)
@@ -187,6 +281,22 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None):
                     third=judge_view(url,board,GUIDE+' On the left is the whole image with a locator; on the right are the marked pixels. Independently judge the right detail in the context of the scene and intended depth of field. Identify only a concrete visible defect, or clear this view if appropriate. Coordinates refer only to the right panel. A prior strictly visual inventory of these pixels reads: '+json.dumps(observation)+'. A concrete excluded person or animal must have identifiable body parts. Optical resemblance alone does not demonstrate a violation. Brief: '+brief,reason=True)
                     record['independent_context']=third
                     second=third
+                if second['decision']=='uncertain' and SOFT_HANDLING.search(brief):
+                    overview=overview_image.copy()
+                    overview.thumbnail((800,800),Image.Resampling.LANCZOS)
+                    outline=ImageDraw.Draw(overview)
+                    outline.rectangle(tuple(round(v*n/k) for v,n,k in zip(context,overview.size*2,image.size*2)),outline='#ec407a',width=2)
+                    policy={'type':'object','properties':{'outcome':{'enum':['intentional','defect','unresolved']},'phrase':{'type':'string'},'evidence':{'type':'string'}},'required':['outcome','phrase','evidence']}
+                    instruction=('Image 1 locates this region, image 2 shows its detail. Resolve the editor’s uncertainty using the author’s brief. '
+                                 'Choose intentional ONLY if the sole concern is explicitly requested softness or flatness here, and the visible handling matches. '
+                                 'Distinguish the intended focal subject from its background. Any other visible defect or ambiguous intent must remain held. '
+                                 'Quote the exact words explicitly requesting soft or flat handling in this particular part of the picture in phrase. A medium name alone is insufficient. Give concrete visual evidence. Concern: '+second['evidence']+' Actual brief: '+brief)
+                    detail=list(region) if isinstance(region,(tuple,list)) else [region]
+                    intent=json.loads(ask(url,[overview,*detail],instruction,policy,tag=MODEL))
+                    record['style_intent']=intent
+                    if intent.get('outcome')=='intentional' and requested_handling(intent.get('phrase'),brief) and str(intent.get('evidence') or '').strip():
+                        second=dict(second,decision='clear',evidence=intent['evidence'],operation='none',fix='',target='')
+                        record['independent_context']=second
                 if second['decision']!='clear':
                     box=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     verdict=second['decision']
@@ -199,6 +309,13 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None):
                     if verdict not in ('local','global','uncertain'):raise ValueError('无效的复审结果')
                     result.update(status=verdict,issue={'box':box,'operation':second.get('operation','redraw'),'fix':second['fix'],'target':second['target'],
                                                         'symptom':second['evidence']})
+                    if small and second.get('operation')!='remove_forbidden':
+                        category={'type':'object','properties':{'issue':{'enum':['unresolved_focus','other']}},'required':['issue']}
+                        task=('Classify the confirmed defect. Choose unresolved_focus only if an intended focal feature is visibly smeared, lacks separable detail or has been enlarged beyond its useful resolution. '
+                              'Anatomy, style mismatch, ringing, oversharpening, intentional soft focus and quiet fills belong to other. Evidence: '+second['evidence']+' Brief: '+brief)
+                        detail=list(region) if isinstance(region,(tuple,list)) else [region]
+                        result['issue']['category']=json.loads(ask(url,detail,task,category,tag=MODEL))['issue']
+            record['elapsed_seconds']=round(time.monotonic()-started,2)
             result['views'].append(record)
             store(report,result)
             if result['status']!='running':
@@ -207,3 +324,19 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None):
         result['status']='pass'
         store(report,result)
         return result
+
+def same_composition(original,candidate,brief):
+    """Check that a newly sampled source still depicts the approved composition."""
+    images=[]
+    for path in (original,candidate):
+        with Image.open(path) as source:
+            image=source.convert('RGB')
+            image.thumbnail((1024,1024),Image.Resampling.LANCZOS)
+            images.append(image)
+    schema={'type':'object','properties':{'same':{'type':'boolean'},'evidence':{'type':'string'}},
+            'required':['same','evidence']}
+    question=('The first image is the approved composition. Compare the second image to it. Verify the same subject identity, number, action, pose, framing, medium, palette, lighting and spatial relationships. '
+              'Allow differences in fine brush marks. If an important change is visible or uncertain, answer false. Brief: '+brief)
+    with backend(MODEL) as url:
+        answer=json.loads(ask(url,images,question,schema,tag=MODEL))
+    return answer.get('same') is True and isinstance(answer.get('evidence'),str) and bool(answer['evidence'].strip())

@@ -17,13 +17,13 @@ import torch
 
 from gallery import write_gallery, write_focus_proof
 from graphs import draft, finish
-from illustration import BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph
+from illustration import KEY_VISUAL, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
 from reference_review import compare
 from structure import inspect_structure
 from construction_review import review as review_construction
 from review import audit, reviewer, RUNTIME, CHECKS
 from manga_materials.planner import plan_scene, requested_medium
-from focus_print import PATCH, centers, combine_source, detail_graph, finish_neural, neural_double
+from focus_print import PATCH, centers, sampled_surfaces, combine_source, detail_graph, finish_neural, neural_double, preserve_source_marks
 from masks import object_mask
 from erase import duplicate_box, masked_candidate, MODEL as ERASE_MODEL
 
@@ -98,6 +98,19 @@ def post_graph(api, port, directory, stage, workflow=None):
                 raise RuntimeError(str(hist['status']['messages'][-2:])[:2300])
             return hist['outputs']
         time.sleep(4)
+
+
+def release_idle_renderer(port):
+    """Return idle render caches to unified memory before the large visual reviewer starts."""
+    address=f'http://127.0.0.1:{port}'
+    try:
+        with request.urlopen(address+'/queue',timeout=3) as reply:queue=json.load(reply)
+        if not queue.get('queue_running') and not queue.get('queue_pending'):
+            data=json.dumps({'unload_models':True,'free_memory':True}).encode()
+            req=request.Request(address+'/free',data=data,headers={'Content-Type':'application/json'})
+            with request.urlopen(req,timeout=3):pass
+    except (OSError,ValueError):
+        pass  # Cache release is optional. The normal checks still run.
 
 
 def output_image(record):
@@ -196,8 +209,13 @@ def main():
     parser.add_argument('--object',help='可选，指定需要保护轮廓的对象，如 porcelain teapot')
     parser.add_argument('--repair-text',help='这个区域应当画成什么样')
     args=parser.parse_args()
+    if args.prompt and not args.style and KEY_VISUAL not in args.prompt:
+        if args.prompt.lstrip().startswith(('日系商业插画，','日系商业插画：','日系商业插画,','日系商业插画:')):
+            args.style='anime-key-visual'
     if args.style and args.prompt:
-        args.prompt=args.prompt.rstrip()+' · '+args.style.strip()
+        style=args.style.strip()
+        if style.casefold() in ('anime-key-visual','日系商业插画'):style=KEY_VISUAL
+        args.prompt=args.prompt.rstrip()+' · '+style
     if args.repair_box and (not args.repair_text or not args.from_image or not region({'box':args.repair_box},{})):
         parser.error('--repair-box 需要有效坐标、--repair-text 和 --from-image')
     if bool(args.candidate_image)!=bool(args.selection_mask):parser.error('请同时传入 --candidate-image 与 --selection-mask')
@@ -244,7 +262,8 @@ def main():
         if any(i>len(rec['精绘区域报告']['8K局部']) for i in args.skip_focus):parser.error('编号超过这张图的实际焦点数')
         if args.accept_final or args.repair_box or args.keep_native or args.proof_only or args.native_only:parser.error('请分别执行局部取舍和其他修订操作')
         rec['撤回焦点']=sorted(set(args.skip_focus));rec.pop('目检定稿',None)
-        rec['焦点取舍依据']={'4K指纹':hashlib.sha256((job/rec['4K']).read_bytes()).hexdigest(),'区域':rec['精绘区域报告']['8K局部']}
+        if not rec.get('焦点取舍依据'):
+            rec['焦点取舍依据']={'4K指纹':hashlib.sha256((job/rec['4K']).read_bytes()).hexdigest(),'区域':rec['精绘区域报告']['8K局部']}
     if args.accept_final:
         if rec.get('执行模式')=='离线自动定稿':parser.error('此版本需要通过自动终审才能定稿。')
         if not args.job or not rec.get('8K'):parser.error('需要有 8K 结果的 --job')
@@ -280,7 +299,7 @@ def main():
         positive,raw=plan_scene(prompt)
         rec=dict(prompt=prompt,seed=seed,positive=positive,parts=json.loads(raw),reviews=[],status='选片',工作流='reference-illustration-v1',原生4K=(args.native_4k or any(t in prompt.lower().replace(' ','') for t in ('原生4k','native4k'))),画法参考=hashlib.sha256((INPUT/REFERENCE).read_bytes()).hexdigest())
         rec['画法自适应']=True
-        rec['画材']=requested_medium(prompt)
+        rec['画材']=KEY_VISUAL if KEY_VISUAL in prompt else requested_medium(prompt)
         rec['输出模式']='全幅双级扩散' if args.full_8k_diffusion else '全幅4K扩散与8K焦点精修'
         rec['笔触参考']=hashlib.sha256((INPUT/BRUSHWORK).read_bytes()).hexdigest()
         save(manifest,rec)
@@ -346,12 +365,13 @@ def main():
         if gaps and args.round_worker:rubric+='-layout2'
         prior=next((a for a in rec['reviews'] if a['hash']==key and a.get('rubric')==rubric and a['stage']==stage),None)
         if prior:return prior['review']
+        started=time.monotonic()
         if gaps and args.round_worker:
             mismatch=unrequested_panels(overview,gaps,prompt)
             if mismatch:
                 result=dict(status='global',score=35,note='画面被纸白间隔切成了多个独立画幅。'+mismatch['evidence'],
                             issues=[],regions={},layout=mismatch)
-                rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,stage=stage,review=result))
+                rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),review=result))
                 save(manifest,rec);return result
         with Image.open(path) as image:
             rgb=image.convert('RGB')
@@ -381,7 +401,7 @@ def main():
                     result['note']+=' · 交换左右后仍发现画法差距'
                 elif comparison['decision']=='review':
                     result['note']+=' · 画法对照需目检'
-        rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,stage=stage,review=result))
+        rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),review=result))
         save(manifest,rec)
         print(stage,result['status'],result['note'],flush=True)
         return result
@@ -442,6 +462,13 @@ def main():
                 if local not in native:native.append(local)
                 save(manifest,rec)
                 print('原生底图',path,flush=True)
+            if KEY_VISUAL in prompt and reference_style and not args.repair_box and not args.from_image:
+                with Image.open(path) as layout:
+                    paint=paint_key_visual(prompt,seed+373+i,layout.size,prefix+'/candidates/'+label+'-painted',local_image(layout.convert('RGB')))
+                stage=label+'-color'
+                save(job/(stage+'workflow.json'),paint.ui())
+                hist=post_graph(paint.api,args.port,job,stage,paint.ui())
+                path=output_image(hist[str(len(paint.nodes))])
             path,result=check_composition(path,label)
             if args.repair_box and i==0:
                 result={'status':'local','score':100,'issues':[{'box':args.repair_box,'fix':args.repair_text,'target':args.object}]}
@@ -509,15 +536,19 @@ def main():
         if torch.backends.mps.is_available():torch.mps.empty_cache()
         with Image.open(source_path) as selected:
             composition=selected.convert('RGB')
-            native_four=reference_style and max(composition.size)==3840
-            if not native_four:
-                bound=2304 if reference_style else 1536
+            source_edge=max(composition.size)
+            native_four=reference_style and source_edge>=3840
+            if native_four:
+                composition.thumbnail((3840,3840),Image.Resampling.LANCZOS)
+            else:
+                rebuilt_source=rec.get('高清底图返工',{}).get('重绘')==str(source_path)
+                bound=3072 if rebuilt_source else (2304 if reference_style else 1536)
                 composition.thumbnail((bound,bound),Image.Resampling.LANCZOS)
             source=local_image(composition)
         focus_mode=rec.get('输出模式')=='全幅4K扩散与8K焦点精修'
         if reference_style:
             graph,ids=print_graph(source,prefix+'/pending-review/'+stage,seed+320,native_four=native_four,
-                                  medium=rec.get('画材',''),four_steps=2 if focus_mode else 4,four_only=focus_mode)
+                                  medium=rec.get('画材',''),four_steps=4,four_only=focus_mode)
         else:
             graph,ids=finish(source,prompt,prefix+'/pending-review/'+stage,seed+320)
         save(job/(stage+'workflow.json'),graph.ui())
@@ -528,7 +559,8 @@ def main():
             from evidence import ask, backend
             from construction_review import landmarks
             prior=rec.get('焦点取舍依据',{})
-            reuse=bool(prior) and prior['4K指纹']==hashlib.sha256(small.read_bytes()).hexdigest()
+            small_hash=hashlib.sha256(small.read_bytes()).hexdigest()
+            reuse=bool(prior) and prior['4K指纹']==small_hash
             if not reuse:
                 with backend() as address:
                     points=landmarks(address,composition)
@@ -536,21 +568,34 @@ def main():
             if not neural.exists():
                 temp=neural.with_suffix('.partial.png')
                 neural_double(small,temp);temp.replace(neural)
-            with Image.open(neural) as sr, Image.open(small) as original:
+            # Retain source frequencies above the 4K sampling limit for large imported art.
+            base_guide=source_path if source_edge>3840 else small
+            with Image.open(neural) as sr, Image.open(base_guide) as original:
                 canvas=combine_source(original,sr,rec.get('画材',''))
                 boxes=prior['区域'] if reuse else centers(points,canvas.size)
-                rec['焦点取舍依据']={'4K指纹':hashlib.sha256(small.read_bytes()).hexdigest(),'区域':boxes}
-                names=[local_image(canvas.crop((l,t,l+PATCH,t+PATCH)).convert('RGB')) for _,l,t in boxes]
-            detail,nodes=detail_graph(names,rec.get('画材',''),seed+12020,prefix+'/pending-review/'+stage,roles=[name for name,_,_ in boxes])
-            save(job/(stage+'-8K-detail-workflow.json'),detail.ui())
-            patches=post_graph(detail.api,args.port,job,stage+'-native-detail',detail.ui())
+                rec['焦点取舍依据']={'4K指纹':small_hash,'区域':boxes}
+                if not reuse:save(manifest,rec)
+                surfaces=sampled_surfaces(original,canvas.size,boxes)
+                redraw=[*boxes,*surfaces]
+                names=[local_image(canvas.crop((l,t,l+PATCH,t+PATCH))) for _,l,t in redraw]
             master=small.with_name('8K-focus-refinement.png')
             skipped=set(rec.get('撤回焦点',[])) if reuse else set()
-            chosen=[(l,t,output_image(patches[k]),name) for i,((name,l,t),k) in enumerate(zip(boxes,nodes),1) if i not in skipped]
-            finish_neural(small,neural,chosen,master,rec.get('画材',''))
+            chosen=[]
+            for offset in range(0,len(redraw),6):
+                batch=redraw[offset:offset+6]
+                batch_stage=stage+'-detail-'+str(offset)
+                prefix8=prefix+'/pending-review/'+batch_stage
+                detail,nodes=detail_graph(names[offset:offset+6],rec.get('画材',''),seed+12020+offset,
+                                          prefix8,roles=[role for role,_,_ in batch])
+                save(job/(batch_stage+'-workflow.json'),detail.ui())
+                patches=post_graph(detail.api,args.port,job,batch_stage,detail.ui())
+                chosen.extend((l,t,output_image(patches[k]),role) for i,((role,l,t),k) in enumerate(zip(batch,nodes),offset+1) if i not in skipped)
+            finish_neural(base_guide,neural,chosen,master,rec.get('画材',''))
+            master=preserve_source_marks(source_path,master)
+            small=preserve_source_marks(source_path,small)
             focus_sheet=job/(stage+'-detail-comparison.jpg')
-            write_focus_proof(master,[INPUT/name for name in names],boxes,focus_sheet)
-            rec['精绘区域报告']={'同位校样':focus_sheet.name,'覆盖':'4K全幅扩散或原生4K，8K全幅神经超分加焦点原像素扩散','8K图块':PATCH,'8K局部':boxes,'实际撤回的区域':sorted(skipped),'长边':[3840,7680]}
+            if boxes:write_focus_proof(master,[INPUT/name for name in names[:len(boxes)]],boxes,focus_sheet)
+            rec['精绘区域报告']={'同位校样':focus_sheet.name,'覆盖':'4K全幅扩散或原生4K，8K全幅神经超分，焦点与有结构区域按原像素重绘','8K图块':PATCH,'8K局部':boxes,'全幅纹理选区':surfaces,'实际撤回的区域':sorted(skipped),'长边':[3840,7680]}
             return master,small
         if 'report' in ids:rec['精绘区域报告']=hist.get(ids['report'])
         else:rec['精绘区域报告']={'覆盖':'原生 4K、8K 分块扩散' if native_four else '两次全幅重叠分块扩散','图块':1152,'布局':'全幅等距，保形融合','长边':[3840,7680]}
@@ -558,6 +603,9 @@ def main():
         for path,edge in ((master,7680),(small,3840)):
             with Image.open(path) as image:
                 if max(image.size)!=edge:raise RuntimeError('尺寸校验失败 '+str(path))
+        if reference_style:
+            master=preserve_source_marks(source_path,master)
+            small=preserve_source_marks(source_path,small)
         return master,small
     def native_pair(source_path,stage):
         dest=job/'pending-review'/stage
@@ -573,16 +621,18 @@ def main():
     master,small=native_pair(approved,'native-repair') if args.keep_native else render(approved,'refine')
     from print_judge import fingerprint, inspect as print_inspect, MODEL
     from production import publish
+    detail_rebuilt=False
     # The model inspects the exact finished files, including every replacement.
     for attempt in range(3):
         label='final-art' if attempt==0 else f'revision-{attempt}-final-art'
+        release_idle_renderer(args.port)
         final=check(master,label,focus)
         rec['8K']=os.path.relpath(master,job);rec['4K']=os.path.relpath(small,job)
         rec['status']='离线逐块终审中';save(manifest,rec)
         # A decisive failed structural review must not be released on a second model's vote.
         if final['status']=='global':
             rec['终审退回原因']=final['note'];break
-        judged=print_inspect(master,prompt,job,final,small=small,focus=rec.get('精绘区域报告',{}))
+        judged=print_inspect(master,prompt,job,final,small=small,focus=rec.get('精绘区域报告',{}),draft=approved)
         rec['逐块终审']={'sha256':judged['sha256'],'状态':judged['status'],'已看视图':len(judged['views']),
                       '计划视图':judged['planned'],'原像素图块':judged['planned_native'],'报告':judged['report']}
         save(manifest,rec)
@@ -601,6 +651,30 @@ def main():
         candidates=([judged['issue']] if judged['status']=='local' else final['issues'] if final['status']=='local' and judged['status']=='pass' else [])
         issue=next((item for item in candidates if region(item,final) and item.get('fix')),None)
         rec['终审退回原因']=judged.get('issue',{}).get('symptom') or final.get('note','')
+        if (reference_style and not args.keep_native and not detail_rebuilt and attempt<2 and
+                judged.get('issue',{}).get('category')=='unresolved_focus' and (not issue or attempt>0)):
+            # A verified focus failure across the picture, or one that survived a local repair,
+            # needs a higher-resolution drawing of the scene before another print pass.
+            detail_rebuilt=True
+            stage=f'detail-source-{attempt+1}'
+            with Image.open(approved) as original:
+                scale=min(3840/max(original.size),max(1,min(3072/max(original.size),2304/(original.width*original.height)**.5)))
+                size=tuple(max(64,round(n*scale/16)*16) for n in original.size)
+                reference=local_image(original.convert('RGB'))
+            fix=judged['issue'].get('fix') or judged['issue']['symptom']
+            caption=('Reconstruct the same composition in its original medium. Keep subject identity, count, pose, placement, palette and light. '
+                     'Resolve focal structures at this drawing scale, respecting soft focus and flat regions. Observed problem: '+fix+' Scene: '+prompt)
+            graph=reference_draft(caption,seed+830+attempt,*size,prefix+'/'+stage,reference=reference,edit=True)
+            history=post_graph(graph.api,args.port,job,stage,graph.ui())
+            candidate=output_image(history[str(len(graph.nodes))])
+            rebuilt=check(candidate,stage)
+            if not usable(rebuilt):break
+            from print_judge import same_composition
+            if not same_composition(approved,candidate,prompt):break
+            rec['高清底图返工']={'源图':str(approved),'重绘':str(candidate),'依据':fix}
+            approved=candidate
+            master,small=render(approved,stage+'-print')
+            continue
         if not issue or attempt==2:break
         focus=region(issue,final)
         with Image.open(master) as final_image:
