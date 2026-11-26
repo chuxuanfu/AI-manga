@@ -59,12 +59,19 @@ def selection(size, target):
     return Image.composite(soft,Image.new('L',size),support)
 
 
-def describe_patch(url, crop, locator):
+def describe_patch(url, crop, locator, *, localize=False):
     fields={'subject':{'type':'string'},'material':{'type':'string'},'marks':{'type':'string'}}
+    guidance=''
+    if localize:
+        fields.update(scope={'enum':['bounded_subject','continuous_surface','unidentified']},
+                      label={'type':'string'},feature={'type':'string'})
+        guidance=(' For a visibly bounded person, animal or object, give its common basic noun as label '
+                  'and a short noun phrase for an existing finer feature, such as a cuff or an eye. '
+                  'For a continuous surface or indistinguishable subject leave both labels empty.')
     return json.loads(ask(url,[crop,locator],
         'Image 1 is a crop from within the pink rectangle in image 2. Name only the subject or surface actually '
         'visible INSIDE the crop, the medium and the physical marks that describe it. The rest of the artwork '
-        'is solely for identification. Do not name figures or objects outside the crop. Use one short phrase per field.',
+        'is solely for identification. Do not name figures or objects outside the crop. Use one short phrase per field.'+guidance,
         {'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
 
 
@@ -156,8 +163,13 @@ def repaint_definition(master, pixels, medium, seed, folder, stage, port, prefix
         suffix='-closeup' if magnified else ''
         candidate=_repaint_at_scale(master,pixels,medium,seed+int(magnified)*3877,folder,stage+suffix,port,
                                     prefix+suffix,magnified=magnified,**tools)
-        if candidate:
-            return candidate
+        if candidate:return candidate
+        receipt=folder/(stage+'-definition.json')
+        if not magnified and receipt.is_file():
+            report=json.loads(receipt.read_text())
+            if (report.get('key',[None])[0]==fingerprint(master) and report.get('optical_subject_pixels')
+                    and report['key'][1]==list(pixels)):
+                pixels=tuple(report['optical_subject_pixels'])
     return None
 
 
@@ -177,14 +189,14 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
     source_sha=fingerprint(master)
     receipt=folder/(stage+'-definition.json')
     destination=folder/(stage+'-refined.png')
-    identity=[source_sha,list(pixels),medium,seed,editor,model_identity(LARGE),'focal-definition-2']
+    identity=[source_sha,list(pixels),medium,seed,editor,model_identity(LARGE),'source-anchored-optical-edit-1']
     if receipt.is_file():
         saved=json.loads(receipt.read_text())
         if saved.get('key')==identity:
             if saved.get('decision')=='hold':return None
             if destination.is_file() and saved.get('sha256')==fingerprint(destination):return destination
     with backend(LARGE) as url:
-        caption=describe_patch(url,base.crop(target),locator)
+        caption=describe_patch(url,base.crop(target),locator,localize=True)
         if magnified:
             details={'mark':{'type':'string'},'placement':{'type':'string'}}
             drawing=json.loads(ask(url,[base.crop(target),locator],
@@ -194,6 +206,16 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
                 'where they belong. Match the existing medium. Preserve smooth areas and silhouettes.',
                 {'type':'object','properties':details,'required':list(details)},tag=LARGE))
             caption['detail_direction']=drawing['mark']+'. '+drawing['placement']
+    subject_pixels=None
+    if caption.get('scope')=='bounded_subject' and caption.get('label','').strip():
+        from masks import focal_subject_mask
+        mask,site=focal_subject_mask(base,mask,caption['label'].strip(),caption.get('feature','').strip())
+        if mask.getbbox() is None:
+            store(receipt,{'key':identity,'decision':'hold','caption':caption,
+                           'reason':'The located subject has no pixels in the disputed field.'})
+            return None
+        if site:
+            subject_pixels=[v+bounds[i%2] for i,v in enumerate(site)]
     direction=('Return the exact composition and framing of image 1. Image 2 shows the whole original illustration '
                'for context. Keep the boundaries and colors of image 1. Re-illustrate the selected surface at print '
                'scale with clearly separated fine marks that follow its existing physical forms. Visible subject: '
@@ -216,7 +238,7 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
     corrected=Image.composite(paint,base,mask)
     before=base.crop(target);after=corrected.crop(target)
     evidence={'key':identity,'caption':caption,'raw_sha256':fingerprint(raw),'field':list(bounds),'target':list(target),
-              'signal':resize_only((before,after)),'decision':'hold'}
+              'signal':resize_only((before,after)),'optical_subject_pixels':subject_pixels,'decision':'hold'}
     from print_artifacts import unsupported_lines
     evidence['new_line_geometry']=unsupported_lines(before,after)
     if evidence['new_line_geometry']['hold'] or evidence['signal']['condition']!='distinct_signal':

@@ -889,6 +889,26 @@ class LocalRepairTests(unittest.TestCase):
                          'seated-cat-side-profile.jpg')
         self.assertIsNone(construction_guide('Repaint the deck. Preserve the cat seated in side profile.'))
 
+    def test_optical_edit_mask_cannot_expand_into_a_new_subject(self):
+        import numpy as np
+        from masks import focal_subject_mask
+        image=Image.new('RGB',(352,352),'seagreen')
+        area=Image.new('L',image.size,255)
+        parent=np.zeros((352,352),np.float32)
+        parent[90:250,195:310]=.9
+        eye=np.zeros_like(parent)
+        eye[120:140,201:217]=.82
+        with patch('masks.probabilities',return_value=[parent,eye]):
+            mask,focus=focal_subject_mask(image,area,'frog','eye')
+        self.assertEqual(focus,(201,120,217,140))
+        self.assertEqual(mask.getbbox(),(195,90,310,250))
+        with patch('masks.probabilities',return_value=[parent,eye]):
+            unrelated=Image.new('L',image.size)
+            ImageDraw.Draw(unrelated).rectangle((1,1,100,200),fill=255)
+            mask,focus=focal_subject_mask(image,unrelated,'frog','eye')
+        self.assertIsNone(mask.getbbox())
+        self.assertIsNone(focus)
+
     def test_flat_color_spill_must_cross_the_target_and_destroy_existing_lines(self):
         from construction_review import overpainted_rectangle
         src=Image.new('RGB',(240,160),'#235742')

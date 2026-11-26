@@ -10,7 +10,10 @@ import sys
 
 import torch
 
-MODEL_ROOT = Path(__file__).resolve().parents[3] / "models"
+_package_parent = Path(__file__).resolve().parents[1]
+# The same module runs both from the project and as an installed ComfyUI node.
+_runtime = _package_parent.parent / "runtime" if _package_parent.name == "extensions" else _package_parent.parent.parent
+MODEL_ROOT = _runtime / "models"
 INSTRUCTION = """You plan a Japanese anime illustration and the actual surfaces worth detailing.
 Read the user's scene in any language. Return ONLY a JSON object with these keys:
 "caption": an English image-generation prompt, a concise faithful translation of the user's description.

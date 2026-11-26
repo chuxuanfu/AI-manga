@@ -42,6 +42,30 @@ def object_mask(before, after, target, area, neighbours=(), *, confirmed_shape=F
     return limited
 
 
+def focal_subject_mask(image, area, label, feature):
+    """Confine optical detail to an existing subject and locate its feature for a closer retry."""
+    names=[label]+([feature] if feature and feature!=label else [])
+    scores=probabilities(image,names)
+    parent=scores[0]
+    if parent.max()<.48:return area,None
+
+    def support(score):
+        body=score>max(.24,.45*float(score.max()))
+        return Image.fromarray(np.uint8(body)*255).resize(image.size,Image.Resampling.BILINEAR)
+
+    silhouette=support(parent)
+    # The outer contour stays in the source coordinates. A newly painted second
+    # subject cannot enlarge its own edit mask.
+    limited=ImageChops.multiply(area,silhouette)
+    if limited.getbbox() is None:return limited,None
+    focus=limited
+    if len(scores)>1 and scores[1].max()>=.40:
+        inner=ImageChops.multiply(limited,support(scores[1]))
+        if inner.point(lambda x:255 if x>=128 else 0).getbbox():
+            focus=inner
+    return limited,focus.point(lambda x:255 if x>=128 else 0).getbbox()
+
+
 def structural_composite(before, after, area, canvas_edges):
     """Place a rebuilt shape intact, joining the two drawings through agreeing surroundings."""
     import cv2
