@@ -11,6 +11,43 @@ ENGINE=Path(__file__).resolve().parents[1]/'models/anime_superres'
 PATCH=1152
 PRINT_REVISION=5
 
+def fit_print_aspect(path, aspect, edge):
+    """Resolve diffusion-lattice rounding before reviewing the delivered raster."""
+    from PIL import ImageOps
+    import tempfile
+    if not aspect or aspect=='auto':
+        return path
+    x,y=map(int,aspect.split(':'))
+    wanted=(round(edge*x/max(x,y)),round(edge*y/max(x,y)))
+    with Image.open(path) as src:
+        if src.size==wanted:
+            return path
+        if max(src.size)!=edge:
+            raise ValueError('The print pass did not reach the requested long edge')
+        image=src.convert('RGB')
+    dx,dy=(a-b for a,b in zip(wanted,image.size))
+    if max(abs(dx),abs(dy))<=max(8,round(edge*.006)):
+        # Keep every interior pixel aligned. Correct only the few outer rows or
+        # columns introduced by rounding the model's native canvas to a latent grid.
+        w,h=image.size
+        left=max(0,-dx//2); top=max(0,-dy//2)
+        image=image.crop((left,top,left+min(w,wanted[0]),top+min(h,wanted[1])))
+        padx=wanted[0]-image.width; pady=wanted[1]-image.height
+        if padx or pady:
+            image=Image.fromarray(np.pad(np.asarray(image),((pady//2,pady-pady//2),(padx//2,padx-padx//2),(0,0)),mode='edge'))
+    else:
+        image=ImageOps.fit(image,wanted,method=Image.Resampling.LANCZOS)
+    dest=path.with_name(path.stem+f'-{x}x{y}.png')
+    with tempfile.NamedTemporaryFile(dir=dest.parent,suffix='.png',delete=False) as tmp:
+        temporary=Path(tmp.name)
+    try:
+        image.save(temporary,compress_level=3)
+        temporary.replace(dest)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return dest
+
+
 def neural_double(source,destination):
     subprocess.run([str(ENGINE/'realesrgan-ncnn-vulkan'),'-i',str(source),'-o',str(destination),
                     '-m',str(ENGINE),'-n','realesr-animevideov3','-s','2','-t','256'],

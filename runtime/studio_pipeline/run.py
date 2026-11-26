@@ -1136,6 +1136,11 @@ def main():
     # The model inspects the exact finished files, including every replacement.
     for attempt in range(3):
         label='final-art' if attempt==0 else f'revision-{attempt}-final-art'
+        from focus_print import fit_print_aspect
+        aspect=rec.get('aspect','auto')
+        master=fit_print_aspect(master,aspect,3840 if four_only else 7680)
+        if small is not None:
+            small=fit_print_aspect(small,aspect,3840)
         release_idle_renderer(args.port)
         if four_only and not args.repair_box and not args.keep_native:
             from lettering import clean_lettering

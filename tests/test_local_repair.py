@@ -96,6 +96,18 @@ class LocalRepairTests(unittest.TestCase):
                     self.assertEqual(result['issue']['category'],'unresolved_focus')
                     self.assertGreaterEqual(len(result['resampling_check'][0]['fields']),2)
 
+    def test_latent_rounding_keeps_original_pixels_on_the_requested_print_canvas(self):
+        from focus_print import fit_print_aspect
+        with TemporaryDirectory() as temp:
+            source=Path(temp)/'art.png'
+            image=Image.effect_noise((384,214),50).convert('RGB');image.save(source)
+            result=fit_print_aspect(source,'16:9',384)
+            with Image.open(result) as corrected:
+                self.assertEqual(corrected.size,(384,216))
+                self.assertIsNone(ImageChops.difference(image,corrected.crop((0,1,384,215))).getbbox())
+            self.assertEqual(result,fit_print_aspect(result,'16:9',384))
+            self.assertEqual(source,fit_print_aspect(source,'auto',384))
+
     def test_ctc_word_decoder_preserves_double_letters_separated_by_blanks(self):
         import numpy as np
         from lettering import decode_word
