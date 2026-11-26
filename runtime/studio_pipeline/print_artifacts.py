@@ -121,3 +121,44 @@ def resolved_line_pair(low, high):
                               polarity='dark' if polarity==1 else 'light',lower_contrast=round(float(old_contrast[y,x]),2),
                               print_contrast=round(float(new_contrast[y,x]),2),strength=round(peak,2))
     return best
+
+
+def suppress_isolated_marks(source, candidate):
+    """Interpolate isolated new flecks along the direction of an existing contour."""
+    if source.size != candidate.size or min(source.size)<12:
+        return None
+    guide, print_pixels = [np.asarray(im.convert('RGB')) for im in (source, candidate)]
+    gray = cv2.cvtColor(guide, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    dx = cv2.Sobel(gray, -1, 1, 0)
+    dy = cv2.Sobel(gray, -1, 0, 1)
+    xx, xy, yy = [cv2.GaussianBlur(field, (0,0), 2.5) for field in (dx*dx, dx*dy, dy*dy)]
+    angle = .5*np.arctan2(2*xy, xx-yy)
+    tangent_x, tangent_y = -np.sin(angle), np.cos(angle)
+    y, x = np.indices(gray.shape, dtype=np.float32)
+    along = (xx+yy>200) & (np.hypot(xx-yy,2*xy)>.55*(xx+yy))
+
+    def expected_color(field):
+        middle = cv2.medianBlur(field, 5)
+        samples = [cv2.remap(field, x+tangent_x*offset, y+tangent_y*offset, cv2.INTER_NEAREST,
+                             borderMode=cv2.BORDER_REFLECT_101) for offset in (-5,-4,-3,-2,2,3,4,5)]
+        middle[along] = np.median(np.stack(samples),axis=0)[along]
+        return middle
+
+    predicted = expected_color(print_pixels)
+    contrast = np.max(np.abs(print_pixels.astype(np.int16)-predicted),axis=2)
+    source_contrast = np.max(np.abs(guide.astype(np.int16)-expected_color(guide)),axis=2)
+    isolated = np.uint8((contrast>19) & (contrast>2*source_contrast+13))
+    _, labels, stats, _ = cv2.connectedComponentsWithStats(isolated, connectivity=8)
+    eligible = ((stats[:,cv2.CC_STAT_AREA]<=55) & (stats[:,cv2.CC_STAT_WIDTH]<=12)
+                & (stats[:,cv2.CC_STAT_HEIGHT]<=12))
+    eligible[0] = False
+    selected = eligible[labels]
+    # Thin outlying strokes at the field boundary may continue beyond the sampled pixels.
+    selected[:5] = selected[-5:] = False
+    selected[:,:5] = selected[:,-5:] = False
+    count = int(selected.sum())
+    if not 8<=count<=selected.size*.08:
+        return None
+    corrected = print_pixels.copy()
+    corrected[selected] = predicted[selected]
+    return Image.fromarray(corrected), count

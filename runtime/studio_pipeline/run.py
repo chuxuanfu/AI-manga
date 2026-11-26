@@ -1379,6 +1379,18 @@ def main():
         if four_only and attempt<2 and not (args.keep_native or args.selection_mask or args.repair_box):
             from focal_edit import failed_focus, print_constraints, repaint_definition
             pixels=failed_focus(judged)
+            if not rec.get('4K散点修复'):
+                from focal_edit import repair_reported_speckles
+                polished=repair_reported_speckles(master,approved,judged,job,f'print-clean-{attempt+1}')
+                if polished:
+                    master,pixel_rect=polished
+                    size=judged['size']
+                    repair_check={'box':[round(v*1000/n) for v,n in zip(pixel_rect,size*2)],
+                                  'symptom':judged['views'][-1]['blind_detail_check']['trace']['improvement']}
+                    small=None
+                    rec['4K散点修复']=master.with_suffix('.json').name
+                    save(manifest,rec)
+                    continue
             from restoration import available as restoration_available
             needs_detail=pixels or finding.get('category')=='unresolved_focus'
             if (attempt==0 and needs_detail and not repair_check and not args.candidate_image

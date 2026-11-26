@@ -265,3 +265,36 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
                 evidence.update(decision='improved',sha256=fingerprint(destination))
     store(receipt,evidence)
     return destination if evidence['decision']=='improved' else None
+
+
+def repair_reported_speckles(master, baseline, report, folder, stage):
+    """Try a source-guided print correction when the reader saw new isolated speckles."""
+    import re
+    from print_artifacts import suppress_isolated_marks
+    from print_judge import compare_pixels
+    if not baseline or not report.get('views') or report.get('status') not in ('uncertain','local'):
+        return None
+    view = report['views'][-1]
+    trace = view.get('blind_detail_check',{}).get('trace',{})
+    if (view['view']!='comparison' or trace.get('new_artifact') is not True or
+            not re.search(r'\b(?:speckles?|speckling|speckled|pinholes?|pitting|flecks?|stippled|salt.and.pepper)\b',
+                          trace.get('improvement',''), re.I)):
+        return None
+    if report.get('comparison_sha256')!=fingerprint(baseline) or report.get('sha256')!=fingerprint(master):
+        return None
+    rect = tuple(view['pixels'])
+    with Image.open(master) as im, Image.open(baseline) as low:
+        w,h = im.size
+        if not (list(im.size)==report.get('size') and 0<=rect[0]<rect[2]<=w and 0<=rect[1]<rect[3]<=h
+                and max(rect[2]-rect[0],rect[3]-rect[1])<=1152):return None
+        old, current = compare_pixels(low.convert('RGB'), im.convert('RGB'), rect, im.size)
+        cleaned = suppress_isolated_marks(old, current)
+        if not cleaned:return None
+        art, count = cleaned
+        result = im.convert('RGB')
+    result.paste(art, rect[:2])
+    target = folder/(stage+'-speckles-'+report['sha256'][:12]+'.png')
+    result.save(target)
+    store(target.with_suffix('.json'),dict(source_sha256=report['sha256'],baseline_sha256=report['comparison_sha256'],
+          output_sha256=fingerprint(target),pixels=list(rect),changed_pixels=count,observed=trace['improvement']))
+    return target, rect
