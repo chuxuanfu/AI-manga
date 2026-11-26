@@ -246,8 +246,9 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     recolor=pigment_edit(original_request[1])
     from illustration import construction_guide
     guide=construction_guide(original_request[1]) if reference_style and rebuild_shape else None
+    scene_depth='whole scene as a depth reference' in original_request[1].casefold()
     specialist=(installed_editor(model_root) if allow_specialist and reference_style and rebuild_shape
-                and (guide or recolor or reconstruction_attempt>=2) else None)
+                and (guide or scene_depth or recolor or reconstruction_attempt>=2) else None)
     if specialist:
         source=local_image(prepared)
         direction=('Repaint the pigment and pattern of the specified surface. Keep its silhouette, pose, contact shadows '
@@ -262,6 +263,13 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
             direction+=('Image 2 shows only a physical relationship: '+construction+
                         ' Orient that relationship to the existing approach direction in image 1. '
                         'Keep the mounting surface, scale, graphic style, and palette in image 1. ')
+        elif scene_depth:
+            overview=im.copy()
+            overview.thumbnail((1024,1024),Image.Resampling.LANCZOS)
+            reference=local_image(overview)
+            save(directory/(stage+'-reference.json'),{'role':'whole composition and depth','input':reference,'target':box})
+            direction+=('Image 2 is the entire same drawing. Locate the part in image 2 before revising '
+                        'image 1. Keep the pose and distinguish a distant background from an actual support. ')
         edit=instruction_edit('Edit this same illustration close-up. '+direction+
                               'Preserve the surrounding objects, light and medium. Target: '+
                               str(target or 'the selected area')+'. '+description,seed,source,prefix,specialist,masked=True,detail_reference=reference)

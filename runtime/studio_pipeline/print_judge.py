@@ -1321,6 +1321,13 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                         record['independent_action_check']=functional
                         if not disputed_action_resolved(functional):
                             third=dict(second,decision='uncertain')
+                            relation=functional.get('depth_inventory',{}).get('relation')
+                            detail=functional.get('depth_verification',{})
+                            if relation=='separated_in_space' and detail.get('matches_pose') is False:
+                                third.update(operation='redraw',fix='Resolve the misleading tangent with the background. '
+                                    'Use the whole scene as a depth reference. Separate the foreground silhouette from the '
+                                    'distant surface edge. Preserve the subject attachment, weight and depicted action. '
+                                    'Make the connection and visible ends traceable without the close-up reading as a new support.')
                             if functional.get('condition')=='visible_fault':
                                 third['evidence']+=' Independent whole-part reading: '+functional['problem']
                     record['independent_context']=third
