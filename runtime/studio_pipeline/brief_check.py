@@ -12,6 +12,55 @@ VIEWPOINT=re.compile(r'\b(?:in (?:strict |full |side )?profile|side[- ](?:on|pro
                      r'正侧面|侧面(?:视角|轮廓)|背对镜头|正对镜头|正面视角|四分之三侧面',re.I)
 
 
+# Only explicit camera-relative words can establish a mismatch. A subject looking
+# toward another object says nothing about which side the camera can see.
+CAMERA_ANGLES = {
+    'three-quarter': r'\bthree[- ]quarters? (?:view|profile|silhouette|angle)\b|四分之三侧面',
+    'side': r'\b(?:side[- ](?:profile|on|view)|(?:in|shown in|full|strict) (?:strict )?profile|'
+            r'(?:seen|viewed|shown|drawn) from the side)\b|正侧面|侧面视角',
+    'rear': r'\b(?:rear[- ]view|back[- ]view|(?:seen|viewed|shown|drawn) (?:directly )?from behind|'
+            r'(?:its|her|his|their) back (?:is )?(?:turned |facing )?(?:to|toward) the (?:viewer|camera))\b|背对镜头',
+    'front': r'\b(?:front[- ]view|(?:seen|viewed|shown|drawn) (?:directly )?from the front|'
+             r'front[- ]on|head[- ]on|facing (?:directly |straight )?(?:towards? )?the (?:viewer|camera))\b|正对镜头|正面视角',
+}
+ANGLE_SUBJECTS = (
+    r'cat|kitten|feline|tabby',r'dog|puppy|canine',r'girl|woman|lady|heroine',
+    r'boy|man|gentleman',r'face|head',r'bird|owl|heron|crane',r'fox|vixen',
+)
+
+
+def camera_conflict(requirement,inventory):
+    """Corroborate incompatible, explicitly named views on the same depicted subject."""
+    def angles(text):
+        return {key for key,pattern in CAMERA_ANGLES.items() if re.search(pattern,text,re.I)}
+    wanted=angles(requirement)
+    if len(wanted)!=1:return None
+    # A turned face and a torso seen from behind may belong to the very same
+    # person. Use statements which name the requested subject at that level.
+    head_only=bool(re.search(r"\b(?:face|head)\s+(?:is |appears |turned |in |shown |seen )",requirement,re.I))
+    for clause in re.split(r'[.;!?。；]',inventory):
+        if re.search(r'\b(?:perhaps|maybe|possibly|unclear|rather than|not|or)\b',clause,re.I):continue
+        seen=angles(clause)
+        if len(seen)!=1 or wanted==seen:continue
+        if head_only and not re.search(r"\b(?:head|face)\b",clause,re.I):continue
+        if not head_only and re.search(r"\b(?:head|face) (?:is |turned |faces |shown |seen )",clause,re.I):
+            continue
+        def subjects(text):
+            return {family for family in ANGLE_SUBJECTS if re.search(r'\b(?:'+family+r')\b',text,re.I)}
+        required=subjects(requirement)
+        observed=subjects(clause)
+        if head_only:
+            same_subject=(r'face|head' in required and r'face|head' in observed
+                          and not (required-{r'face|head'} and observed-{r'face|head'} and
+                                   required-{r'face|head'}!=observed-{r'face|head'}))
+        else:
+            required.discard(r'face|head');observed.discard(r'face|head')
+            same_subject=len(required)==1 and required==observed
+        if same_subject:
+            return {'requested':next(iter(wanted)),'observed':next(iter(seen)),'visible_words':clause.strip()}
+    return None
+
+
 def subject_witness(url, image, overview, brief, tag):
     position={key:{'type':'integer','minimum':0,'maximum':1000} for key in ('left','top','right','bottom')}
     properties={'quote':{'type':'string'},'inspect':{'type':'string'},**position}
@@ -113,9 +162,13 @@ def subject_witness(url, image, overview, brief, tag):
             if reading['relation']!='explicit_incompatibility' or len(words)<5 or words.casefold() not in neutral.casefold():
                 from animal_identity import named_animal_conflict
                 conflict=named_animal_conflict(n['quote'],neutral)
-                if not conflict:continue
-                n['named_animal_conflict']=conflict
-                fix='Depict the requested '+conflict['requested']+' in this position. '+fix
+                angle=(camera_conflict(n['quote'],neutral) if viewpoint and vote['decision']=='visible_contradiction' else None)
+                if angle:
+                    n['viewpoint_conflict']=angle
+                elif conflict:
+                    n['named_animal_conflict']=conflict
+                    fix='Depict the requested '+conflict['requested']+' in this position. '+fix
+                else:continue
             issue={'decision':'local','operation':'redraw','target':n['quote'],'fix':fix,
                    'evidence':f"The requested detail {n['quote']!r}: {neutral}",**dict(zip(position,n['box']))}
     return notes,issue

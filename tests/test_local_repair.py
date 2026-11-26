@@ -31,6 +31,18 @@ class LocalRepairTests(unittest.TestCase):
             dashboard(job,{'prompt':'A coastal scene','rounds':[],'status':'本轮未达标，自动重试'})
             self.assertNotIn('href="4K.png"',(job/'proofs.html').read_text())
 
+    def test_viewpoint_uses_a_camera_relative_description_of_the_same_subject(self):
+        from brief_check import camera_conflict
+        request='small ginger cat sits upright in strict side profile facing out to the sea'
+        evidence='A ginger tabby cat sits on a wooden deck, viewed from behind. Its tail rises.'
+        self.assertEqual(camera_conflict(request,evidence)['observed'],'rear')
+        for other in ('A ginger cat sits facing the sea.', 'A dog is viewed from behind.',
+                      'A cat and a girl stand side by side, viewed from behind.',
+                      'A cat is possibly viewed from behind.', 'A cat in full side profile.'):
+            self.assertIsNone(camera_conflict(request,other))
+        self.assertIsNone(camera_conflict('Her face in three-quarter profile',
+                                         'The woman is viewed from behind. Her cheek is visible.'))
+
     def test_confirmed_extra_part_keeps_redraw_despite_an_intact_wrist(self):
         from print_judge import check_disputed_redraw,intact_description
         art=Image.new('RGB',(256,256),'tan')
