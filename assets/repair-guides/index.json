@@ -272,5 +272,34 @@
     "author": "Canarian",
     "license": "CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/",
     "modifications": "Cropped to the head and neck. This crop is distributed under the same CC BY-SA 4.0 license."
+  },
+  {
+    "file": "tying-shoelaces.jpg",
+    "requires": [
+      [
+        "shoelace",
+        "boot lace",
+        "shoe lace",
+        "鞋带"
+      ],
+      [
+        "hand",
+        "finger",
+        "fingertip",
+        "thumb",
+        "pinch",
+        "tying",
+        "retie",
+        "手",
+        "捏",
+        "系"
+      ]
+    ],
+    "construction": "At each side of the shoe tongue a thumb opposes a curled finger around one lace. The two visible strands approach the same central crossing. Match the positions of the wrists and the boot in the original illustration.",
+    "source": "https://commons.wikimedia.org/wiki/File:Woman_tying_her_shoelaces_on_a_side_of_the_road.jpg",
+    "author": "Shixart1985",
+    "license": "CC BY 2.0",
+    "license_url": "https://creativecommons.org/licenses/by/2.0/",
+    "modifications": "Cropped the wrists, fingers, laces and shoe from the original photograph."
   }
 ]

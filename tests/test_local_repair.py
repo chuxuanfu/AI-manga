@@ -1042,6 +1042,13 @@ class LocalRepairTests(unittest.TestCase):
                           'A Japanese spitz and a cockatiel.']:
             self.assertIsNone(identity_reference(unrelated))
 
+    def test_shoelace_reference_requires_an_actual_lace_interaction(self):
+        from illustration import construction_guide
+        selected=construction_guide('Draw the fingers pinching the boot lace.')
+        self.assertEqual(selected[0].name,'tying-shoelaces.jpg')
+        self.assertIsNone(construction_guide('Draw a lace cuff on her wrist.'))
+        self.assertIsNone(construction_guide('Repair the cat. Preserve the hands tying the shoelaces.'))
+
     def test_boat_hitch_and_dock_ring_select_distinct_construction_guides(self):
         from illustration import construction_guide
         cleat=construction_guide('Tie the rope to a cleat on the bow. Preserve the mooring ring on the dock.')
