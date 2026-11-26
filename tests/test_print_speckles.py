@@ -44,3 +44,19 @@ class PrintSpeckleTests(unittest.TestCase):
             self.assertIsNone(repair_reported_speckles(master,base,{**report,'sha256':'unrelated'},d,'trial'))
             view['blind_detail_check']['trace']['new_artifact']=False
             self.assertIsNone(repair_reported_speckles(master,base,report,d,'trial'))
+
+class OpticalShapeTests(unittest.TestCase):
+    def test_fine_surface_marks_survive_but_a_new_silhouette_returns_to_drawing(self):
+        from PIL import ImageDraw
+        from print_artifacts import optical_plane_change
+        source=Image.new('RGB',(360,320),'#78b6a6')
+        ink=ImageDraw.Draw(source)
+        ink.rectangle((95,20,155,265),fill='#193a48')
+        ink.rectangle((0,265,359,268),fill='#ccab75')
+        fine=source.copy()
+        drawing=ImageDraw.Draw(fine)
+        for y in range(36,217,8):
+            drawing.line((109,y,120,y+2),fill='#899a99',width=1)
+        self.assertFalse(optical_plane_change(source,fine)['hold'])
+        drawing.polygon([(120,190),(220,146),(252,301),(199,304)],fill='#17384b')
+        self.assertTrue(optical_plane_change(source,fine)['hold'])

@@ -162,3 +162,32 @@ def suppress_isolated_marks(source, candidate):
     corrected = print_pixels.copy()
     corrected[selected] = predicted[selected]
     return Image.fromarray(corrected), count
+
+
+def optical_plane_change(source, candidate):
+    """Locate coherent color-mass changes that exceed the scale of an optical detail pass."""
+    if source.size!=candidate.size:
+        raise ValueError('Unmatched optical fields')
+    sample=source.convert('RGB')
+    sample.thumbnail((448,448),Image.Resampling.BOX)
+    other=candidate.convert('RGB').resize(sample.size,Image.Resampling.BOX)
+    width,height=sample.size
+    span=min(width,height)
+    if span<32:return {'hold':False}
+    sigma=max(2,span*.016)
+    def planes(patch):
+        rgb=np.asarray(patch,dtype=np.float32)/255
+        return cv2.GaussianBlur(cv2.cvtColor(rgb,cv2.COLOR_RGB2LAB),(0,0),sigma)
+    difference=np.linalg.norm(planes(sample)-planes(other),axis=2)
+    changed=(difference>=19).astype(np.uint8)
+    # Texture, isolated flecks and offset single-pixel highlights must not veto
+    # new drawing. Require a broad interior and a connected surrounding mass.
+    radius=max(2,round(span*.013))
+    kernel=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(2*radius+1,2*radius+1))
+    core=cv2.morphologyEx(changed,cv2.MORPH_OPEN,kernel)
+    count,_,stats,_=cv2.connectedComponentsWithStats(core,connectivity=8)
+    if count<=1:return {'hold':False,'largest_fraction':0}
+    x,y,w,h,area=map(int,stats[1+np.argmax(stats[1:,cv2.CC_STAT_AREA])])
+    fraction=area/(width*height)
+    bounds=[round(n*k/s) for n,k,s in zip((x,y,x+w,y+h),source.size*2,sample.size*2)]
+    return dict(hold=fraction>=.018 and min(w,h)>=span*.08,largest_fraction=round(fraction,5),pixels=bounds)

@@ -189,7 +189,7 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
     source_sha=fingerprint(master)
     receipt=folder/(stage+'-definition.json')
     destination=folder/(stage+'-refined.png')
-    identity=[source_sha,list(pixels),medium,seed,editor,model_identity(LARGE),'source-anchored-optical-edit-1']
+    identity=[source_sha,list(pixels),medium,seed,editor,model_identity(LARGE),'source-anchored-optical-edit-2']
     if receipt.is_file():
         saved=json.loads(receipt.read_text())
         if saved.get('key')==identity:
@@ -239,7 +239,10 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
     before=base.crop(target);after=corrected.crop(target)
     evidence={'key':identity,'caption':caption,'raw_sha256':fingerprint(raw),'field':list(bounds),'target':list(target),
               'signal':resize_only((before,after)),'optical_subject_pixels':subject_pixels,'decision':'hold'}
-    from print_artifacts import unsupported_lines
+    from print_artifacts import unsupported_lines,optical_plane_change
+    evidence['changed_color_mass']=optical_plane_change(before,after)
+    if evidence['changed_color_mass']['hold']:
+        store(receipt,evidence);return None
     evidence['new_line_geometry']=unsupported_lines(before,after)
     if evidence['new_line_geometry']['hold'] or evidence['signal']['condition']!='distinct_signal':
         store(receipt,evidence);return None
