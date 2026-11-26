@@ -244,16 +244,27 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     prefix = (directory.relative_to(OUTPUT)/stage).as_posix()
     model_root=RUNTIME/'ComfyUI/models'
     recolor=pigment_edit(original_request[1])
+    from illustration import construction_guide
+    guide=construction_guide(original_request[1]) if reference_style and rebuild_shape else None
     specialist=(installed_editor(model_root) if allow_specialist and reference_style and rebuild_shape
-                and (recolor or reconstruction_attempt>=2) else None)
+                and (guide or recolor or reconstruction_attempt>=2) else None)
     if specialist:
         source=local_image(prepared)
         direction=('Repaint the pigment and pattern of the specified surface. Keep its silhouette, pose, contact shadows '
                    'and linework. Make the requested colors and pattern clearly visible over the intended surface. '
                    if recolor else 'Reconstruct the specified part and its visible connections. ')
+        reference=None
+        if guide:
+            file,credit=guide
+            with Image.open(file) as photo:reference=local_image(photo.convert('RGB'))
+            save(directory/(stage+'-reference.json'),{**credit,'input':reference})
+            construction=credit['construction']
+            direction+=('Image 2 shows only a physical relationship: '+construction+
+                        ' Orient that relationship to the existing approach direction in image 1. '
+                        'Keep the mounting surface, scale, graphic style, and palette in image 1. ')
         edit=instruction_edit('Edit this same illustration close-up. '+direction+
                               'Preserve the surrounding objects, light and medium. Target: '+
-                              str(target or 'the selected area')+'. '+description,seed,source,prefix,specialist,masked=True)
+                              str(target or 'the selected area')+'. '+description,seed,source,prefix,specialist,masked=True,detail_reference=reference)
         graph=edit.api
         output=str(len(edit.nodes))
     elif reference_style:

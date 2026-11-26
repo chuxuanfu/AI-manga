@@ -391,16 +391,65 @@ def inspect_disputed_action(url, image, box, brief):
     detail.thumbnail((1024,1024),Image.Resampling.LANCZOS)
     fields={'visible_shapes':{'type':'string'},'depicted_action':{'type':'string'},'problem':{'type':'string'},
             'condition':{'enum':['physically_plausible','visible_fault','insufficient']}}
-    cue=('Image 1 is the original composition. Image 2 shows the disputed area in context. Read independently. '
-         'Describe the actual action at this location. Trace the functional structure of the WHOLE visible part, '
-         'including its base, neighboring forms, articulations, expected visible ends, occlusion and the contact '
-         'carrying its weight. A recognizable tip or individually convincing outline cannot by itself establish '
+    from construction_review import edit_locator
+    # The same background pixels may lie metres behind a foreground part.
+    # Keep the location of the detail explicit at figure scale before asking
+    # the reader to infer a load, a grasp, or any other three-dimensional action.
+    side=min(max(image.size),max(4*max(pixels[2]-pixels[0],pixels[3]-pixels[1]),min(image.size)*.72))
+    middle=edit_locator(image, pixels) if side>=max(image.size) else None
+    if middle is None:
+        cx=(pixels[0]+pixels[2])/2;cy=(pixels[1]+pixels[3])/2
+        w,h=(min(n,round(side)) for n in image.size)
+        x=int(max(0,min(image.width-w,cx-w/2)));y=int(max(0,min(image.height-h,cy-h/2)))
+        middle=edit_locator(image.crop((x,y,x+w,y+h)),(pixels[0]-x,pixels[1]-y,pixels[2]-x,pixels[3]-y))
+    cue=('Image 1 shows the whole composition. Image 2 marks one detail within its surrounding subject. '
+         'Image 3 magnifies this same detail without a marker. Establish depth from the whole pose first. '
+         'Determine whether nearby objects touch, overlap at different depths, or have an ambiguous relation. '
+         'Only infer contact from a visible grip, shared boundary, compression, or matching local shadow. '
+         'Trace the functional structure of the WHOLE visible part, including its base, articulations, '
+         'expected visible ends and occlusion. A recognizable tip or individually convincing outline cannot by itself establish '
          'that the entire part and its action make physical sense. Does this arrangement work in three dimensions? '
          'If there is a visible deformity or an incompatible action, locate it relative to the visible parts. '
          'Respect stylized anatomy and illustration conventions, including believable occlusion or hidden '
          'hardware. Set visible_fault only for a concrete shape contradiction, and insufficient only when the '
          'part cannot be traced. Requested image: '+brief)
-    reading=json.loads(ask(url,[whole,detail],cue,{'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+    reading=json.loads(ask(url,[whole,middle,detail],cue,{'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+    if reading['condition']=='insufficient':
+        # The close-up removes the depth cues that distinguish a background
+        # from a support. Obtain the pose without showing either the close-up
+        # or the first reader's proposed action.
+        planes={'parent':{'type':'string'},'location_on_parent':{'type':'string'},
+                'adjacent_surface':{'type':'string'},'plane_evidence':{'type':'string'},
+                'relation':{'enum':['contact','overlap_at_different_depths','undetermined']}}
+        scene=json.loads(ask(url,[edit_locator(image,pixels)],
+            'Only inspect the marked location in the original illustration. Locate the small part '
+            'relative to its parent: for a person name the nearest body landmark and the posture; '
+            'for an object identify its mounting or suspension. Compare the height and position with '
+            'nearby surfaces IN THREE DIMENSIONS. Give a drawing cue which demonstrates contact or '
+            'occlusion at different depths. If neither relation is established, say undetermined.',
+            {'type':'object','properties':planes,'required':list(planes)},tag=MODEL,reason=True))
+        reading['depth_inventory']=scene
+        if scene['relation']!='undetermined' and all(scene[k].strip() for k in planes if k!='relation'):
+            facts={'part':{'type':'string'},'endpoints_and_edges':{'type':'string'},
+                   'specific_fault':{'type':'string'},'matches_pose':{'type':'boolean'},
+                   'result':{'enum':['coherent','malformed','unresolved']}}
+            check=json.loads(ask(url,[detail,middle],
+                'Trace the shape in image 1 independently from its base to every visible end. Image 2 '
+                'shows the part within its parent body. Identify visible branch points, outlines and '
+                'occluded ends. Inspect the actual shape for any missing or fused part, impossible joint, '
+                'or incompatible action. A subsequent reader viewed only the original wide drawing and '
+                'placed the feature here: '+json.dumps(scene)+'. Check this account against the two '
+                'images. Use an empty string in specific_fault when no fault is visible. Choose '
+                'coherent only for a visibly plausible part and pose, malformed only '
+                'for a concrete contradiction; use unresolved where actual pixels cannot settle it.',
+                {'type':'object','properties':facts,'required':list(facts)},tag=MODEL,reason=True))
+            reading['depth_verification']=check
+            if check['matches_pose'] and check['part'].strip() and check['endpoints_and_edges'].strip():
+                if check['result']=='coherent' and not actionable_edit(check['specific_fault']):
+                    reading.update(condition='physically_plausible',visible_shapes=check['endpoints_and_edges'],
+                                   depicted_action=scene['location_on_parent']+' '+scene['plane_evidence'],problem='')
+                elif check['result']=='malformed' and actionable_edit(check['specific_fault']):
+                    reading.update(condition='visible_fault',problem=check['specific_fault'])
     if reading['condition']=='visible_fault' and re.search(
             r'\bno (?:visible |physical |anatomical |structural )*(?:faults?|defects?|deformit(?:y|ies)|contradictions?|errors?|issues?)\b',
             reading['problem'],re.I):
@@ -801,6 +850,26 @@ def independent_detail_check(url, images, overview, brief):
     return report
 
 
+def inspect_focal_definition(url, master, baseline, brief):
+    """Locate the focal feature from the whole composition, then compare its actual native pixels."""
+    from construction_review import edit_locator
+    preview=master.copy()
+    preview.thumbnail((1000,1000),Image.Resampling.LANCZOS)
+    unit={'type':'integer','minimum':0,'maximum':1000}
+    fields={'feature':{'type':'string'},'x':unit,'y':unit}
+    aim=json.loads(ask(url,[preview],'Name and locate the main feature where this finished illustration '
+        'asks the viewer to look first. Select one small distinct contour or material feature '
+        'on that subject that should be legible according to the art direction. Give its center in '
+        'whole-image coordinates from 0 to 1000. Brief: '+brief,
+        {'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    if not aim['feature'].strip() or not all(type(aim[k]) is int and 0<=aim[k]<=1000 for k in ('x','y')):
+        return {'confirmed':False}
+    rect=centered_crop(master.size,(aim['x']/1000,aim['y']/1000),448)
+    pair=compare_pixels(baseline,master,rect,master.size)
+    proof=independent_detail_check(url,pair,edit_locator(master,rect),brief)
+    return {**proof,'location':aim,'pixels':list(rect)}
+
+
 def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None, source_comparison=False, construction_draft=False):
     digest=fingerprint(path)
     model_id=model_identity(MODEL)
@@ -824,6 +893,19 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
     result=json.loads(report.read_text()) if report.exists() else dict(
         model=MODEL,model_id=model_id,revision=REVISION,sha256=digest,source=str(path),
         brief=brief,views=[],status='running',report=str(report.relative_to(root)),comparison_sha256=prior_id,draft_sha256=draft_id)
+    if result['status']=='uncertain' and result.get('views'):
+        last=result['views'][-1]
+        old_depth=last.get('independent_action_check',{}).get('condition')=='insufficient'
+        old_style=last.get('style_intent',{}).get('outcome')=='unresolved'
+        if old_depth or old_style:
+            report=report.with_name(report.stem+'-perspective-2.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                # Rebuild the window plan for the same signed image. All previous
+                # evidence remains in the original report for comparison.
+                result=dict(model=MODEL,model_id=model_id,revision=REVISION,sha256=digest,source=str(path),
+                            brief=brief,views=[],status='running',report=str(report.relative_to(root)),
+                            comparison_sha256=prior_id,draft_sha256=draft_id)
     if result['status'] in ('pass','local','global','uncertain'):return result
     with ExitStack() as resources:
         with Image.open(path) as source:image=source.convert('RGB')
@@ -1120,7 +1202,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                                  'Choose intentional only when an exact phrase in the brief asks for that handling at this location. '
                                  'A distant haze directive cannot explain a soft focal face, a malformed limb or a broken connection. '
                                  'Set other_defect true for a visibly damaged shape, ringing or a material flaw. Use unresolved for ambiguity. '
-                                 'Quote the matching phrase verbatim. Concern: '+second['evidence']+' Brief: '+brief)
+                                 'Use only visible evidence. Report the location in depth and the material in your own words. '
+                                 'Quote the matching phrase verbatim, or leave it empty if no phrase fits. Brief: '+brief)
                     final_patch=region[-1] if isinstance(region,(list,tuple)) else region
                     intent=json.loads(ask(url,[overview,final_patch],instruction,
                                           {'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
@@ -1128,8 +1211,24 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     if (intent.get('outcome')=='intentional' and intent.get('requested_plane') is True and
                             intent.get('other_defect') is False and requested_handling(intent.get('phrase'),brief)
                             and str(intent.get('evidence') or '').strip()):
-                        second=dict(second,decision='clear',evidence=intent['evidence'],operation='none',fix='',target='')
-                        record['independent_context']=second
+                        focal_proof=None
+                        if kind in ('comparison','draft-comparison') and small:
+                            baseline=draft_image if kind=='draft-comparison' else before
+                            witness_key=draft_id if kind=='draft-comparison' else prior_id
+                            focal_checks=result.setdefault('focal_definition',{})
+                            if witness_key not in focal_checks:
+                                focal_checks[witness_key]=inspect_focal_definition(url,image,baseline,brief)
+                            focal_proof=focal_checks[witness_key]
+                        if focal_proof is None or focal_proof.get('confirmed'):
+                            second=dict(second,decision='clear',evidence=intent['evidence'],operation='none',fix='',target='')
+                            record['independent_context']=second
+                        elif focal_proof.get('pixels'):
+                            record['unresolved_focal_pixels']=focal_proof['pixels']
+                            record['issue_category']='unresolved_focus'
+                            second=dict(second,decision='uncertain',operation='none',fix='',target='focal detail',
+                                        evidence='The requested distant handling is visible. The matched native '
+                                        'samples do not establish improved definition of '+focal_proof['location']['feature']+'.')
+                            record['independent_context']=second
                 anchor=known[rect]['box'] if kind=='previous_local' else tentative
                 if (anchor and second['decision'] in ('local','uncertain') and
                         kind not in ('comparison','draft-comparison','palette')):

@@ -64,16 +64,31 @@ def record(path):
     try:return json.loads(path.read_text())
     except (ValueError,OSError):return {}
 
+def published_cover(job, data):
+    """A retained historical PNG is not proof of a current release."""
+    from print_judge import REVISION, fingerprint
+    art=job/'4K.png'
+    receipt=record(job/'final/review-receipt.json')
+    proof=job/'final/tile-inspection.json'
+    if not (art.is_file() and proof.is_file() and receipt.get('审图版本')==REVISION
+            and data.get('status')=='已自动定稿'):
+        return None
+    report=record(proof)
+    if (report.get('status')=='pass' and report.get('revision')==REVISION and
+            report.get('sha256')==receipt.get('sha256')==data.get('sha256') and
+            fingerprint(proof)==receipt.get('报告指纹') and fingerprint(art)==receipt.get('4K指纹')):
+        return art
+    return None
+
 def jobs(folder):
     tiles=[];cover=None
     for job in sorted((p for p in folder.iterdir() if p.is_dir()),key=lambda p:p.name,reverse=True):
         data=record(job/'production.json') or record(job/'review.json')
         dashboard=job/'proofs.html'
         if not dashboard.exists():continue
-        art=job/'4K.png'
-        ready=art.is_file() and (job/'final').is_dir()
-        if ready and cover is None:cover=art
-        tiles.append(card(folder,data.get('prompt',job.name),dashboard,art if ready else None,data.get('status',job.name)))
+        art=published_cover(job,data)
+        if art and cover is None:cover=art
+        tiles.append(card(folder,data.get('prompt',job.name),dashboard,art,data.get('status',job.name)))
     page(folder/ALBUM,'新提示词与定稿',grid(tiles) if tiles else '<p>新任务会出现在这里。</p>')
     return folder/ALBUM,cover
 
@@ -99,7 +114,9 @@ def refresh():
         for name in [*LABELS,*extras]:
             folder=IMAGES/name
             if not folder.is_dir():continue
-            if name=='new-jobs':entry,cover=jobs(folder)
+            if (folder/'current-review/index.html').is_file():
+                entry,cover=folder/'current-review/index.html',None
+            elif name=='new-jobs':entry,cover=jobs(folder)
             elif name=='fifty-scenes':
                 entry=folder/'index.html';cover=folder/'proofs/01-cherry-rain-post-office.jpg'
             else:entry,cover=history(folder)

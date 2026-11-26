@@ -5,6 +5,10 @@
 !/assets/
 /assets/*
 !/assets/illustration-reference.webp
+!/assets/repair-guides/
+/assets/repair-guides/*
+!/assets/repair-guides/index.json
+!/assets/repair-guides/rope-through-mooring-ring.jpg
 !/scripts/
 !/tests/
 /tests/*

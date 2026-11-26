@@ -41,7 +41,9 @@ def verify_repair_location(url,im,result,tag,indicated=None):
     """Confirm a collage finding against actual image coordinates before any inpaint."""
     target=result.get('target','')+' / '+result['observation']
     target=re.sub(r'\[\s*\d+(?:\s*,\s*\d+){3}\s*\]','',target).strip(' /')
-    schema={'type':'object','properties':{'state':{'enum':['defect_visible','target_is_coherent','target_absent_or_unclear']},'evidence':{'type':'string'}},'required':['state','evidence']}
+    fields={'state':{'enum':['defect_visible','target_is_coherent','target_absent_or_unclear']},
+            'target_visible':{'type':'boolean'},'evidence':{'type':'string'}}
+    schema={'type':'object','properties':fields,'required':list(fields)}
     evidence=[]
     def local(box):
         if len(box)!=4 or not (0<=box[0]<box[2]<=1000 and 0<=box[1]<box[3]<=1000):return None
@@ -50,14 +52,12 @@ def verify_repair_location(url,im,result,tag,indicated=None):
         area.thumbnail((800,800),Image.Resampling.LANCZOS)
         question=('Only examine this actual crop, without assuming the proposed problem is true. Is the named part and its claimed physical defect visibly present in these pixels? '
                   'Choose target_is_coherent if the target is clearly visible and the claim is contradicted. Use target_absent_or_unclear if the part, its supporting surface or its context is missing. '
+                  'Set target_visible as soon as the named part itself can be located, even when its geometry is unclear. '
                   'Allow normal occlusion and the intended illustration medium. In under 24 words describe the visible evidence. Proposed finding: '+target)
         direct=json.loads(ask(url,[area],question,schema,tag=tag))
         finding={'box':box,'direct':direct};evidence.append(finding)
         if direct['state']=='target_absent_or_unclear':
-            positive=re.search(r'(?:appears?|looks?|is|are) (?:clearly |visibly )?(?:continuous|coherent|intact)|'
-                               r'claimed defect is not visibly present|encloses? the (?:hand|wrist) naturally|'
-                               r'continuously (?:joins?|connects?)',direct['evidence'],re.I)
-            if not positive:return None
+            if not direct['target_visible']:return None
             from print_judge import MODEL
             alternate=MODEL if tag!=MODEL and available(MODEL) else tag
             trace_fields={'part_visible':{'type':'boolean'},'landmark_one':{'type':'string'},
@@ -250,6 +250,15 @@ def assess_edit_boundary(before, after, box, correction=None):
           'Choose A or B only when its transitions are coherent and the other sample shows a specific damaged '
           'transition. Choose both_intact if both join naturally, both_broken when both show breaks, ambiguous '
           'when the evidence cannot distinguish them. Name the exact location and what you see in EACH sample.')
+    from illustration import pigment_edit
+    recolor=pigment_edit(correction or '')
+    if recolor:
+        text+=(' The requested change to this illustration is: '+correction+
+               ' A marking inside the recolored object can end sharply or completely replace the original '
+               'pattern. Trace the EXTERIOR silhouette against the background, continuity of nearby '
+               'objects, the contact shadow and common lighting. Judge a defect only where the new '
+               'pigment spills onto a different object, cuts an exterior contour, leaves a rectangular '
+               'patch or introduces inconsistent shading. Identify landmarks on both sides of any break.')
     with backend(MODEL) as url:
         answer=json.loads(ask(url,[a[0],b[0],a[1],b[1]],text,
                         {'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
@@ -258,6 +267,33 @@ def assess_edit_boundary(before, after, box, correction=None):
     if answer.get('trace','').strip():
         if winner in (candidate,'both_intact'):status='intact'
         elif winner in ('A','B'):status='new_damage'
+    if recolor and status!='intact' and available(LARGE):
+        # Independently trace the candidate itself: a blind pair can prefer a
+        # continuous old pattern even when replacing it was the requested edit.
+        fields={'inside_landmark':{'type':'string'},'outside_landmark':{'type':'string'},
+                'trace':{'type':'string'},'edge':{'enum':['continuous','bleed_or_cut','unclear']},
+                'light_and_style':{'enum':['consistent','broken','unclear']}}
+        query=('Image 1 shows one detail in context. Image 2 enlarges four parts of the same image. '
+               'Identify an exterior object edge and two distinct visible landmarks, one on each side. '
+               'Follow the subject perimeter and contact shadow, then inspect nearby background surfaces '
+               'for stray pigment, rectangular seams, double outlines, sudden texture or lighting changes. '
+               'Patterns ending within the object can be intentional. What physical evidence shows the '
+               'exterior edge is continuous, broken, or impossible to tell? Describe the actual drawing. '
+               'An intended local change was: '+correction)
+        with backend(LARGE) as url:
+            proof=json.loads(ask(url,list(new_views),query,{'type':'object','properties':fields,
+                                  'required':list(fields)},tag=LARGE,reason=True))
+        answer['independent_perimeter']={'model':LARGE,**proof}
+        landmarks=[proof[key].strip().casefold() for key in ('inside_landmark','outside_landmark')]
+        if all(landmarks) and landmarks[0]!=landmarks[1] and proof['trace'].strip():
+            answer['pair_trace']=answer['trace']
+            answer['trace']=proof['trace']
+            if proof['edge']=='continuous' and proof['light_and_style']=='consistent':
+                status='intact'
+            elif proof['edge']=='bleed_or_cut' or proof['light_and_style']=='broken':
+                status='new_damage'
+            else:
+                status='uncertain'
     return {**answer,'status':status,'candidate':candidate,'field_pixels':list(field),
             'changed_pixels':list(changed),'transition_sites':sites}
 
@@ -369,6 +405,17 @@ def compare_prior_version(current, earlier, box, correction, symptom, brief):
     return reading
 
 
+def scoped_repair_direction(planned, requested):
+    """An outline repair cannot add a new action to the object in the selected area."""
+    relations=(r'\b(?:rests?|resting|leans?|leaning|sits?|sitting|stands?|standing|lies|lying|press(?:es|ing)?)'
+               r'(?:\s+\w+){0,2}\s+(?:on|against|upon)\b|\b(?:support|contact|load.bearing)\b|承托|倚靠|抵在|支撑',
+               r'\b(?:grip(?:s|ping)?|grasp(?:s|ing)?|hold(?:s|ing)?|held|clutch(?:es|ing)?)\b|握住|抓住|握持')
+    for pattern in relations:
+        if re.search(pattern,planned,re.I) and not re.search(pattern,requested,re.I):
+            return requested+' Preserve the existing pose and all foreground/background relationships around the subject.'
+    return planned.strip()+' Required visible improvement, within the original scene: '+requested
+
+
 def plan_local_repair(image, box, target, instruction, medium, directory, stage, brief=None):
     """Locate the complete local attachment when a review box describes only a damaged tip."""
     import hashlib
@@ -383,7 +430,7 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage,
     view.thumbnail((960,960),Image.Resampling.LANCZOS)
     bbox=[round(1000*(v-origin)/length) for v,origin,length in zip((l,t,r,b),(x,y,x,y),(width,height,width,height))]
     locator=edit_locator(image,(x,y,x+width,y+height))
-    key=hashlib.sha256(view.tobytes()+locator.tobytes()+json.dumps(['art-direction-v2',bbox,target,instruction,medium,brief,model]).encode()).hexdigest()
+    key=hashlib.sha256(view.tobytes()+locator.tobytes()+json.dumps(['art-direction-v3',bbox,target,instruction,medium,brief,model]).encode()).hexdigest()
     path=directory/(stage+'-repair-plan.json')
     cached=json.loads(path.read_text()) if path.is_file() else {}
     if cached.get('key')==key:return cached['box'],cached['part'],cached['instruction']
@@ -425,7 +472,7 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage,
     bounds=[max(0,min(1000,round(v*1000/n))) for v,n in zip(combined,image.size*2)]
     name=part.strip()
     # Preserve the repair objective as well as the planner's drawable description.
-    correction=corrected.strip()+' Required visible improvement, within the original scene: '+instruction
+    correction=scoped_repair_direction(corrected,instruction)
     data={'key':key,'box':bounds,'part':name,'instruction':correction}
     temp=path.with_suffix('.tmp')
     temp.write_text(json.dumps(data,ensure_ascii=False,indent=2));temp.replace(path)

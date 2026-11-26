@@ -15,6 +15,11 @@ def failed_focus(report):
     last=report['views'][-1]
     issue=report.get('issue',{})
     if issue.get('category')=='unresolved_focus' and last['view'] in ('comparison','native','subject','previous_local'):
+        site=last.get('unresolved_focal_pixels')
+        if site and report.get('size') and len(site)==4:
+            w,h=report['size']
+            if all(type(v) is int for v in site) and 0<=site[0]<site[2]<=w and 0<=site[1]<site[3]<=h:
+                return tuple(site)
         return tuple(last['pixels'])
     # When a matched crop is ambiguous without any identified physical defect,
     # try to demonstrate actual added detail. An unsuccessful edit still fails.

@@ -64,3 +64,5 @@ FLUX.2 klein 和 Anima 负责生成及精绘。具备 Qwen-Image-2512 权重时�
 节点编辑器附带文字起稿、参考图起稿、商业插画上色和 4K 精绘工作流。使用命令行的 anime-key-visual 风格时，会先构图，再由本地模型把人物、物体、颜色和动作转成标签，并用 Animagine XL 4.0 Opt 根据构图上色。原生 4K 模式使用构图与笔触样片的双参考上色。旧安装缺少新版权重时也可走双参考路线，执行 `./Studio.command --install` 可补齐约 6.94 GB 的新权重。在节点编辑器打开 anime-key-visual-color.json，可替换「本次构图」并修改画面描述。安装包内的画法参考和灰度材质样片是运行所需的图像资源。模型由安装器从原发布站点获取，各模型沿用上游许可。下载地址、固定版本与 SHA-256 可在 `scripts/models.json` 和安装脚本中查看。
 
 [ComfyUI](https://github.com/Comfy-Org/ComfyUI) · [FLUX.2 klein](https://huggingface.co/Comfy-Org/Flux-2-Klein-4B) · [Anima](https://huggingface.co/circlestone-labs/Anima) · [Animagine XL 4.0 Opt](https://huggingface.co/cagliostrolab/animagine-xl-4.0) · [Ollama 视觉模型](https://ollama.com/library/qwen3.8:27b) · [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) · [SeedVR2](https://huggingface.co/Comfy-Org/SeedVR2)
+
+局部结构返工可读取随项目安装的实物参考。离线索引位于 `assets/repair-guides/index.json`，每项记录匹配词、具体连接关系、图片作者和许可。只有本次修正描述同时命中各组词时，编辑模型才会收到相应参考图。

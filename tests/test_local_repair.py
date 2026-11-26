@@ -58,6 +58,10 @@ class LocalRepairTests(unittest.TestCase):
         rect=(3421,99,3840,530)
         report={'issue':{'category':'unresolved_focus'},'views':[{'view':'comparison','pixels':list(rect)}]}
         self.assertEqual(failed_focus(report),rect)
+        focused=dict(report,size=[3840,2160],views=[dict(report['views'][0],unresolved_focal_pixels=[800,400,1248,848])])
+        self.assertEqual(failed_focus(focused),(800,400,1248,848))
+        focused['views'][0]['unresolved_focal_pixels']=[-100,20,80,200]
+        self.assertEqual(failed_focus(focused),rect)
         self.assertIsNone(failed_focus(dict(report,issue={'category':'anatomy'})))
         self.assertIsNone(failed_focus(dict(report,views=[])))
         ambiguous={'status':'uncertain','issue':{'category':'other','operation':'none','box':None},
@@ -223,6 +227,25 @@ class LocalRepairTests(unittest.TestCase):
             Image.new('L',(1680,944),color=150).save(base)
             self.assertIsNone(previous_print_pair(root,source,record))
 
+    def test_outline_repair_cannot_introduce_an_unrequested_action(self):
+        from construction_review import scoped_repair_direction
+        request='Separate the visible digits and reconnect the cuff.'
+        draft='The hand rests naturally on the wooden bench, its digits separated.'
+        self.assertNotIn('bench',scoped_repair_direction(draft,request))
+        self.assertIn(request,scoped_repair_direction(draft,request))
+        self.assertIn('bench',scoped_repair_direction(draft,'Restore contact between the hand and its bench.'))
+        self.assertNotIn('grips',scoped_repair_direction('The foot grips a branch.','Restore the rear toe.'))
+
+    def test_physical_example_matches_only_the_specific_connection_being_repaired(self):
+        from illustration import construction_guide
+        guide=construction_guide('Repair how the mooring rope turns through the iron ring on the quay.')
+        self.assertTrue(guide[0].is_file())
+        self.assertIn('rigid ring',guide[1]['construction'])
+        self.assertIsNone(construction_guide('Repaint the boat and sharpen its waterline.'))
+        self.assertIsNone(construction_guide('Draw a ring on her finger beside the moored boat.'))
+        self.assertIsNone(construction_guide('Redraw the fish. Preserve the mooring rope and iron ring.'))
+        self.assertIsNone(construction_guide('Remove the mooring rope and its ring.'))
+
     def test_pigment_corrections_do_not_pin_the_previous_target_color(self):
         from illustration import pigment_edit
         for instruction in ('Repaint the fur pigmentation of the cat.', 'Correct its fabric color.', '重新上色'):
@@ -235,7 +258,7 @@ class LocalRepairTests(unittest.TestCase):
         source=Image.new('RGB',(600,700))
         suspect=dict(verdict='local',target='[400,210,600,480] wrist',observation='Wrist has a broken outline.',
                      box=[300,250,650,575],fix='Reconnect the wrist.')
-        label=dict(state='target_absent_or_unclear',evidence='The sleeve edge appears continuous with the wrist.')
+        label=dict(state='target_absent_or_unclear',target_visible=True,evidence='Fabric wraps over the base of the palm.')
         trace=dict(part_visible=True,landmark_one='sleeve',landmark_two='wrist',
                    trace='A continuous edge joins the sleeve and wrist.',finding='visible_and_coherent')
         with patch('construction_review.available',return_value=True),patch('construction_review.ask',side_effect=[
@@ -630,6 +653,37 @@ class LocalRepairTests(unittest.TestCase):
         self.assertEqual(pairs[0], pairs[1])
         self.assertEqual({forward['status'], reverse['status']}, {'intact', 'new_damage'})
         self.assertEqual(len(forward['transition_sites']), 4)
+
+    def test_disputed_pigmentation_checks_the_exterior_surface_and_shading(self):
+        before=Image.new('RGB',(300,180),'gray')
+        after=before.copy()
+        ImageDraw.Draw(after).ellipse((65,70,110,104),fill='brown')
+        for edge,lighting,expected in [('continuous','consistent','intact'),('bleed_or_cut','consistent','new_damage'),
+                                       ('continuous','broken','new_damage'),('unclear','consistent','uncertain')]:
+            evidence={'inside_landmark':'cloth hem','outside_landmark':'bench slat','trace':'The hem meets the slat.',
+                      'edge':edge,'light_and_style':lighting}
+            with patch('construction_review.backend',return_value=nullcontext(None)), \
+                    patch('construction_review.available',return_value=True), \
+                    patch('construction_review.ask',side_effect=[json.dumps({'transition':'ambiguous','trace':'Pattern changed.'}),
+                                                                json.dumps(evidence)]) as reader:
+                result=assess_edit_boundary(before,after,[200,300,440,640],'Recolor the scarf to show a chequered pattern.')
+                self.assertEqual(result['status'],expected)
+                self.assertIn('EXTERIOR',reader.call_args_list[0].args[2])
+                self.assertEqual(reader.call_args_list[1].kwargs['tag'],LARGE)
+
+    def test_visual_action_reading_includes_a_located_body_scale_view(self):
+        from print_judge import inspect_disputed_action
+        canvas=Image.new('RGB',(1440,810),'gray')
+        observation={'visible_shapes':'A lowered limb.','depicted_action':'Hangs free.',
+                     'problem':'','condition':'physically_plausible'}
+        with patch('print_judge.model_identity',return_value='fixture'), \
+                patch('print_judge.ask',return_value=json.dumps(observation)) as reader:
+            self.assertEqual(inspect_disputed_action(None,canvas,[450,850,520,999],'A figure standing.'),observation)
+        full,middle,native=reader.call_args.args[1]
+        self.assertGreater(full.width,middle.width)
+        self.assertGreater(middle.width,native.width)
+        self.assertIn((190,54,116),[color for _,color in middle.getcolors()])
+        self.assertNotIn((190,54,116),[color for _,color in native.getcolors()])
 
     def test_repair_preserves_a_new_contour_and_the_crop_boundary(self):
         original = Image.new('RGB', (180, 128), 'beige')

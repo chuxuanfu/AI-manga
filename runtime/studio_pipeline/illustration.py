@@ -75,6 +75,31 @@ def text_composition(text,seed,width,height,prefix):
     return g
 
 
+def construction_guide(instruction, directory=None):
+    """Find a local example of the construction named in this particular correction."""
+    import json
+    from pathlib import Path
+    directory=directory or Path(__file__).resolve().parents[2]/'assets/repair-guides'
+    index=directory/'index.json'
+    if not index.is_file():return None
+    clauses=re.split(r'[.!?;。！？；]|,\s*(?=(?:keep|preserve|leave|remove|erase)\b)',instruction,flags=re.I)
+    instruction=' '.join(c for c in clauses if not re.match(
+        r'\s*(?:keep|preserve|leave|remove|erase|exclude|do not|without)\b|\s*(?:保留|保持|删除|移除|不要)',c,re.I))
+    matches=[]
+    for guide in json.loads(index.read_text()):
+        groups=guide['requires']
+        if not groups:continue
+        def named(term):
+            if term.isascii():
+                return bool(re.search(r'\b'+re.escape(term)+r's?\b',instruction,re.I))
+            return term in instruction
+        if all(any(named(term) for term in alternatives) for alternatives in groups):
+            file=(directory/guide['file']).resolve()
+            if file.is_relative_to(directory.resolve()) and file.is_file():
+                matches.append((file,guide))
+    return matches[0] if len(matches)==1 else None
+
+
 def pigment_edit(instruction):
     """Route explicit pigment and marking changes without confusing preserved colors with edits."""
     return bool(re.search(r'\brecolou?r\b|\brepaint (?:the |its )?(?:(?:fur|fabric|coat|surface) )?'

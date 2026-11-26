@@ -1,0 +1,36 @@
+[
+  {
+    "file": "rope-through-mooring-ring.jpg",
+    "requires": [
+      [
+        "mooring",
+        "moored",
+        "bow rope",
+        "hawser",
+        "系泊",
+        "系船"
+      ],
+      [
+        "ring",
+        "iron eye",
+        "iron loop",
+        "铁环",
+        "系泊环"
+      ],
+      [
+        "rope",
+        "line",
+        "hawser",
+        "knot",
+        "绳",
+        "缆"
+      ]
+    ],
+    "construction": "A rope turns through a rigid ring attached to a support. Trace the near and far arcs, the standing line and its short return.",
+    "source": "https://commons.wikimedia.org/wiki/File:DFC_1141_Close-up_of_a_weathered_blue_cleat_with_a_rusted_metal_ring_and_frayed_rope_on_an_old_boat_sunlit_and_textured.jpg",
+    "author": "PattayaPatrol",
+    "license": "CC BY-SA 4.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+    "changes": "Cropped around the working mooring eye, converted to grayscale, and reduced to 900 pixels."
+  }
+]
