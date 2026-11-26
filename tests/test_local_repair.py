@@ -31,6 +31,35 @@ class LocalRepairTests(unittest.TestCase):
             dashboard(job,{'prompt':'A coastal scene','rounds':[],'status':'本轮未达标，自动重试'})
             self.assertNotIn('href="4K.png"',(job/'proofs.html').read_text())
 
+    def test_repaired_print_layout_keeps_local_edits_and_rejects_missing_subject(self):
+        from print_judge import reviewed_print_layout
+        with TemporaryDirectory() as tmp:
+            folder=Path(tmp)
+            baseline=Image.new('RGB',(256,160),'tan')
+            art=ImageDraw.Draw(baseline)
+            for x in range(16,240,16):
+                for y in range(16,144,16):
+                    art.ellipse((x,y,x+5,y+8),fill='teal')
+            baseline.save(folder/'baseline.png')
+            corrected=baseline.copy()
+            ImageDraw.Draw(corrected).rectangle((74,85,99,102),fill='brown')
+            corrected.save(folder/'print.png')
+            answer=dict(alignment='retained',landmarks='Eyes and shoulders occupy the same positions.',
+                        differences='A cuff has been repainted.')
+            missing=dict(alignment='different',landmarks='Same building and trees.',
+                         differences='The small dog has disappeared.')
+            with patch('print_judge.backend',return_value=nullcontext('local')), patch('print_judge.model_identity',return_value='local-weights'), patch('print_judge.ask',side_effect=[json.dumps(answer),json.dumps(missing)]) as judge:
+                files=(folder/'baseline.png',folder/'print.png','one dog',folder/'layout.json')
+                result=reviewed_print_layout(*files)
+                self.assertTrue(result['eligible_for_inspection'])
+                self.assertLess(result['measurement']['changed_fraction'],.06)
+                self.assertTrue(result['measurement']['changed_regions'])
+                self.assertEqual(result,reviewed_print_layout(*files))
+                ImageDraw.Draw(corrected).rectangle((74,85,105,108),fill='white')
+                corrected.save(folder/'print.png')
+                self.assertFalse(reviewed_print_layout(*files)['eligible_for_inspection'])
+                self.assertEqual(judge.call_count,2)
+
     def test_independent_readers_receive_lossless_color_samples(self):
         import base64
         import io

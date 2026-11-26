@@ -1729,3 +1729,84 @@ def same_composition(original,candidate,brief):
     with backend(MODEL) as url:
         answer=json.loads(ask(url,images,question,schema,tag=MODEL))
     return answer.get('same') is True and isinstance(answer.get('evidence'),str) and bool(answer['evidence'].strip())
+
+REPAIR_LAYOUT_REVISION = 'reviewed-print-layout-1'
+
+
+def layout_landmarks(reference, print_image):
+    """Measure registration and locate edits independently of the written brief."""
+    import cv2
+    import numpy as np
+
+    a = np.asarray(reference)
+    b = np.asarray(print_image.resize(reference.size, Image.Resampling.LANCZOS))
+    height, width = a.shape[:2]
+    gray = [cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) for image in (a, b)]
+    orb = cv2.ORB_create(nfeatures=1000, edgeThreshold=12)
+    (ka, da), (kb, db) = [orb.detectAndCompute(image, None) for image in gray]
+    points = []
+    if da is not None and db is not None:
+        for match in cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True).match(da, db):
+            if match.distance > 45:
+                continue
+            x, y = ka[match.queryIdx].pt
+            u, v = kb[match.trainIdx].pt
+            if math.hypot(x-u, y-v) <= max(width, height)*.012:
+                points.append((int(4*x/width), int(4*y/height)))
+    labs = [cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_RGB2LAB), (9,9), 2)
+            .astype('float32') for image in (a,b)]
+    delta = np.linalg.norm(labs[0]-labs[1],axis=2)
+    changed = cv2.morphologyEx((delta>22).astype('uint8'), cv2.MORPH_CLOSE,
+                               np.ones((5,5), dtype='uint8'))
+    count, _, stats, _ = cv2.connectedComponentsWithStats(changed)
+    regions = []
+    for index in sorted(range(1,count), key=lambda i: -int(stats[i,4]))[:5]:
+        x,y,w,h,area = map(int, stats[index])
+        if area >= width*height*.0008:
+            regions.append([round(1000*v/n) for v,n in zip((x,y,x+w,y+h),(width,height)*2)])
+    return dict(registered_landmarks=len(points), occupied_cells_of_16=len(set(points)),
+                changed_fraction=round(float((delta>22).mean()),4), changed_regions=regions)
+
+
+def reviewed_print_layout(original, candidate, brief, report):
+    from construction_review import LARGE
+    key = dict(revision=REPAIR_LAYOUT_REVISION, original_sha256=fingerprint(original),
+               print_sha256=fingerprint(candidate), brief_sha256=hashlib.sha256(brief.encode()).hexdigest(),
+               model_id=model_identity(LARGE))
+    if report.is_file():
+        previous=json.loads(report.read_text())
+        if key['model_id'] and all(previous.get(k)==v for k,v in key.items()):
+            return previous
+    panels=[]
+    for path in (original,candidate):
+        with Image.open(path) as src:
+            image=src.convert('RGB')
+            image.thumbnail((824,824),Image.Resampling.LANCZOS)
+            panels.append(image)
+    a,b=panels
+    evidence=layout_landmarks(a,b)
+    question=('Compare these two views of one proposed illustration. Left is the baseline and right '
+              'a locally revised print. Look at the images side by side. Name each main subject and '
+              'identify corresponding physical landmarks and their positions in each panel. Does the '
+              'new print retain identity, subject count, overall pose, scene, medium, viewpoint, crop '
+              'and lighting? A bounded correction to a garment, marking, prop outline, joint or '
+              'contact is permitted when subjects and their action remain. Missing or replaced '
+              'subjects and materially shifted poses or framing fail even if colors match. '
+              'Consider only differences actually visible BETWEEN panels. Give the exact location '
+              'and evidence of any mismatch. Other print-quality checks follow separately.')
+    board=Image.new('RGB',(a.width+b.width+12,max(a.height,b.height)),(127,127,127))
+    board.paste(a,(0,0));board.paste(b,(a.width+12,0))
+    fields={'alignment':{'enum':['retained','different','uncertain']},
+            'landmarks':{'type':'string'},'differences':{'type':'string'}}
+    with backend(LARGE) as address:
+        reading=json.loads(ask(address,[board],question,{'type':'object','properties':fields,
+                                'required':list(fields)},tag=LARGE))
+    passed=(reading['alignment']=='retained' and bool(reading['landmarks'].strip())
+            and bool(reading['differences'].strip()))
+    if passed and evidence['changed_fraction']>.45 and evidence['occupied_cells_of_16']<3:
+        passed=False
+        reading=dict(reading,differences=reading['differences']+
+                     ' Widespread color changes and fewer than three registered grid cells require a new layout check.')
+    result=dict(**key,measurement=evidence,reading=reading,eligible_for_inspection=passed)
+    store(report,result)
+    return result

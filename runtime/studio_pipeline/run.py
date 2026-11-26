@@ -1220,10 +1220,12 @@ def main():
             print(rec['status'],flush=True)
             return 2
     elif args.review_print:
-        from print_judge import fingerprint,same_composition
+        from print_judge import fingerprint,reviewed_print_layout
         supplied=args.review_print.resolve()
-        if not same_composition(approved,supplied,prompt):
-            rec.update(status='未达标 · 修订稿与底图构图不一致',终审退回原因='请根据已审定底图重新精绘')
+        layout=reviewed_print_layout(approved,supplied,prompt,job/'composition-evidence.json')
+        rec['修订稿构图核对']='composition-evidence.json'
+        if not layout['eligible_for_inspection']:
+            rec.update(status='未达标 · 修订稿与底图构图不一致',终审退回原因=layout['reading']['differences'])
             save(manifest,rec)
             return 2
         master=job/'submitted-print.png'

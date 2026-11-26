@@ -398,9 +398,16 @@ def run(args,job,entry):
             folder=job/row['directory']
             options=list(state['options'])
             if len(rounds)>1 and '--review-print' in options:
-                # After a genuine rejection, use the diagnosed repair or generate a new print.
-                previous=options.index('--review-print')
-                del options[previous:previous+2]
+                from print_judge import REPAIR_LAYOUT_REVISION
+                prior=rounds[-2]
+                prior_evidence=job/prior['directory']/'composition-evidence.json'
+                prior_revision=(json.loads(prior_evidence.read_text()).get('revision')
+                                if prior_evidence.is_file() else None)
+                revised_check=(prior['status']=='未达标 · 修订稿与底图构图不一致'
+                               and prior_revision!=REPAIR_LAYOUT_REVISION)
+                if not revised_check:
+                    previous=options.index('--review-print')
+                    del options[previous:previous+2]
             pending_pair=state.pop('retained_print_pair',None)
             if pending_pair:row['reinspection_pair']=pending_pair
             retained_four=state.pop('retained_4k_source',None)
