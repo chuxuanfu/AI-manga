@@ -39,6 +39,7 @@ def proof(im,regions):
     return board
 def verify_repair_location(url,im,result,tag,indicated=None):
     """Confirm a collage finding against actual image coordinates before any inpaint."""
+    result['proposed_finding']={k:result.get(k) for k in ('target','observation','box','fix')}
     target=result.get('target','')+' / '+result['observation']
     target=re.sub(r'\[\s*\d+(?:\s*,\s*\d+){3}\s*\]','',target).strip(' /')
     fields={'state':{'enum':['defect_visible','target_is_coherent','target_absent_or_unclear']},
@@ -59,16 +60,36 @@ def verify_repair_location(url,im,result,tag,indicated=None):
         if direct['state']=='target_absent_or_unclear':
             from print_judge import MODEL
             alternate=MODEL if tag!=MODEL and available(MODEL) else tag
+            samples=[area]
+            if relocated:
+                # A tight box may stop at the fingers. Include the neighboring wrist,
+                # support or other endpoint at native scale for this same location.
+                l,t,r,b=box
+                dx=max(35,(r-l)*.70);dy=max(30,(b-t)*.55)
+                frame=[max(0,l-dx),max(0,t-dy),min(1000,r+dx),min(1000,b+dy)]
+                context=im.crop(tuple(round(v*n/1000) for v,n in zip(frame,im.size*2)))
+                context.thumbnail((900,900),Image.Resampling.LANCZOS)
+                finding['surrounding_box']=frame
+                samples.append(context)
             if not direct['target_visible']:
                 if not relocated or alternate==tag:return None
                 # Only a box freshly localized on the whole picture is eligible. A different
                 # model must identify the part and two of its actual boundaries in this crop.
                 name=re.sub(r'\[\s*\d+(?:\s*,\s*\d+){3}\s*\]','',result.get('target','')).strip()
-                if not name:return None
+                if not name:
+                    props={'part':{'type':'string'}}
+                    extract=json.loads(ask(url,[],'Copy a short noun phrase verbatim naming the physical part '
+                        'under inspection. Preserve any specified side or owner. Use words from the observation '
+                        'only, omitting the alleged defect and coordinates. Return empty if there is no part. '
+                        'Observation: '+result['observation'],{'type':'object','properties':props,'required':['part']},tag=alternate))
+                    name=extract['part'].strip()
+                    if not name or len(name)>120 or name.casefold() not in result['observation'].casefold():return None
+                    finding['extracted_part']=name
                 fields={'located':{'type':'boolean'},'first_boundary':{'type':'string'},'second_boundary':{'type':'string'}}
-                inventory=json.loads(ask(url,[area],
-                    'Can you locate the named subject in this crop? Identify two different visible boundaries '
-                    'of that subject. If the actual subject cannot be identified, set located to false. Subject: '+name,
+                inventory=json.loads(ask(url,samples,
+                    'Locate the named subject in image one. Image two shows the same site with its adjoining '
+                    'surfaces. Identify two visible boundaries of that same part, one inside the first view. '
+                    'Do not substitute a neighboring part. If the actual subject cannot be identified, set located to false. Subject: '+name,
                     {'type':'object','properties':fields,'required':list(fields)},tag=alternate))
                 finding['independent_inventory']=inventory
                 boundaries=[str(inventory[k]).strip().casefold() for k in ('first_boundary','second_boundary')]
@@ -81,8 +102,10 @@ def verify_repair_location(url,im,result,tag,indicated=None):
                   'visible landmarks, including any visible termination or overlap. Can both landmarks '
                   'and their physical relationship be seen? Choose unreadable if the relevant endpoint '
                   'cannot be located. Inspect the geometry directly. Concern: '+target)
-            for sample in (area,ImageOps.mirror(area)):
-                trace=json.loads(ask(url,[sample],read,trace_schema,tag=alternate))
+            if relocated:
+                read+=' Image one marks the exact part under dispute by cropping it. The other view includes its adjoining surfaces. Trace the same part across both views.'
+            for views in (samples,[ImageOps.mirror(sample) for sample in samples]):
+                trace=json.loads(ask(url,views,read,trace_schema,tag=alternate))
                 finding.setdefault('independent_traces',[]).append(trace)
                 if (trace['finding']!='visible_and_coherent' or not trace['part_visible'] or
                         not all(str(trace[k]).strip() for k in ('landmark_one','landmark_two','trace'))):

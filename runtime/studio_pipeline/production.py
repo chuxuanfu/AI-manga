@@ -22,8 +22,21 @@ def link(path,target):
     finally:tmp.unlink(missing_ok=True)
 
 
+def workmanship_confirmed(record, digest):
+    """Bind a reference-style release to the final assessment on these exact pixels."""
+    if record.get('工作流')!='reference-illustration-v1':
+        return True
+    for row in reversed(record.get('reviews',[])):
+        if row.get('hash')==digest and row.get('stage','').endswith('final-art'):
+            review=row.get('review',{})
+            return review.get('status')=='pass' and review.get('参考比较',{}).get('decision')=='candidate'
+    return False
+
+
 def publish(job, source, record):
     checked=record['自动定稿']
+    if not workmanship_confirmed(record,checked['sha256']):
+        raise ValueError('此母版的参考画质对照尚未通过')
     outputs={'4K.png':(source/record['4K'],checked['4K指纹'])}
     if record.get('8K'):
         outputs['8K.png']=(source/record['8K'],checked['sha256'])
@@ -367,6 +380,7 @@ def run(args,job,entry):
             record=json.loads((folder/'review.json').read_text())
             receipt=record['自动定稿']
             stale=receipt.get('审图版本')!=REVISION or receipt.get('模型指纹')!=model_identity(MODEL)
+            stale=stale or not workmanship_confirmed(record,receipt.get('sha256'))
             if not stale:
                 inspected=folder/receipt['终审报告']
                 stale=not inspected.is_file() or not complete_print_review(json.loads(inspected.read_text()))

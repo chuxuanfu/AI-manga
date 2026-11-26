@@ -73,6 +73,10 @@ def published_cover(job, data):
     if not (art.is_file() and proof.is_file() and receipt.get('审图版本')==REVISION
             and data.get('status')=='已自动定稿'):
         return None
+    from production import workmanship_confirmed
+    selected=record(job/data.get('selected','')/'review.json')
+    if not selected or not workmanship_confirmed(selected,receipt.get('sha256')):
+        return None
     report=record(proof)
     if (complete_print_review(report) and
             report.get('sha256')==receipt.get('sha256')==data.get('sha256') and

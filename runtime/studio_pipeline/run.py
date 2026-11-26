@@ -722,7 +722,9 @@ def main():
                         result['status']='global'
                         result['note']+=' · 交换左右后仍发现画法差距'
                     elif comparison['decision']=='review':
-                        result['note']+=' · 画法对照需目检'
+                        if args.round_worker and result['status']=='pass':
+                            result['status']='uncertain'
+                        result['note']+=' · 放大对照仍未确定作品达到了参考图的完成度'
         rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,inspection_key=context_key,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),device=timings,review=result))
         save(manifest,rec)
         print(stage,result['status'],result['note'],flush=True)
