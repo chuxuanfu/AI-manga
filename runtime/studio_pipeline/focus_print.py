@@ -208,7 +208,7 @@ def preserve_source_marks(reference, print_path):
     with Image.open(reference) as source, Image.open(print_path) as printed:
         if max(source.size)>=max(printed.size):
             return print_path
-        source.thumbnail((1536,1536),Image.Resampling.LANCZOS)
+        source.thumbnail((2304,2304),Image.Resampling.LANCZOS)
         observed=np.asarray(source.convert('RGB'),np.float32)
         reduced=np.asarray(printed.convert('RGB').resize(source.size,Image.Resampling.BOX),np.float32)
         residual=observed-reduced

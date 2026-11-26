@@ -92,6 +92,7 @@ def review(im,brief,regions,path,detected=(),observed_people=0):
         b=r.get('box',[])
         if len(b)==4:points.append(((b[0]+b[2])//2,(b[1]+b[3])//2))
     tag=LARGE if available(LARGE) else TAG
+    disputed_arms=False
     try:
         with backend(tag) as url:
             result=inspect(url,im,brief,points,path,tag)
@@ -140,9 +141,17 @@ def review(im,brief,regions,path,detected=(),observed_people=0):
                 if arms:
                     result['bilateral_trace']=arms
                     if 'abrupt_end' in (arms['left_end'],arms['right_end']) or ('initial_detail' in arms and 'unclear' in (arms['left_end'],arms['right_end'])):
-                        result['verdict']='unclear'
-                        result['observation']='独立的两侧前臂追踪提示有轮廓突然结束，需核实袖口到手的连接。'
-            return result
+                        disputed_arms=True
+        if disputed_arms:
+            audit_tag='qwen3.8:27b'
+            audit=None
+            if available(audit_tag):
+                with backend(audit_tag) as address:
+                    audit=verify_arm_endpoints(address,im,audit_tag)
+                result['arm_endpoint_evidence']=audit
+            if not audit or not audit['confirmed']:
+                result.update(verdict='unclear',observation='独立的两侧前臂追踪提示有轮廓突然结束，需核实袖口到手的连接。')
+        return result
     except (OSError,ValueError,KeyError,RuntimeError) as exc:
         return {'model':tag,'verdict':'unclear','observation':str(exc)[:160]}
 
@@ -185,6 +194,60 @@ def trace_arms(url,im,detected,tag):
         confirmed['initial_detail']=detail
         return confirmed
     return detail
+
+def verify_arm_endpoints(url, im, tag):
+    """Corroborate a disputed sleeve endpoint on the original and at its actual location."""
+    endpoint = {
+        'type': 'object',
+        'properties': {
+            'state': {'enum': ['hand', 'frame_exit', 'occlusion', 'hidden_far_shoulder', 'internal_break', 'ambiguous']},
+            'x': {'type': 'integer', 'minimum': 0, 'maximum': 1000},
+            'y': {'type': 'integer', 'minimum': 0, 'maximum': 1000},
+            'evidence': {'type': 'string'},
+        },
+        'required': ['state', 'x', 'y', 'evidence'],
+    }
+    schema = {'type': 'object', 'properties': {'left': endpoint, 'right': endpoint},
+              'required': ['left', 'right']}
+    original = ImageOps.contain(im, (1280, 1280), Image.Resampling.LANCZOS)
+    prompt = ('Trace each arm of the main figure from its own shoulder. Locate the last visible '
+              'point of each arm in the COMPLETE image, normalized to 0..1000 from upper left. '
+              'Use image-left and image-right. For an arm that leaves the frame, mark its actual '
+              'intersection with the picture edge. For a hidden arm, mark the specific contour '
+              'where it passes behind another surface and name that surface. If the far shoulder itself is hidden by the torso in profile, mark that torso surface as hidden_far_shoulder. For an attached '
+              'hand, mark the wrist. A clearly unsupported stump inside the picture is an '
+              'internal break. If the chain cannot be traced, choose ambiguous.')
+    audit = json.loads(ask(url, [original], prompt, schema, tag=tag, reason=True))
+    audit.update(model=tag, confirmed=False)
+    for side in ('left', 'right'):
+        point = audit[side]
+        x, y = point['x'], point['y']
+        state = point['state']
+        if not (0 <= x <= 1000 and 0 <= y <= 1000) or state not in ('hand', 'frame_exit', 'occlusion', 'hidden_far_shoulder'):
+            return audit
+        if state == 'frame_exit' and min(x, y, 1000-x, 1000-y) > 20:
+            return audit
+        px, py = x*im.width/1000, y*im.height/1000
+        pad = max(30, round(min(im.size)*.19))
+        box = (max(0, round(px-pad)), max(0, round(py-pad)),
+               min(im.width, round(px+pad)), min(im.height, round(py+pad)))
+        crop = im.crop(box)
+        crop.thumbnail((720,720), Image.Resampling.LANCZOS)
+        check = ('The first image is the entire illustration. The second is the actual region at '
+                 'the reported endpoint. Independently inspect where the '+side+'-side arm goes at '
+                 'this specific location. Do you see a physically continuous attached hand, an '
+                 'identified occluding contour, a far shoulder entirely hidden behind the torso in profile, a sleeve crossing an original frame edge, an '
+                 'unsupported internal break, or insufficient evidence? A hidden far shoulder has no visible arm emerging on that side. An internal break requires a visible arm ending inside the image without an occluder. The edges of the detail '
+                 'crop alone do not establish a frame exit. Briefly name the visible evidence.')
+        detail_schema = {'type': 'object', 'properties': {k:endpoint['properties'][k] for k in ('state','evidence')},
+                         'required': ['state','evidence']}
+        detail = json.loads(ask(url, [original, crop], check, detail_schema, tag=tag, reason=True))
+        point['crop_check'] = detail
+        if detail['state'] != state:
+            return audit
+    audit['confirmed'] = True
+    return audit
+
 
 HAND_INVENTORY={'type':'object','properties':{'people':{'type':'integer'},'hands':{'type':'array','items':{
     'type':'array','items':{'type':'integer'},'minItems':2,'maxItems':2}}},'required':['people','hands']}

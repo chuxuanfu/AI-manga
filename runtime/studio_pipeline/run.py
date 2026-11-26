@@ -16,8 +16,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 import torch
 
 from gallery import write_gallery, write_focus_proof
-from graphs import draft, finish
-from illustration import KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
+from graphs import UP, draft, finish
+from illustration import NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
 from reference_review import compare
 from structure import inspect_structure
 from construction_review import review as review_construction
@@ -383,7 +383,7 @@ def main():
         args.proof_only=True
     def check(path,stage,focus=None):
         key = hashlib.sha256(path.read_bytes()).hexdigest()
-        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v11' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v4-frame-boundary'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
+        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v12' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v4-frame-boundary'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'
@@ -565,9 +565,11 @@ def main():
                 composition.thumbnail((bound,bound),Image.Resampling.LANCZOS)
             source=local_image(composition)
         focus_mode=rec.get('输出模式')=='全幅4K扩散与8K焦点精修'
+        medium=rec.get('画材','')
+        natural_sr=continuous_tone(medium) and (RUNTIME/'models/upscale_models'/NATURAL_UP).is_file()
         if reference_style:
             graph,ids=print_graph(source,prefix+'/pending-review/'+stage,seed+320,native_four=native_four,
-                                  medium=rec.get('画材',''),four_steps=4,four_only=focus_mode)
+                                  medium=medium,four_steps=4,four_only=focus_mode,upscale_model=NATURAL_UP if natural_sr else UP)
         else:
             graph,ids=finish(source,prompt,prefix+'/pending-review/'+stage,seed+320)
         save(job/(stage+'workflow.json'),graph.ui())
@@ -584,7 +586,13 @@ def main():
                 with backend() as address:
                     points=landmarks(address,composition)
             neural=small.with_name(small.stem+'-neural-2x.png')
-            if not neural.exists():
+            if natural_sr:
+                with Image.open(small) as four:
+                    sr_input=local_image(four.convert('RGB'))
+                sr_graph,node=continuous_tone_double(sr_input,prefix+'/pending-review/'+stage+'/continuous-tone-2x')
+                sr_hist=post_graph(sr_graph.api,args.port,job,stage+'-continuous-tone-2x',sr_graph.ui())
+                neural=output_image(sr_hist[node])
+            elif not neural.exists():
                 temp=neural.with_suffix('.partial.png')
                 neural_double(small,temp);temp.replace(neural)
             # Retain source frequencies above the 4K sampling limit for large imported art.

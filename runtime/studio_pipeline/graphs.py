@@ -49,7 +49,7 @@ class Graph:
     def scale(self,title,xy,img,long_edge):
         return self.add('ImageScaleToMaxDimension',title,xy,['IMAGE'],[('image',(img,0))],{'upscale_method':'lanczos','largest_size':long_edge})
     def upscale(self,xy,img,model):
-        return self.add('ImageUpscaleWithModel','本机动漫超分',xy,['IMAGE'],[('upscale_model',(model,0)),('image',(img,0))])
+        return self.add('ImageUpscaleWithModel','本机神经超分',xy,['IMAGE'],[('upscale_model',(model,0)),('image',(img,0))])
 
 
 def draft(text,seed,width,height,prefix):

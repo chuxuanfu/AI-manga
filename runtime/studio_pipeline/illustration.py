@@ -131,7 +131,28 @@ def flux_canvas(g,positive,negative,vae,seed,width,height,prefix):
     return g
 
 
-def print_graph(reference,prefix,seed,native_four=False,medium='',four_steps=4,eight_steps=4,four_only=False):
+NATURAL_UP = 'RealESRGAN_x2plus.pth'
+
+def continuous_tone(medium):
+    terms = ('photograph', 'photogram', 'cyanotype', 'film grain', 'silver gelatin',
+             'watercolor', 'watercolour', 'gouache', 'pastel', 'charcoal', 'graphite',
+             'oil paint', 'textile', 'embroidery', 'tapestry', 'wool', 'acrylic',
+             '摄影', '氰版', '蓝晒', '水彩', '水粉', '油画', '粉彩', '炭笔', '刺绣', '织物')
+    return any(term in medium.casefold() for term in terms)
+
+
+def continuous_tone_double(reference, prefix):
+    g = Graph('studio-continuous-tone-super-resolution')
+    source = g.add('LoadImage', 'Source', (0,0), ['IMAGE','MASK'],
+                   values={'image': reference}, widgets=[reference,'image'])
+    model = g.add('UpscaleModelLoader', 'Continuous-tone 2x', (0,280), ['UPSCALE_MODEL'],
+                  values={'model_name': NATURAL_UP})
+    image = g.upscale((380,0), source, model)
+    output = g.save('2x print guide', (750,0), image, prefix)
+    return g, str(output)
+
+
+def print_graph(reference,prefix,seed,native_four=False,medium='',four_steps=4,eight_steps=4,four_only=False,upscale_model=UP):
     g=Graph('studio-illustration-print')
     src=g.add('LoadImage','已选插画',(0,0),['IMAGE','MASK'],values={'image':reference},widgets=[reference,'image'])
     model=g.add('UNETLoader','Anima Turbo',(0,240),['MODEL'],values={'unet_name':TURBO,'weight_dtype':'default'})
@@ -155,7 +176,7 @@ def print_graph(reference,prefix,seed,native_four=False,medium='',four_steps=4,e
         four=src
     else:
         # Restore contours on the input lattice before diffusion sees a 4K canvas.
-        up=g.add('UpscaleModelLoader','构图轮廓超分',(300,-300),['UPSCALE_MODEL'],values={'model_name':UP})
+        up=g.add('UpscaleModelLoader','构图轮廓超分',(300,-300),['UPSCALE_MODEL'],values={'model_name':upscale_model})
         restored=g.upscale((630,-300),src,up)
         four=pass_at(restored,3840,four_steps,.34,750)
     small=g.save('4K 分块精绘',(2820,0),four,prefix+'/4K')
