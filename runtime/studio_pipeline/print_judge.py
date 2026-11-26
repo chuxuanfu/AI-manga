@@ -344,18 +344,24 @@ def compare_pixels(low,high,rect,master_size):
 
 def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
     """Adjudicate one claim without substituting a different nearby feature or its coordinates."""
-    props={'evidence':{'type':'string'}, 'outcome':{'enum':['confirmed','disproved','insufficient']},
-           'part':{'type':'string'}}
+    props={'evidence':{'type':'string'}, 'condition':{'enum':['visible_defect','visibly_intact','insufficient']},
+           'part':{'type':'string'}, 'correction':{'type':'string'}}
     schema={'type':'object','properties':props,'required':list(props)}
-    question=('The FIRST image is a crop containing a disputed feature. The SECOND only locates the '
-              'crop in the original composition. Resolve exactly the proposed finding below. Trace the '
-              'named part in the FIRST image and give visible evidence for or against that specific '
-              'claim. A different feature cannot confirm or disprove this finding. Use insufficient '
-              'when the named part or connection is unresolved. For part, name only the physical '
-              'part that must be reconstructed together with its attachment (for instance a hand for fused digits or a wheel for misaligned spokes). Independent description of the pixels: '+json.dumps(inventory)+
-              '. Proposed finding: '+original['evidence']+' Second reading: '+corroboration['evidence'])
+    question=('The FIRST image is the actual crop. The SECOND locates it. Trace the disputed part '
+              'using the first image, then identify its physical condition. Earlier observations '
+              'sometimes describe a perfectly intact edge, or ask an open question about the medium. '
+              'Agreement with a description of a crisp, intact edge is evidence of an intact edge. '
+              'Use visible_defect only when you can identify a specific visible failure AND a concrete '
+              'physical correction. For visibly_intact identify the trace that disproves the proposed '
+              'defect. An unresolved contour, obscured attachment or inconclusive optical comparison '
+              'is insufficient. A different part cannot resolve the finding. State the affected part and '
+              'leave correction empty for intact and insufficient. Pixel inventory: '+json.dumps(inventory)+
+              '. Earlier observations: '+original['evidence']+' / '+corroboration['evidence'])
     read=json.loads(ask(url,[detail,locator],question,schema,tag=MODEL,reason=True))
-    if read['outcome']=='insufficient':
+    condition=read['condition'] if read['evidence'].strip() and read['part'].strip() else 'insufficient'
+    if condition=='visible_defect' and not actionable_edit(read['correction']):
+        condition='insufficient'
+    if condition=='insufficient':
         # Resolve a contradictory decision only when another reading can account for
         # the entire disputed contour on the actual crop, independently of its locator.
         props={'target_visible':{'type':'boolean'},'entire_disputed_contour_resolved':{'type':'boolean'},
@@ -369,13 +375,16 @@ def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
             {'type':'object','properties':props,'required':list(props)},tag=MODEL,reason=True))
         if (repeat['defect']=='absent' and repeat['target_visible'] is True
                 and repeat['entire_disputed_contour_resolved'] is True and repeat['visible_trace'].strip()):
-            read=dict(read,outcome='disproved',evidence=repeat['visible_trace'])
-    if read['outcome']=='disproved':
+            condition='visibly_intact'
+            read['evidence']=repeat['visible_trace']
+    if condition=='visibly_intact':
         return dict(corroboration,decision='clear',operation='none',target='',fix='',evidence=read['evidence'])
-    outcome='uncertain'
-    if read['outcome']=='confirmed':
-        outcome='global' if original['decision']=='global' else 'local'
-    return dict(corroboration,decision=outcome,target=read['part'],evidence=read['evidence'])
+    if condition=='visible_defect':
+        operation='remove_forbidden' if original.get('operation')=='remove_forbidden' else 'redraw'
+        return dict(corroboration,decision='global' if original['decision']=='global' else 'local',
+                    operation=operation,fix=read['correction'],target=read['part'],evidence=read['evidence'])
+    return dict(corroboration,decision='uncertain',operation='none',fix='',target=read['part'],evidence=read['evidence'])
+
 
 
 
@@ -1056,6 +1065,16 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],
                             status='running',optical_reinspection=True)
                 result.pop('issue',None)
+    if result.get('status')=='local' and result.get('views'):
+        held=result['views'][-1]
+        arbitration=held.get('part_verification') or {}
+        if (arbitration.get('decision')=='local' and arbitration.get('operation')=='none'
+                and not actionable_edit(arbitration.get('fix'))):
+            report=report.with_name(report.stem+'-physical-condition.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
+                result.pop('issue',None)
     if result['status'] in ('pass','local','global','uncertain'):return result
     with ExitStack() as resources:
         with Image.open(path) as source:image=source.convert('RGB')
@@ -1346,7 +1365,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     anchored=arbitrate_finding(url,view[1],overview,row,second,
                                                {'field':'Both scale samples show this same physical part.'})
                     record['part_verification']=anchored
-                    if anchored['decision']=='local':
+                    if anchored['decision']=='local' and actionable_edit(anchored.get('fix')):
                         second=anchored
                         record['independent_context']=second
                     elif (anchored['decision']=='clear' and record.get('issue_category')=='other'
@@ -1497,7 +1516,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                             if box[axis+2]-box[axis]<12:
                                 box[axis]=min(988,max(0,(box[axis]+box[axis+2])//2-6))
                                 box[axis+2]=box[axis]+12
-                    if verdict=='local' and (not box or not second['fix'].strip()):verdict='uncertain'
+                    if verdict=='local' and (not box or second.get('operation')=='none'
+                                                 or not actionable_edit(second.get('fix'))):verdict='uncertain'
                     if verdict not in ('local','global','uncertain'):raise ValueError('无效的复审结果')
                     result.update(status=verdict,issue={'box':box,'operation':second.get('operation','redraw'),'fix':second['fix'],'target':second['target'],
                                                         'symptom':second['evidence']})

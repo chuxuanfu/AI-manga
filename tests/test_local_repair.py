@@ -22,6 +22,23 @@ from structure import inspect_small_figure_support
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_agreement_with_an_intact_contour_is_not_a_visible_fault(self):
+        from print_judge import arbitrate_finding
+        sample=Image.new('RGB',(64,64))
+        base={'decision':'uncertain','evidence':'There is no doubled outline.','operation':'none','fix':'none'}
+        readings=[
+            ('visibly_intact','', 'clear','none'),
+            ('visible_defect','Rejoin the broken outline at the lower attachment.', 'local','redraw'),
+            ('visible_defect','None', 'uncertain','none'),
+        ]
+        for condition,correction,status,operation in readings:
+            reply={'condition':condition,'evidence':'The outline is traceable from its base.',
+                   'part':'outer outline','correction':correction}
+            second={'defect':'ambiguous','target_visible':True,'entire_disputed_contour_resolved':False,'visible_trace':''}
+            with patch('print_judge.ask',side_effect=[json.dumps(reply),json.dumps(second)]):
+                result=arbitrate_finding('local',sample,sample,base,base,{})
+            self.assertEqual((result['decision'],result['operation']),(status,operation))
+
     def test_tile_subjects_align_with_the_actual_sampler_in_portrait_and_landscape(self):
         from focal_edit import print_subjects, print_constraints
         from illustration import print_graph
