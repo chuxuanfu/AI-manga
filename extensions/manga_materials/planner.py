@@ -2,6 +2,8 @@
 from functools import lru_cache
 from pathlib import Path
 import gc
+import hashlib
+import uuid
 import json
 import re
 import sys
@@ -61,13 +63,33 @@ def clean_plan(plan,prompt):
 def dedicated_plan(prompt):
     pipeline=str(MODEL_ROOT.parent/"studio_pipeline")
     if pipeline not in sys.path:sys.path.insert(0,pipeline)
-    from evidence import ask,available,backend
+    from evidence import TAG,ask,available,backend,model_identity
     if not available():return None
     schema={"type":"object","properties":{"caption":{"type":"string"},"medium":{"type":"string"},"palette":{"type":"array","items":{"type":"object","properties":{"source":{"type":"string"},"english":{"type":"string"}},"required":["source","english"]}},"art_direction":{"type":"string"},
             "surfaces":{"type":"array","items":{"type":"object","properties":{"part":{"type":"string"},"material":{"type":"string"}},"required":["part","material"]}}},"required":["caption","medium","palette","art_direction","surfaces"]}
+    instructions=INSTRUCTION+" Translate every visual detail into idiomatic English, including media such as stop-motion clay. Only describe materials belonging to actual objects. Scene: "
+    key=hashlib.sha256(json.dumps([prompt,instructions,schema,model_identity(TAG)],sort_keys=True,
+                                  ensure_ascii=False).encode()).hexdigest()
+    cache=MODEL_ROOT.parent/'cache/scene-plans'/(key+'.json')
+    def read():
+        try:return clean_plan(json.loads(cache.read_text()),prompt)
+        except (OSError,ValueError,KeyError,TypeError,AttributeError):return None
+    cached=read()
+    if cached:return cached
     with backend() as url:
-        result=json.loads(ask(url,[],INSTRUCTION+" Translate every visual detail into idiomatic English, including media such as stop-motion clay. Only describe materials belonging to actual objects. Scene: "+prompt,schema))
-    return clean_plan(result,prompt)
+        cached=read()
+        if cached:return cached
+        result=json.loads(ask(url,[],instructions+prompt,schema))
+        planned=clean_plan(result,prompt)
+        if planned:
+            temporary=cache.with_suffix('.'+uuid.uuid4().hex+'.tmp')
+            try:
+                cache.parent.mkdir(parents=True,exist_ok=True)
+                temporary.write_text(json.dumps(result,ensure_ascii=False))
+                temporary.replace(cache)
+            except OSError:pass
+            finally:temporary.unlink(missing_ok=True)
+        return planned
 
 @lru_cache(maxsize=12)
 def _plan(request):

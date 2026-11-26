@@ -71,20 +71,32 @@ def subject_witness(url, image, overview, brief, tag):
         marks=evidence['actual_landmarks'].strip()
         fix=evidence['repair_instruction'].strip()
         if evidence['finding']=='contradiction' and len(marks.split())>=5 and len(fix.split())>=3:
+            # Read the crop without a target description. An instrument being present
+            # or a generic owl being recognizable can bias a brief-conditioned observer.
+            neutral=ask(url,[crop],
+                'Describe only what this crop visibly depicts. Identify the visible part, silhouette, '
+                'species or variety when distinguishable, facial outline and markings, material or '
+                'pattern when relevant. If objects approach one another, identify exactly where one '
+                'endpoint falls relative to the neighboring feature. Mention any visible gap or '
+                'overlap. Do not grade the picture, infer intent or recommend changes. Be specific '
+                'and use fewer than 65 words.',tag=reviewer).strip()
+            n['blind_crop_reading']=neutral
             text_fields={'relation':{'enum':['meets_requirement','explicit_incompatibility','inconclusive']},
                          'incompatible_words':{'type':'string'}}
             reading=json.loads(ask(url,[],
-                'Read the actual observation below as written. Compare it to the required feature. '
+                'Read the independent crop description below as written. Compare it to the required feature. '
                 'Only when the observation describes an incompatible physical fact, quote the EXACT '
                 'short excerpt that establishes the inconsistency. If it describes the requested '
                 'relationship in other words, select meets_requirement. An omitted detail is '
-                'inconclusive. No picture or proposed repair is supplied. Requirement: '+
-                repr(n['quote'])+'. Observation: '+marks,
+                'inconclusive. Use the quoted physical shape, pattern, or point of contact from the '
+                'independent description. Additional context may identify a diagnostic landmark but '
+                'cannot substitute for its visibility in the independent description. Requirement: '+
+                repr(n['quote'])+'. Independent crop description: '+neutral+'. Additional context: '+marks+' '+fix,
                 {'type':'object','properties':text_fields,'required':list(text_fields)},tag=reviewer))
             n['evidence_comparison']=reading
             words=reading['incompatible_words'].strip()
-            if reading['relation']!='explicit_incompatibility' or len(words)<5 or words.casefold() not in marks.casefold():
+            if reading['relation']!='explicit_incompatibility' or len(words)<5 or words.casefold() not in neutral.casefold():
                 continue
             issue={'decision':'local','operation':'redraw','target':n['quote'],'fix':fix,
-                   'evidence':f"The requested detail {n['quote']!r}: {marks}",**dict(zip(position,n['box']))}
+                   'evidence':f"The requested detail {n['quote']!r}: {neutral}",**dict(zip(position,n['box']))}
     return notes,issue

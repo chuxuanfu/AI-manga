@@ -18,6 +18,7 @@ AI Manga Studio
   --background            Run in the background and print the job directory
   --job DIR               Resume a project job
   --from-image PNG        Start from an existing image
+  --review-print PNG      Review an existing 4K print against its --reviewed-image draft
   --set-output-dir DIR    Save a default export folder; use --reset-output-dir to clear it
   --gallery               Open the offline gallery
   --editor                Open the node editor

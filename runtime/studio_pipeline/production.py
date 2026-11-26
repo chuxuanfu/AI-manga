@@ -306,7 +306,7 @@ def run(args,job,entry):
             options=[]
             for key in ('native_4k','full_8k_diffusion','keep_native'):
                 if getattr(args,key):options.append('--'+key.replace('_','-'))
-            for key in ('reviewed_image','candidate_image','selection_mask'):
+            for key in ('reviewed_image','candidate_image','selection_mask','review_print'):
                 if getattr(args,key):options.extend(['--'+key.replace('_','-'),str(getattr(args,key).resolve())])
             for source in args.from_image:options.extend(['--from-image',str(source.resolve())])
             if args.repair_box:options+=['--repair-box',*map(str,args.repair_box),'--repair-text',args.repair_text]
@@ -350,7 +350,11 @@ def run(args,job,entry):
                 row=dict(directory=f'rounds/{index:04}',seed=(state['seed']+10007*(index-1))%(2**63-1))
                 rounds.append(row)
             folder=job/row['directory']
-            options=state['options']
+            options=list(state['options'])
+            if len(rounds)>1 and '--review-print' in options:
+                # After a genuine rejection, use the diagnosed repair or generate a new print.
+                previous=options.index('--review-print')
+                del options[previous:previous+2]
             if edit:row['skip_focus']=args.skip_focus
             row['status']='运行中';state['status']='离线审图与返修中'
             save(job,state)

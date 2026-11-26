@@ -177,6 +177,34 @@ class LocalRepairTests(unittest.TestCase):
             self.assertEqual(disputed_action_resolved(result),expected)
             if decision=='specific_visible_error':self.assertIn('detached fin',result['problem'])
 
+    def test_scene_plan_cache_survives_rounds_but_changes_with_prompt_and_model(self):
+        from contextlib import nullcontext
+        from manga_materials import planner
+        reply=dict(caption='a red cat',medium='woodcut',palette=[],art_direction='',surfaces=[])
+        with TemporaryDirectory() as directory,patch.object(planner,'MODEL_ROOT',Path(directory)/'models'),patch('evidence.available',return_value=True),patch('evidence.backend',return_value=nullcontext('local')),patch('evidence.model_identity',return_value='model-a') as identity,patch('evidence.ask',return_value=json.dumps(reply)) as query:
+            first=planner.dedicated_plan('A red cat.')
+            self.assertEqual(first,planner.dedicated_plan('A red cat.'))
+            self.assertEqual(query.call_count,1)
+            planner.dedicated_plan('A blue cat.')
+            identity.return_value='model-b'
+            planner.dedicated_plan('A red cat.')
+            self.assertEqual(query.call_count,3)
+            self.assertEqual(len(list(Path(directory).rglob('*.json'))),3)
+
+    def test_existing_print_requires_a_smaller_matching_baseline(self):
+        from focus_print import validate_print_pair
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as directory:
+            base=Path(directory)/'draft.png';candidate=Path(directory)/'4k.png'
+            Image.new('L',(1680,944)).save(base)
+            Image.new('L',(3840,2160)).save(candidate)
+            validate_print_pair(base,candidate)
+            with self.assertRaises(ValueError):validate_print_pair(candidate,candidate)
+            Image.new('L',(960,1440)).save(base)
+            with self.assertRaises(ValueError):validate_print_pair(base,candidate)
+            Image.new('L',(1024,1536)).save(candidate)
+            with self.assertRaises(ValueError):validate_print_pair(base,candidate)
+
     def test_specific_requirements_must_be_quoted_and_observed_before_returning_a_repair(self):
         from brief_check import subject_witness
         image=Image.new('RGB',(1800,1000));overview=image.resize((900,500))
@@ -189,13 +217,14 @@ class LocalRepairTests(unittest.TestCase):
         with patch('brief_check.ask',side_effect=[json.dumps({'checks':items}),json.dumps({'crop_1':prediction}),
             json.dumps({'actual_landmarks':'The eyepiece touches the bridge of the nose below the eye.',
                         'finding':'contradiction','repair_instruction':'Align the eyepiece with the pupil.'}),
+            'The lens touches the nose below the eye.',
             json.dumps({'relation':'explicit_incompatibility','incompatible_words':'below the eye'})]) as query:
             notes,issue=subject_witness('local',image,overview,brief,'model')
         self.assertEqual(len(notes),1)
         self.assertEqual(issue['operation'],'redraw')
         self.assertEqual(issue['left'],300)
-        self.assertIs(query.call_args_list[-2].args[1][0],overview)
-        self.assertGreater(query.call_args_list[-2].args[1][1].width,500)
+        self.assertIs(query.call_args_list[-3].args[1][0],overview)
+        self.assertGreater(query.call_args_list[-3].args[1][1].width,500)
         with patch('brief_check.ask',return_value=json.dumps({'checks':items[1:]})) as query:
             self.assertEqual(subject_witness('local',image,overview,brief,'model'),([],None))
         self.assertEqual(query.call_count,1)

@@ -11,6 +11,17 @@ ENGINE=Path(__file__).resolve().parents[1]/'models/anime_superres'
 PATCH=1152
 PRINT_REVISION=5
 
+def validate_print_pair(baseline, candidate):
+    from PIL import Image
+    with Image.open(baseline) as original, Image.open(candidate) as print_image:
+        w,h=original.size
+        x,y=print_image.size
+        if max(x,y)!=3840 or max(w,h)>=3840:
+            raise ValueError('复审需要一张长边 3840 像素的修订稿和一张尺寸较小的底图')
+        if abs((w/h)/(x/y)-1)>.008:
+            raise ValueError('修订稿与底图的画幅不一致')
+
+
 def fit_print_aspect(path, aspect, edge):
     """Resolve diffusion-lattice rounding before reviewing the delivered raster."""
     from PIL import ImageOps

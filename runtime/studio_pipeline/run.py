@@ -350,6 +350,7 @@ def main():
     parser.add_argument('--round-worker',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--port',type=int,choices=(8193,8194),default=8193)
     parser.add_argument('--reviewed-image',type=Path,help='使用已经人工审定的原图，仍进行最终检查')
+    parser.add_argument('--review-print',type=Path,help='对照 --reviewed-image 底图，重新验收已有的 4K 修订稿')
     parser.add_argument('--repair-box',nargs=4,type=int,metavar=('L','T','R','B'),help='手动指出需要复绘的位置，0 到 1000')
     parser.add_argument('--object',help='可选，指定需要保护轮廓的对象，如 porcelain teapot')
     parser.add_argument('--repair-text',help='这个区域应当画成什么样')
@@ -361,6 +362,13 @@ def main():
         if not has_drawing_model(RUNTIME/'ComfyUI/models'):
             parser.error('缺少 Qwen-Image-2512 模型组件，请先运行安装器')
     args.eight_k=args.eight_k or args.full_8k_diffusion or args.keep_native or args.skip_focus is not None
+    if args.review_print:
+        if (not args.reviewed_image or args.eight_k or args.from_image or args.repair_box or args.candidate_image
+                or args.native_only or args.proof_only or args.accept_final):
+            parser.error('--review-print 需要 --reviewed-image 和完整 4K 审查')
+        from focus_print import validate_print_pair
+        try:validate_print_pair(args.reviewed_image,args.review_print)
+        except (OSError,ValueError) as exc:parser.error(str(exc))
     if args.prompt and not args.style and KEY_VISUAL not in args.prompt:
         if args.prompt.lstrip().startswith(('日系商业插画，','日系商业插画：','日系商业插画,','日系商业插画:')):
             args.style='anime-key-visual'
@@ -1127,6 +1135,24 @@ def main():
             save(manifest,rec)
             print(rec['status'],flush=True)
             return 2
+    elif args.review_print:
+        from print_judge import fingerprint,same_composition
+        supplied=args.review_print.resolve()
+        if not same_composition(approved,supplied,prompt):
+            rec.update(status='未达标 · 修订稿与底图构图不一致',终审退回原因='请根据已审定底图重新精绘')
+            save(manifest,rec)
+            return 2
+        master=job/'submitted-print.png'
+        expected=fingerprint(supplied)
+        if not master.is_file() or fingerprint(master)!=expected:
+            temp=job/(uuid.uuid4().hex+'.png')
+            try:
+                shutil.copyfile(supplied,temp)
+                if fingerprint(temp)!=expected:raise ValueError('4K 修订稿复制校验失败')
+                temp.replace(master)
+            finally:temp.unlink(missing_ok=True)
+        small=None
+        rec['已有修订稿']={'来源':str(supplied),'指纹':fingerprint(master),'底图指纹':fingerprint(approved)}
     else:
         master,small=native_pair(approved,'native-repair') if args.keep_native else render(approved,'refine')
     from print_judge import actionable_edit, fingerprint, inspect as print_inspect, MODEL
