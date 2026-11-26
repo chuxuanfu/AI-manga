@@ -436,7 +436,7 @@ def main():
     def build_draft(caption,draw_seed,label,index):
         from page_layout import retry_direction
         clean=retry_direction(args.retry_observation)
-        if clean:caption += ' Preserve the brief and address this previous observation: '+clean
+        if clean:caption += ' '+clean
         if not any(v in prompt.lower() for v in ('分镜','分格','多格','四格','多联','双联','三联','两联','二联','分幅','拼贴','拼图','对照图','连环画','分屏','漫画页','panel','diptych','triptych','collage','contact sheet','comic page','storyboard','split screen','split view')):
             caption='Compose one continuous scene in an uninterrupted frame. '+caption
         aspect=rec.get('aspect','auto')

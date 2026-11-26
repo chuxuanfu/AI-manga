@@ -15,6 +15,7 @@ from construction_review import LARGE, assess_local_edit, verify_interior_figure
 from illustration import instruction_edit, reference_draft
 from masks import structural_composite
 from print_judge import actionable_edit, crop_brief, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity
+from page_layout import retry_direction
 from production import repeated_rejection, same_repair_region
 from review import inspection_key
 from structure import inspect_small_figure_support
@@ -129,6 +130,16 @@ class LocalRepairTests(unittest.TestCase):
             result = verify_part_identity(None, image, [100, 810, 200, 999], finding,
                                           'The required feet are missing from the frame.')
         self.assertIsNone(result)
+
+    def test_retry_brief_cannot_copy_objects_from_a_discarded_composition(self):
+        for note, unexpected in [('The strands around the unrequested cleat have tangled crossings.', 'cleat'),
+                                 ('An extra red suitcase appears.', 'suitcase'),
+                                 ('多余的蓝色雨伞遮挡了河岸。', '雨伞')]:
+            direction = retry_direction(note)
+            self.assertTrue(direction)
+            self.assertNotIn(unexpected, direction)
+        self.assertEqual(retry_direction(''), '')
+        self.assertEqual(retry_direction('An unfamiliar artifact in the picture.'), '')
 
     def test_native_detail_review_keeps_the_authors_material_and_color_directions(self):
         for brief in ('A red boat in an indigo woodblock print with crisp carved contours.',

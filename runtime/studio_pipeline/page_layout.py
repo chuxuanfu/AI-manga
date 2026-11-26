@@ -60,8 +60,20 @@ def unrequested_panels(im,stripes,brief):
 
 
 def retry_direction(note):
-    # QC view labels belong to the proof sheet; they are not scene composition.
-    note=re.sub(r'(?i)\b(?:the |this )?(?:right|left|top|bottom|first|second) (?:hand )?panel (?:shows|contains|depicts)\s*','',note)
-    note=re.sub(r'(?i)\b(?:on|in) (?:the |this )?(?:(?:right|left|top|bottom|first|second) )?(?:panel|crop|red box|marked area)\b','',note)
-    if re.search(r'(?i)\b(?:panel|crop|box|bounding|screenshot|magnified inset)\b',note):return ''
-    return note.strip()[:550]
+    """Describe how to stage a fresh composition without copying rejected content."""
+    if not note or not note.strip():
+        return ''
+    # A defect report describes a discarded scene. Passing its nouns to the
+    # diffusion encoder can introduce unrequested objects and reproduce the fault.
+    issues = (
+        (r'count|duplicat|surplus|extra|数量|重复|多余',
+         'Arrange the requested subjects so their individual silhouettes can be distinguished.'),
+        (r'connect|attach|overlap|crossing|load path|contact|grip|fused|limb|support|连接|交叠|接触|承托|肢体',
+         'Compose the requested interaction from a viewpoint where the visible contours lead clearly '
+         'into their attachments and the order of overlapping forms is legible.'),
+        (r'blur|smeared|focus|stroke|模糊|失焦',
+         'Resolve the boundaries at the intended focal point in the requested medium.'),
+        (r'color|colour|palette|hue|light|色彩|颜色|光影',
+         'Follow the specified local colors and light direction throughout the scene.'),
+    )
+    return ' '.join(direction for pattern, direction in issues if re.search(pattern, note, re.I))
