@@ -706,12 +706,32 @@ def inspect_single_grips(url,im,positions,brief,tag):
         records.append(record)
     return records
 
+def corroborate_hand_overlap(url, image, box, model):
+    """Locate both contenders with wrists in view before diagnosing hand-on-hand contact."""
+    width,height=image.size
+    l,t,r,b=(round(n*k/1000) for n,k in zip(box,image.size*2))
+    padx,pady=max(32,(r-l)//2),max(32,(b-t)//2)
+    field=max(0,l-padx),max(0,t-pady),min(width,r+padx),min(height,b+pady)
+    view=image.crop(field)
+    scale=min(2.5,1056/max(view.size))
+    view=view.resize(tuple(max(1,round(scale*k)) for k in view.size),Image.Resampling.LANCZOS)
+    fields={'first_hand':{'type':'string'},'second_hand':{'type':'string'},'between':{'type':'string'},
+            'relation':{'enum':['visible_skin_contact','separate_visible_contours','one_hand_only','uncertain']}}
+    question=('Using this single unlabelled field, identify each visible hand by its sleeve or wrist and '
+              'the object or surface it touches. Working from top to bottom trace the nearest edges of '
+              'the two hands. What is between them at their closest point? Choose visible_skin_contact '
+              'only if the skin of one hand visibly meets or occludes skin of the other at a specific '
+              'shared edge. Holding the same object at different points can leave a visible gap. '
+              'Describe this actual boundary in between. If you cannot establish it, use uncertain.')
+    return json.loads(ask(url,[view],question,{'type':'object','properties':fields,'required':list(fields)},tag=model))
+
+
 def overlapping_digits(url,im,regions,tag):
     relation_keys={'relation':{'enum':['fingers_of_different_hands_overlap','separated_hands','each_hand_on_a_prop','only_one_hand','unclear']},'between':{'type':'string'}}
     contour_keys={'verdict':{'enum':['coherent','defective','unclear']},'contour':{'type':'string'}}
     def schema(properties):return {'type':'object','properties':properties,'required':list(properties)}
     relation_prompt=('Describe the spatial relation between the two human hands in this close-up, without grading anything. Is there a visible gap or an object between them? Do actual fingers from one hand visibly overlap the other hand’s fingers or skin? If only one hand is visible say so. Give the name of anything between the hands, or point to the exact overlap, in fewer than 18 words.')
-    contour_prompt=('Inspect only the physical construction of the drawn hands in this close-up. First identify which wrist each hand belongs to. Trace fingertip and nail contours backwards toward the base of their OWN hand. Allow natural interlocking, occlusion, perspective, or a hidden digit. Pay particular attention to any isolated fingernail placed on the back of a DIFFERENT hand, a digit ending at another palm without a natural occluding edge, impossible knuckle direction, or an overlapping pair that has no continuous return path. A normal overlap or a partly hidden finger is fine. Return defective only when you can point to a specific visible contradiction. Describe the precise location in under 30 words.')
+    contour_prompt=('Inspect only the physical construction of the drawn hands in this close-up. First identify which wrist each hand belongs to. Trace fingertip and nail contours backwards toward the base of their OWN hand. Allow natural interlocking, occlusion, perspective, or a hidden digit. Describe the actual sequence of visible edges at the contact, including any release of the farther contour. Identify a physical contradiction only if those visible edges establish one. A normal overlap or a partly hidden finger is fine. Return defective only when you can point to a specific visible contradiction. Describe the precise location in under 30 words.')
     records=[]
     for region in regions.values():
         if region.get('label')!='human hands and fingers':continue
@@ -723,6 +743,13 @@ def overlapping_digits(url,im,regions,tag):
         relation=json.loads(ask(url,[crop],relation_prompt,schema(relation_keys),tag=tag))
         record={'box':box,'relation':relation}
         if relation['relation']=='fingers_of_different_hands_overlap':
+            from print_judge import MODEL
+            if tag!=MODEL and available(MODEL):
+                cross=corroborate_hand_overlap(url,im,box,MODEL)
+                record['spatial_check']=cross
+                if cross['relation']!='visible_skin_contact' or not cross['between'].strip():
+                    records.append(record)
+                    continue
             for key,view in [('direct',crop),('mirror',ImageOps.mirror(crop))]:
                 record[key]=json.loads(ask(url,[view],contour_prompt,schema(contour_keys),tag=tag))
                 if record[key]['verdict']!='defective':break

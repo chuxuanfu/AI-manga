@@ -66,11 +66,23 @@ def local_image(im):
 def post_graph(api, port, directory, stage, workflow=None):
     # Unattended jobs share one graphics device. Rendering a large diffusion
     # canvas while another process loads the print judge can exhaust unified RAM.
+    request_data={'prompt':api}
+    if workflow:request_data['extra_data']={'extra_pnginfo':{'workflow':workflow}}
+    payload=json.dumps(request_data).encode()
+    digest=hashlib.sha256(payload).hexdigest()
+    cache=directory/(stage+'-task.json')
+    if cache.is_file():
+        old=json.loads(cache.read_text())
+        if (old.get('digest')==digest and old.get('renderer')=='ComfyUI' and old.get('output_sha256')
+                and output_fingerprints(old.get('outputs',{}))==old['output_sha256']):
+            return old['outputs']
+    waiting=time.monotonic()
     with (RUNTIME/'vision-model-lock').open('a') as memory_lock:
         fcntl.flock(memory_lock,fcntl.LOCK_EX)
+        queue_seconds=round(time.monotonic()-waiting,2)
         try:
             try:
-                return _post_graph(api,port,directory,stage,workflow)
+                return _post_graph(payload,digest,port,directory,stage,queue_seconds)
             except (error.URLError,ConnectionError) as exc:
                 cause=getattr(exc,'reason',exc)
                 if not isinstance(cause,(ConnectionRefusedError,ConnectionResetError,BrokenPipeError)):raise
@@ -82,7 +94,7 @@ def post_graph(api, port, directory, stage, workflow=None):
                     server(port)
                 finally:
                     sys.path.pop(0)
-                return _post_graph(api,port,directory,stage,workflow)
+                return _post_graph(payload,digest,port,directory,stage,queue_seconds)
         finally:
             release_idle_renderer(port)
 
@@ -99,13 +111,9 @@ def output_fingerprints(outputs):
     return paths or None
 
 
-def _post_graph(api, port, directory, stage, workflow=None):
+def _post_graph(payload, digest, port, directory, stage, queue_seconds):
     cache = directory / (stage + '-task.json')
     url = 'http://127.0.0.1:' + str(port)
-    request_data={'prompt':api}
-    if workflow:request_data['extra_data']={'extra_pnginfo':{'workflow':workflow}}
-    payload = json.dumps(request_data).encode()
-    digest = hashlib.sha256(payload).hexdigest()
     job = json.loads(cache.read_text()) if cache.exists() else {}
     if job.get('digest') != digest:
         if (job.get('renderer')=='ComfyUI' and job.get('output_sha256')
@@ -117,8 +125,17 @@ def _post_graph(api, port, directory, stage, workflow=None):
             save(archive/(stage+'-'+job['digest']+'.json'),job)
         job = {}
     cached=job.get('outputs')
-    if isinstance(cached,dict) and job.get('output_sha256') and output_fingerprints(cached)==job['output_sha256']:
-        return cached
+    if isinstance(cached,dict) and job.get('output_sha256'):
+        if output_fingerprints(cached)==job['output_sha256']:return cached
+        # History authenticates the original render only. Save the regenerated
+        # graph to a fresh filename so an altered or missing file cannot be adopted.
+        submission=json.loads(payload)
+        suffix='-restored-'+uuid.uuid4().hex[:10]
+        for node in submission['prompt'].values():
+            fields=node['inputs']
+            if node['class_type']=='SaveImage' and 'filename_prefix' in fields:fields['filename_prefix']+=suffix
+        payload=json.dumps(submission).encode()
+        job={}
     def get(path):
         with request.urlopen(url+path,timeout=30) as response:
             return json.load(response)
@@ -134,7 +151,7 @@ def _post_graph(api, port, directory, stage, workflow=None):
                 ident = json.load(response)['prompt_id']
         except error.HTTPError as exc:
             raise RuntimeError(exc.read().decode()) from exc
-        job = {'id':ident,'digest':digest}
+        job = {'id':ident,'digest':digest,'gpu_queue_seconds':queue_seconds}
         save(cache,job)
     while True:
         hist = get('/history/'+job['id']).get(job['id'])
@@ -151,6 +168,10 @@ def _post_graph(api, port, directory, stage, workflow=None):
                              if k in ('ckpt_name','unet_name','clip_name','lora_name','vae_name','model_name')
                              and isinstance(v,str)}
                     job.update(renderer='ComfyUI',endpoint=url,model_files=sorted(weights))
+            timestamps={name:data['timestamp'] for name,data in hist['status'].get('messages',[])
+                        if isinstance(data,dict) and isinstance(data.get('timestamp'),(int,float))}
+            if 'execution_start' in timestamps and 'execution_success' in timestamps:
+                job['renderer_seconds']=round((timestamps['execution_success']-timestamps['execution_start'])/1000,2)
             hashes=output_fingerprints(hist['outputs'])
             if hashes:job.update(outputs=hist['outputs'],output_sha256=hashes)
             save(cache,job)
@@ -584,13 +605,16 @@ def main():
                             result['issues'].insert(0,dict(target=detail['target'],box=detail['box'],fix=detail['fix'],symptom=detail['observation']))
                     elif dv=='unclear' and result['status']=='pass':
                         result.update(status='uncertain',note=detail['observation'])
-                comparison=compare(rgb,result.get('regions',{}),job/(stage+'-reference-comparison.jpg'),brief=prompt if rec.get('画法自适应') else '')
-                result['参考比较']=comparison
-                if result['status']=='pass' and comparison['decision']=='below':
-                    result['status']='global'
-                    result['note']+=' · 交换左右后仍发现画法差距'
-                elif comparison['decision']=='review':
-                    result['note']+=' · 画法对照需目检'
+                # A rejected composition must be re-rendered and assessed again.
+                # Assess workmanship on the actual version eligible to advance.
+                if result['status']=='pass' or not args.round_worker:
+                    comparison=compare(rgb,result.get('regions',{}),job/(stage+'-reference-comparison.jpg'),brief=prompt if rec.get('画法自适应') else '')
+                    result['参考比较']=comparison
+                    if result['status']=='pass' and comparison['decision']=='below':
+                        result['status']='global'
+                        result['note']+=' · 交换左右后仍发现画法差距'
+                    elif comparison['decision']=='review':
+                        result['note']+=' · 画法对照需目检'
         rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,inspection_key=context_key,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),review=result))
         save(manifest,rec)
         print(stage,result['status'],result['note'],flush=True)

@@ -91,6 +91,45 @@ class LocalRepairTests(unittest.TestCase):
             self.assertIsNone(mask.crop((0,90,200,120)).getbbox())
         self.assertIsNone(glyph_mask(Image.new('RGB',art.size,'grey'),region))
 
+    def test_two_hands_on_one_prop_do_not_trigger_an_overlap_redraw(self):
+        from construction_review import overlapping_digits
+        regions={'R1':{'box':[250,250,750,750], 'label':'human hands and fingers'}}
+        first={'relation':'fingers_of_different_hands_overlap','between':'an envelope'}
+        other={'relation':'separate_visible_contours','first_hand':'top edge','second_hand':'bottom edge',
+               'between':'an uninterrupted strip of paper'}
+        with patch('construction_review.ask',side_effect=[json.dumps(first),json.dumps(other)]) as read, \
+                patch('construction_review.available',return_value=True):
+            rows=overlapping_digits(None,Image.new('RGB',(180,180)),regions,LARGE)
+        self.assertEqual(read.call_count,2)
+        self.assertEqual(rows[0]['spatial_check'],other)
+        self.assertNotIn('mirror',rows[0])
+
+    def test_verified_render_resume_skips_gpu_and_changed_files_require_a_new_save(self):
+        import hashlib
+        import io
+        from run import post_graph, _post_graph
+        api={'1':{'class_type':'SaveImage','inputs':{'filename_prefix':'image'}}}
+        payload=json.dumps({'prompt':api}).encode()
+        digest=hashlib.sha256(payload).hexdigest()
+        outputs={'1':{'images':[{'type':'output','filename':'image.png','subfolder':''}]}}
+        with TemporaryDirectory() as temp, patch('run.release_idle_renderer'):
+            root=Path(temp)
+            source=root/'image.png'
+            source.write_bytes(b'original')
+            (root/'drawing-task.json').write_text(json.dumps({'id':'original','digest':digest,'renderer':'ComfyUI',
+                'outputs':outputs,'output_sha256':{'image.png':hashlib.sha256(b'original').hexdigest()}}))
+            with patch('run.OUTPUT',root),patch('run.RUNTIME',root/'no-compute-lock'):
+                self.assertEqual(post_graph(api,8193,root,'drawing'),outputs)
+            source.write_bytes(b'externally changed')
+            history={'new':{'status':{'status_str':'success','messages':[]},'outputs':{}}}
+            replies=[io.BytesIO(b'{"prompt_id":"new"}'),io.BytesIO(json.dumps(history).encode())]
+            with patch('run.OUTPUT',root),patch('run.request.urlopen',side_effect=replies) as service:
+                _post_graph(payload,digest,8193,root,'drawing',1.25)
+            submitted=service.call_args_list[0].args[0]
+            self.assertTrue(submitted.full_url.endswith('/prompt'))
+            self.assertTrue(json.loads(submitted.data)['prompt']['1']['inputs']['filename_prefix'].startswith('image-restored-'))
+            self.assertEqual(json.loads((root/'drawing-task.json').read_text())['id'],'new')
+
     def test_full_scene_repair_sees_the_native_detail_but_uses_the_full_canvas(self):
         graph = instruction_edit('Repair this connection', 77, 'whole.png', 'trial',
                                  masked=True, detail_reference='detail.png').api
