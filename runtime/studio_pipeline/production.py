@@ -183,12 +183,23 @@ def failed_scene_connection(directory, record, finding):
                for _,item in report.get('previous_regions',[]))
 
 
-def previous_scene_candidate(folder, stage, reviews, output_root):
+def previous_scene_candidate(folder, stage, reviews, output_root, *, structural_reports=None):
     """Reopen a locally generated scene only when the render and review hashes agree."""
     receipts=[folder/(stage+'-task.json'),*sorted((folder/'render-history').glob(stage+'-*.json'))]
     tasks=[json.loads(p.read_text()) for p in receipts if p.is_file()]
     for row in reversed(reviews):
-        if row.get('stage')!=stage or row.get('review',{}).get('status')!='uncertain':continue
+        if row.get('stage')!=stage:continue
+        status=row.get('review',{}).get('status')
+        if status!='uncertain':
+            if status!='pass' or not structural_reports:continue
+            report_name=structural_reports.get(row['file'])
+            if not report_name:continue
+            report_path=(folder/report_name).resolve()
+            if not report_path.is_relative_to(folder.resolve()) or not report_path.is_file():continue
+            judged=json.loads(report_path.read_text())
+            from print_judge import REVISION
+            if (judged.get('revision') in (None,REVISION) or judged.get('sha256')!=row.get('hash')
+                    or judged.get('status') not in ('local','uncertain')):continue
         path=(folder/row['file']).resolve()
         if path.parent!=folder.resolve() or not path.is_relative_to(output_root.resolve()) or not path.is_file():continue
         key=path.relative_to(output_root.resolve()).as_posix()
@@ -196,6 +207,24 @@ def previous_scene_candidate(folder, stage, reviews, output_root):
             if task.get('renderer')!='ComfyUI' or not task.get('model_files'):continue
             if task.get('output_sha256',{}).get(key)==row.get('hash')==fingerprint(path):
                 return path,task['model_files']
+    return None
+
+
+def previous_scene_on_master(previous, source, brief, output_root):
+    """An earlier guided composition is only a candidate on the same authenticated master."""
+    path=previous/'review.json'
+    if not path.is_file():return None
+    saved=json.loads(path.read_text())
+    if saved.get('prompt')!=brief or not saved.get('4K'):return None
+    retained=previous/saved['4K']
+    digest=saved.get('逐块终审',{}).get('sha256')
+    if not digest or not retained.is_file() or fingerprint(retained)!=digest or fingerprint(source)!=digest:return None
+    for row in reversed(saved.get('reviews',[])):
+        stage=row.get('stage','')
+        if not stage.endswith('-scene'):continue
+        candidate=previous_scene_candidate(previous,stage,[row],output_root,
+                                           structural_reports=saved.get('底图结构终审'))
+        if candidate:return candidate
     return None
 
 

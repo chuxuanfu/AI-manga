@@ -139,6 +139,10 @@ class LocalRepairTests(unittest.TestCase):
             with patch('print_judge.model_identity',return_value='model'),patch('print_judge.ask',side_effect=replies):
                 value=verify_outside_crop(None,Image.new('RGB',(400,300)),'Bird perched on rail',claim)
             self.assertEqual(value['confirmed'],expected)
+        edge=dict(found,left=848,top=480,right=999,bottom=999)
+        with patch('print_judge.model_identity',return_value='model'),patch('print_judge.ask',return_value=json.dumps(edge)) as read:
+            self.assertFalse(verify_outside_crop(None,Image.new('RGB',(400,300)),'Bird perched on rail',claim)['confirmed'])
+            self.assertEqual(read.call_count,1)
         with patch('print_judge.ask') as reader:
             self.assertIsNone(verify_outside_crop(None,None,'Bird on rail','A talon visibly merges with the wood.'))
             reader.assert_not_called()

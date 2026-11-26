@@ -958,17 +958,18 @@ def main():
             final_draft=check_draft_structure(corrected,check(corrected,label+'-draft-corrected',repair_box))
             return corrected if usable(final_draft) else None
 
-        if not guided:
-            # A previously generated complete scene can be a valid fresh text
-            # composition. Reassess its actual pixels before allocating another render.
-            from production import previous_scene_candidate
-            previous_scene=previous_scene_candidate(job,stage,rec['reviews'],OUTPUT)
-            if previous_scene:
-                existing,weights=previous_scene
-                reassessed=screen_scene(existing,stage+'-rescreen',None)
+        from production import previous_scene_candidate, previous_scene_on_master
+        from print_judge import same_composition
+        prior=previous_scene_candidate(job,stage,rec['reviews'],OUTPUT,structural_reports=rec.get('底图结构终审'))
+        if not prior and args.retry_round:
+            prior=previous_scene_on_master(args.retry_round,source,prompt,OUTPUT)
+        if prior:
+            existing,weights=prior
+            if not guided or same_composition(source,existing,prompt):
+                reassessed=screen_scene(existing,stage+'-rescreen',box if guided else None)
                 if reassessed:
                     rec['高清底图返工']={'源图':str(source),'重绘':str(reassessed),'依据':issue['fix'],'模型':weights,
-                                     '保留原构图':False,'目标范围':None}
+                                     '保留原构图':guided,'目标范围':box if guided else None}
                     save(manifest,rec)
                     return reassessed
         with Image.open(source) as canvas:

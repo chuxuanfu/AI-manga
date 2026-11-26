@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-39'
+REVISION = 'print-inspection-40'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -453,20 +453,20 @@ def verify_outside_crop(url,image,brief,claim):
     clause=site.get('clause','').strip().strip('“”\"')
     if (not clause or ' '.join(clause.casefold().split()) not in ' '.join(brief.casefold().split())
             or site['condition']!='satisfied_in_view' or not site['trace'].strip()
-            or not (0<=l<r<=1000 and 0<=t<b<=1000 and (r-l)*(b-t)<300000)):return result
+            or not (2<l<r<998 and 2<t<b<998 and r-l<400 and b-t<400)):return result
     rect=tuple(round(n*k/1000) for n,k in zip(box,image.size*2))
     detail=image.crop(expanded(rect,image.size))
     scale=min(2.5,1024/max(detail.size))
     detail=detail.resize(tuple(max(1,round(n*scale)) for n in detail.size),Image.Resampling.LANCZOS)
     keys={'condition':{'enum':['satisfied_in_view','visible_fault','uncertain']},'evidence':{'type':'string'}}
-    request=('Image 1 enlarges a physical detail from the actual original pixels. Image 2 shows the '
-             'composition. First trace the two visible contours and identify their relative depth in '
-             'the enlargement. Compare only with this verbatim author requirement: '+clause+
-             '. Use satisfied_in_view if the specified relation is visibly depicted. A contact can '
-             'occlude part of a surface; judge the visible sides and any actual contradictions. A '
-             'missing endpoint expressly requested, a broken or fused part, or a visible gap where '
-             'contact is required cannot be marked satisfied. Describe concrete visual evidence.')
-    check=json.loads(ask(url,[detail,whole],request,{'type':'object','properties':keys,'required':list(keys)},tag=MODEL))
+    request=('This single enlargement is your only evidence. Trace the two actual contours and '
+             'identify the physical surface on each side of their meeting point. Verify this original '
+             'requirement: '+clause+'. Satisfied_in_view requires the specific parts AND the relevant '
+             'connection to be visible in these pixels. If a required route or its endpoint leaves '
+             'this field, or the attachment could be a different object, choose uncertain. '
+             'A physical contact can occlude its own hidden side. A visible gap, fused part or '
+             'contradictory crossing is a fault. Describe the evidence you see.')
+    check=json.loads(ask(url,[detail],request,{'type':'object','properties':keys,'required':list(keys)},tag=MODEL))
     result.update(check=check,box=box,confirmed=check['condition']=='satisfied_in_view' and bool(check['evidence'].strip()))
     return result
 
@@ -597,12 +597,21 @@ def verify_frame_exit(url,image,overview,box,claim,brief):
         'Claim: '+claim+' Brief: '+brief,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL,reason=True))
     result['explained']=(result['outcome']=='continuous_at_border' and result['edge'] in edges
                          and result['brief_requires_missing_part'] is False and bool(result['trace'].strip()))
-    if result['outcome']=='unresolved' and not result['brief_requires_missing_part'] and result['edge'] in edges:
+    # An enum can contradict the model's description of the contour actually
+    # crossing the image edge. Resolve that disagreement with a separate reader.
+    contradicted=(result['outcome']=='broken_inside' and bool(re.search(
+        r'continues? (?:past|beyond|out of)|extends? (?:past|beyond|out of)|'
+        r'(?:cross(?:es|ing)|reaches?) (?:the |its )?(?:physical |outer )?(?:edge|border)',
+        result['trace'],re.I)))
+    if (result['outcome']=='unresolved' or contradicted) and not result['brief_requires_missing_part'] and result['edge'] in edges:
         # Ask about literal geometry on the original border rather than asking the
         # same reviewer to interpret its own uncertain verdict.
         fields={'part_reaches_border':{'type':'boolean'},'break_before_border':{'type':'boolean'},
                 'another_visible_defect':{'type':'boolean'},'edge':{'enum':['left','top','right','bottom','none']},
                 'required_visible_feature_absent':{'type':'boolean'},'path':{'type':'string'}}
+        from construction_review import LARGE
+        auditor=LARGE if contradicted and model_identity(LARGE) else MODEL
+        if contradicted and auditor==MODEL:return result
         observation=json.loads(ask(url,[crop,locator],
            'Inspect the actual detail (first) and the entire frame with the location outlined (second). '
            'The feature under examination is described here: '+claim+
@@ -611,8 +620,9 @@ def verify_frame_exit(url,image,overview,box,claim,brief):
            'BEFORE the border? Is some other defect in this same part visible on the canvas? '
            'Use only the following scene brief to decide whether an absent part was explicitly required '
            'to be entirely visible: '+brief,
-           {'type':'object','properties':fields,'required':list(fields)},tag=MODEL,reason=True))
+           {'type':'object','properties':fields,'required':list(fields)},tag=auditor,reason=auditor==MODEL))
         result['edge_trace']=observation
+        result['edge_reader']=auditor
         result['explained']=(observation['edge']==result['edge'] and observation['part_reaches_border'] is True
               and observation['break_before_border'] is False and observation['another_visible_defect'] is False
               and observation['required_visible_feature_absent'] is False and bool(observation['path'].strip()))
