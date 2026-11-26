@@ -7,7 +7,9 @@ from evidence import ask
 def unresolved_neighbor(check):
     loupe=check.get('contour_magnification') or {}
     orders=[loupe.get(key) or {} for key in ('forward','reverse')]
-    return (not check.get('confirmed') and 'subject_optics' not in check
+    attempt=check.get('subject_optics')
+    untested=(attempt is None or (attempt.get('orders')==[] and 'search' not in attempt))
+    return (not check.get('confirmed') and untested
             and check.get('trace',{}).get('new_artifact') is False
             and bool(loupe.get('line_pair'))
             and all(v.get('kind')=='contrast_or_texture_only' for v in orders)
@@ -18,24 +20,40 @@ def source_loupe(low,high,label,feature):
     from masks import focal_subject_mask
     from print_artifacts import resolved_line_pair
     if low.size!=high.size or min(low.size)<96:return None
-    mask,box=focal_subject_mask(low,Image.new('L',low.size,255),label,feature)
+    mask,box=focal_subject_mask(low,Image.new('L',low.size,255),label,feature,require_feature=True)
     if not box:return None
     # Include a margin around narrow features so a pair of close marks is measurable.
     x,y,r,b=box
     pad_x=max(12,(100-r+x+1)//2);pad_y=max(12,(100-b+y+1)//2)
     extent=(max(0,x-pad_x),max(0,y-pad_y),min(low.width,r+pad_x),min(low.height,b+pad_y))
-    measured=resolved_line_pair(low.crop(extent),high.crop(extent))
-    if not measured:return None
-    cx,cy=measured['center'];cx+=extent[0];cy+=extent[1]
+    measured=resolved_line_pair(low.crop(extent),high.crop(extent),centers=mask.crop(extent))
+    if measured:
+        cx,cy=measured['center'];cx+=extent[0];cy+=extent[1]
+        witness={'line_pair':measured}
+    else:
+        # Curved contours such as an iris can be fully resolved without two
+        # parallel strokes. Choose a visible turn on the lower-scale source.
+        # Its position is only a locator. Both blinded readers still judge it.
+        import cv2
+        import numpy as np
+        from print_judge import resize_only
+        if resize_only((low,high))['condition']=='resize_or_sharpen':return None
+        ink=np.array(low.convert('L'),dtype=np.float32)/255
+        corners=cv2.cornerMinEigenVal(ink,blockSize=7,ksize=3)
+        corners[np.asarray(mask)<128]=0
+        _,strength,_,(cx,cy)=cv2.minMaxLoc(corners)
+        if strength<.00015:return None
+        witness={'source_contour_turn':[cx,cy]}
+
     if not (x<=cx<r and y<=cy<b and mask.getpixel((cx,cy))>=128):return None
     x=max(0,min(low.width-96,cx-48));y=max(0,min(low.height-96,cy-48))
-    return dict(feature_box=list(box),pixels_in_field=[x,y,x+96,y+96],line_pair=measured)
+    return dict(feature_box=list(box),pixels_in_field=[x,y,x+96,y+96],**witness)
 
 
 def verify_source_feature(url,low,high,overview,models):
     from focal_edit import describe_patch
     desc=describe_patch(url,low,overview,localize=True)
-    result=dict(confirmed=False,source_inventory=desc,orders=[])
+    result=dict(confirmed=False,source_inventory=desc,orders=[],search='inside_localized_feature')
     if desc.get('scope')!='bounded_subject' or not desc.get('label') or not desc.get('feature'):return result
     site=source_loupe(low,high,desc['label'],desc['feature'])
     if not site:return result

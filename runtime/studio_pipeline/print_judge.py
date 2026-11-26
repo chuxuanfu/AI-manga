@@ -1475,7 +1475,7 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
         held=result['views'][-1]
         comparison=held.get('blind_detail_check') or {}
         if held.get('view')=='comparison' and unresolved_neighbor(comparison):
-            report=report.with_name(report.stem+'-subject-optics.json')
+            report=report.with_name(report.stem+'-feature-mask-optics.json')
             if report.is_file():
                 result=json.loads(report.read_text())
             else:

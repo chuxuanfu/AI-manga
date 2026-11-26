@@ -117,3 +117,18 @@ class SubjectOpticsTests(unittest.TestCase):
                     patch('optical_feature.ask',side_effect=map(json.dumps,(side,second))):
                 result=verify_source_feature(None,picture,picture,picture,('one','two'))
                 self.assertEqual(result['confirmed'],expected)
+
+    def test_curved_marks_are_located_on_the_source_and_resize_does_not_qualify(self):
+        from PIL import ImageDraw
+        from optical_feature import source_loupe
+        src=Image.new('RGB',(192,160),'ivory')
+        ImageDraw.Draw(src).ellipse((65,55,120,102),fill='teal',outline='black',width=5)
+        high=src.copy()
+        ImageDraw.Draw(high).ellipse((78,63,88,78),fill='white')
+        mask=Image.new('L',src.size);ImageDraw.Draw(mask).rectangle((60,50,125,107),fill=255)
+        with patch('masks.focal_subject_mask',return_value=(mask,mask.getbbox())), \
+                patch('print_artifacts.resolved_line_pair',return_value=None):
+            self.assertIsNone(source_loupe(src,src,'subject','curved feature'))
+            found=source_loupe(src,high,'subject','curved feature')
+            self.assertIsNotNone(found)
+            self.assertGreater(mask.getpixel(tuple(found['source_contour_turn'])),0)

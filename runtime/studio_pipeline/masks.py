@@ -83,7 +83,7 @@ def boundary_model(model_dir):
             Sam2Model.from_pretrained(model_dir,local_files_only=True).eval())
 
 
-def focal_subject_mask(image, area, label, feature):
+def focal_subject_mask(image, area, label, feature, *, require_feature=False):
     """Confine optical detail to an existing subject and locate its feature for a closer retry."""
     names=[label]+([feature] if feature and feature!=label else [])
     scores=probabilities(image,names)
@@ -104,6 +104,9 @@ def focal_subject_mask(image, area, label, feature):
         inner=ImageChops.multiply(limited,support(scores[1]))
         if inner.point(lambda x:255 if x>=128 else 0).getbbox():
             focus=inner
+    if require_feature and feature and feature!=label:
+        if focus is limited:return limited,None
+        return focus,focus.point(lambda x:255 if x>=128 else 0).getbbox()
     return limited,focus.point(lambda x:255 if x>=128 else 0).getbbox()
 
 
