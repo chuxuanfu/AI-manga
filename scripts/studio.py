@@ -1,4 +1,5 @@
 """Interactive and CLI entry for the same local studio."""
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,12 @@ def protected(command):
     return command
 
 def server(port=8193):
+    with (RUNTIME/f'server-{port}.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        return _ensure_server(port)
+
+
+def _ensure_server(port):
     entry = RUNTIME/'ComfyUI/main.py'
     address = f'http://127.0.0.1:{port}'
     def ready():

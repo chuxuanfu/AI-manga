@@ -100,13 +100,15 @@ def save(job,state):
         except OSError as exc:print('图片库刷新失败',exc,flush=True)
 
 
-def local_retry_source(previous, brief):
+def local_retry_source(previous, brief, *, interrupted=False):
     """Resume only a localized 4K rejection whose image and baseline still match the review."""
     record_file=previous/'review.json'
     if not record_file.is_file():return None
     record=json.loads(record_file.read_text())
+    status=record.get('status','')
+    eligible=status.startswith('未达标') or (interrupted and status in ('精绘中','离线逐块终审中'))
     if (record.get('delivery_edge')!=3840 or record.get('prompt')!=brief
-            or not record.get('status','').startswith('未达标') or not record.get('4K') or not record.get('底图')):
+            or not eligible or not record.get('4K') or not record.get('底图')):
         return None
     entry=record.get('逐块终审',{})
     if entry.get('状态') not in ('local','uncertain') or not entry.get('报告'):return None
@@ -114,13 +116,18 @@ def local_retry_source(previous, brief):
     if not report_file.is_file():return None
     report=json.loads(report_file.read_text())
     image=previous/record['4K']
-    draft=Path(record['底图'])
+    candidates=[record['底图'],record.get('高清底图返工',{}).get('重绘')]
     issue=report.get('issue',{})
     if (report.get('brief')!=brief or report.get('status')!=entry['状态'] or issue.get('operation')!='redraw'
-            or not issue.get('fix') or not issue.get('box') or not image.is_file() or not draft.is_file()
-            or fingerprint(image)!=report.get('sha256') or fingerprint(draft)!=report.get('comparison_sha256')):
+            or not issue.get('fix') or not issue.get('box') or not image.is_file()
+            or fingerprint(image)!=report.get('sha256')):
         return None
-    return image,draft,issue
+    for name in dict.fromkeys(candidates):
+        if name:
+            draft=Path(name)
+            if draft.is_file() and fingerprint(draft)==report.get('comparison_sha256'):
+                return image,draft,issue
+    return None
 
 
 def repeated_rejection(directory, box):

@@ -148,6 +148,13 @@ def review(im,brief,regions,path,detected=(),observed_people=0):
             if available(audit_tag):
                 with backend(audit_tag) as address:
                     audit=verify_arm_endpoints(address,im,audit_tag)
+                    if not audit['confirmed']:
+                        # In a wide shot a distant full figure can span only a few
+                        # tokens on the overview. Verify its own geometry at print scale.
+                        nearer=verify_interior_figure(address,im,detected,audit_tag)
+                        if nearer:
+                            audit['native_figure']=nearer
+                            audit['confirmed']=nearer['confirmed']
                 result['arm_endpoint_evidence']=audit
             if not audit or not audit['confirmed']:
                 result.update(verdict='unclear',observation='独立的两侧前臂追踪提示有轮廓突然结束，需核实袖口到手的连接。')
@@ -340,6 +347,31 @@ def trace_arms(url,im,detected,tag):
         confirmed['initial_detail']=detail
         return confirmed
     return detail
+
+def verify_interior_figure(url, image, detected, tag):
+    people=[r['box'] for r in detected if r.get('name')=='person']
+    if len(people)!=1:return None
+    l,t,r,b=[round(v*n/1000) for v,n in zip(people[0],image.size*2)]
+    width,height=r-l,b-t
+    if min(width,height)<30 or max(width/image.width,height/image.height)>.3:return None
+    pad=max(12,round(max(width,height)*.18))
+    bounds=(max(0,l-pad),max(0,t-pad),min(image.width,r+pad),min(image.height,b+pad))
+    crop=image.crop(bounds)
+    scale=min(3,800/max(crop.size))
+    zoom=crop.resize(tuple(max(1,round(v*scale)) for v in crop.size),Image.Resampling.LANCZOS)
+    check=verify_arm_endpoints(url,zoom,tag)
+    check['source_pixels']=list(bounds)
+    for side in ('left','right'):
+        part=check[side]
+        x=bounds[0]+part['x']*crop.width/1000
+        y=bounds[1]+part['y']*crop.height/1000
+        part['source_point']=[round(x),round(y)]
+        # A crop boundary alone cannot explain missing anatomy. An endpoint must
+        # also belong to the detected person rather than a second nearby shape.
+        if part['state']=='frame_exit' or not (l-pad/2<=x<=r+pad/2 and t-pad/2<=y<=b+pad/2):
+            check['confirmed']=False
+    return check
+
 
 def verify_arm_endpoints(url, im, tag):
     """Corroborate a disputed sleeve endpoint on the original and at its actual location."""

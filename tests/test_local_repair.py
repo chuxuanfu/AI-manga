@@ -11,7 +11,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
-from construction_review import LARGE, assess_local_edit
+from construction_review import LARGE, assess_local_edit, verify_interior_figure
 from masks import structural_composite
 from print_judge import issue_category
 from production import repeated_rejection
@@ -65,6 +65,17 @@ class LocalRepairTests(unittest.TestCase):
                     'construction_review.available', return_value=True):
                 verdict = assess_local_edit(source, candidate, [0, 0, 1000, 1000], 'Joint is attached.')
             self.assertEqual(verdict['verdict'], expected)
+
+    def test_interior_detail_cannot_clear_a_limb_by_treating_its_crop_as_the_frame(self):
+        image = Image.new('RGB', (1920, 1080))
+        person = [{'name': 'person', 'box': [590, 210, 650, 390]}]
+        for state, x, expected in [('hand', 50, False), ('frame_exit', 500, False),
+                                    ('occlusion', 500, True)]:
+            reading = {'confirmed': True, 'left': {'state': state, 'x': x, 'y': 500},
+                       'right': {'state': 'hand', 'x': 650, 'y': 600}}
+            with patch('construction_review.verify_arm_endpoints', return_value=reading):
+                result = verify_interior_figure(None, image, person, 'local')
+            self.assertEqual(result['confirmed'], expected)
 
     def test_ambiguous_geometry_does_not_request_a_resolution_rebuild(self):
         image = Image.new('RGB', (32, 32))

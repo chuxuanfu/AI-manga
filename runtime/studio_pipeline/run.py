@@ -69,9 +69,34 @@ def post_graph(api, port, directory, stage, workflow=None):
     with (RUNTIME/'vision-model-lock').open('a') as memory_lock:
         fcntl.flock(memory_lock,fcntl.LOCK_EX)
         try:
-            return _post_graph(api,port,directory,stage,workflow)
+            try:
+                return _post_graph(api,port,directory,stage,workflow)
+            except (error.URLError,ConnectionError) as exc:
+                cause=getattr(exc,'reason',exc)
+                if not isinstance(cause,(ConnectionRefusedError,ConnectionResetError,BrokenPipeError)):raise
+                # The local service can exit independently of a long-running job.
+                # Only restart this project's offline server on its reserved port.
+                sys.path.insert(0,str(STUDIO/'scripts'))
+                try:
+                    from studio import server
+                    server(port)
+                finally:
+                    sys.path.pop(0)
+                return _post_graph(api,port,directory,stage,workflow)
         finally:
             release_idle_renderer(port)
+
+
+def output_fingerprints(outputs):
+    paths={}
+    for record in outputs.values():
+        for image in record.get('images',[]):
+            if image.get('type')!='output':return None
+            path=(OUTPUT/image.get('subfolder','')/image['filename']).resolve()
+            if not path.is_relative_to(OUTPUT.resolve()) or not path.is_file():return None
+            with path.open('rb') as stream:
+                paths[str(path.relative_to(OUTPUT.resolve()))]=hashlib.file_digest(stream,'sha256').hexdigest()
+    return paths or None
 
 
 def _post_graph(api, port, directory, stage, workflow=None):
@@ -84,6 +109,9 @@ def _post_graph(api, port, directory, stage, workflow=None):
     job = json.loads(cache.read_text()) if cache.exists() else {}
     if job.get('digest') != digest:
         job = {}
+    cached=job.get('outputs')
+    if isinstance(cached,dict) and job.get('output_sha256') and output_fingerprints(cached)==job['output_sha256']:
+        return cached
     def get(path):
         with request.urlopen(url+path,timeout=30) as response:
             return json.load(response)
@@ -116,7 +144,9 @@ def _post_graph(api, port, directory, stage, workflow=None):
                              if k in ('ckpt_name','unet_name','clip_name','lora_name','vae_name','model_name')
                              and isinstance(v,str)}
                     job.update(renderer='ComfyUI',endpoint=url,model_files=sorted(weights))
-                    save(cache,job)
+            hashes=output_fingerprints(hist['outputs'])
+            if hashes:job.update(outputs=hist['outputs'],output_sha256=hashes)
+            save(cache,job)
             return hist['outputs']
         time.sleep(4)
 
@@ -459,7 +489,7 @@ def main():
         args.proof_only=True
     def check(path,stage,focus=None):
         key = hashlib.sha256(path.read_bytes()).hexdigest()
-        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v14' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v4-frame-boundary'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
+        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v15' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v4-frame-boundary'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'
@@ -530,10 +560,16 @@ def main():
         return path,result
 
     retry_source=None
-    if args.round_worker and args.retry_round and four_only:
+    retry_origin=None
+    if args.round_worker and four_only:
         from production import local_retry_source
-        retry_source=local_retry_source(args.retry_round,prompt)
-        if retry_source and not (args.reviewed_image or args.from_image or args.candidate_image or args.repair_box):
+        retry_source=local_retry_source(job,prompt,interrupted=True)
+        if retry_source:
+            retry_origin=job
+        elif args.retry_round:
+            retry_origin=args.retry_round
+            retry_source=local_retry_source(retry_origin,prompt)
+        if retry_source and retry_origin!=job and not (args.reviewed_image or args.from_image or args.candidate_image or args.repair_box):
             # When a text-only job consumes a whole new round yet keeps exactly
             # the previous rejected master, let new seeds try a fresh composition.
             # User-supplied source images always keep their original composition.
@@ -781,7 +817,11 @@ def main():
         if framing and framing['explained']:
             repaired=last
         else:
-            repaired=correct_shape(last,issue,focus,'continued-repair',seed+820,args.retry_round) if focus else None
+            stage='continued-repair'
+            if retry_origin==job:
+                with last.open('rb') as stream:
+                    stage='resume-'+hashlib.file_digest(stream,'sha256').hexdigest()[:16]+'-repair'
+            repaired=correct_shape(last,issue,focus,stage,seed+820,retry_origin) if focus else None
         if repaired:
             master,small=repaired,None
             repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
@@ -790,9 +830,9 @@ def main():
             # None of the new candidates improved the defect. The prior, hash-verified
             # negative receipt still describes these exact pixels and can be carried
             # forward without asking a vision model to regrade an unchanged failure.
-            previous=json.loads((args.retry_round/'review.json').read_text())
+            previous=json.loads((retry_origin/'review.json').read_text())
             entry=dict(previous['逐块终审'])
-            entry['报告']=os.path.relpath((args.retry_round/entry['报告']).resolve(),job)
+            entry['报告']=os.path.relpath((retry_origin/entry['报告']).resolve(),job)
             rec.update({'4K':os.path.relpath(last,job),'逐块终审':entry,
                         '终审退回原因':issue.get('symptom') or issue['fix'],'status':'未达标 · 本轮局部重绘未获通过'})
             save(manifest,rec)
@@ -819,6 +859,7 @@ def main():
         baseline=approved if four_only else small
         judged=print_inspect(master,prompt,job,final,small=baseline,focus=print_focus,
                              draft=None if four_only else approved,source_comparison=four_only)
+        if four_only:rec['底图']=str(baseline)
         rec['逐块终审']={'sha256':judged['sha256'],'状态':judged['status'],'已看视图':len(judged['views']),
                       '计划视图':judged['planned'],'原像素图块':judged['planned_native'],'报告':judged['report']}
         save(manifest,rec)
