@@ -890,6 +890,22 @@ def main():
         if not editor:return None
         scene_tried=True
         guided=bool(args.reviewed_image or args.from_image or args.candidate_image)
+        def screen_scene(path,label,known_box):
+            reviewed=check_draft_structure(path,check(path,label,known_box))
+            if usable(reviewed):return path
+            finding=draft_repair_issue(reviewed)
+            if not finding or finding.get('operation')!='redraw':return None
+            # Keep a promising new composition. A single localized flaw can be
+            # repaired at drawing scale before another full-frame print is built.
+            repair_box=region(finding,reviewed)
+            corrected=correct_shape(path,finding,repair_box,label+'-draft-repair',seed+8311)
+            if not corrected:return None
+            if guided:
+                from print_judge import same_composition
+                if not same_composition(source,corrected,prompt):return None
+            final_draft=check_draft_structure(corrected,check(corrected,label+'-draft-corrected',repair_box))
+            return corrected if usable(final_draft) else None
+
         if not guided:
             # A previously generated complete scene can be a valid fresh text
             # composition. Reassess its actual pixels before allocating another render.
@@ -897,12 +913,12 @@ def main():
             previous_scene=previous_scene_candidate(job,stage,rec['reviews'],OUTPUT)
             if previous_scene:
                 existing,weights=previous_scene
-                reassessed=check_draft_structure(existing,check(existing,stage+'-rescreen'))
-                if usable(reassessed):
-                    rec['高清底图返工']={'源图':str(source),'重绘':str(existing),'依据':issue['fix'],'模型':weights,
+                reassessed=screen_scene(existing,stage+'-rescreen',None)
+                if reassessed:
+                    rec['高清底图返工']={'源图':str(source),'重绘':str(reassessed),'依据':issue['fix'],'模型':weights,
                                      '保留原构图':False,'目标范围':None}
                     save(manifest,rec)
-                    return existing
+                    return reassessed
         with Image.open(source) as canvas:
             scale=min(1,(1536*1024/(canvas.width*canvas.height))**.5)
             size=tuple(max(32,round(n*scale/16)*16) for n in canvas.size)
@@ -948,8 +964,8 @@ def main():
         if not aligned and guided:return None
         # An unconstrained text brief may legitimately change layout. Evaluate it
         # like a new draft and locate its subjects afresh; old coordinates no longer apply.
-        screened=check_draft_structure(candidate,check(candidate,stage,box if aligned else None))
-        if not usable(screened):return None
+        candidate=screen_scene(candidate,stage,box if aligned else None)
+        if not candidate:return None
         rec['高清底图返工']={'源图':str(source),'重绘':str(candidate),'依据':issue['fix'],'模型':editor,
                          '保留原构图':aligned,'目标范围':box if aligned else None}
         save(manifest,rec)
