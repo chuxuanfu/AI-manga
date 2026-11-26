@@ -1,7 +1,7 @@
 AI Manga Studio
 
   ./Studio.command                         Open the interactive menu
-  ./Studio.command -p "A fox in a garden"  Generate reviewed 4K and 8K PNGs
+  ./Studio.command -p "A fox in a garden"  Generate a reviewed 4K PNG
 
   -p, --prompt TEXT       Describe the scene in Chinese or English
   -o, --output-dir DIR    Copy accepted files to DIR (one subfolder per release)
@@ -10,8 +10,9 @@ AI Manga Studio
   --seed N                Starting seed (default random)
   --candidates N          Drafts per round, 1 to 8 (default 3)
   --max-rounds N          Maximum rounds this run (default 0, retry until accepted)
+  --8k                    Also render, inspect and export an 8K PNG
   --native-4k             Draw on a native 4K canvas
-  --full-8k-diffusion     Use tiled diffusion on the full 8K canvas
+  --full-8k-diffusion     Enable 8K and use full-canvas tiled diffusion
   --draft                 Stop after producing and checking drafts
   --background            Run in the background and print the job directory
   --job DIR               Resume a project job
@@ -23,4 +24,4 @@ AI Manga Studio
   --advanced-help         Show all generation and repair options
   -h, --help              Show this help without installing or starting any service
 
-Without an export folder, open images/new-jobs/<job>/4K.png and 8K.png.
+Without an export folder, open images/new-jobs/<job>/4K.png (also 8K.png with --8k).

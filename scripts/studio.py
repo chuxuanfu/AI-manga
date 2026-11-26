@@ -74,7 +74,7 @@ def main(args):
         args=[arg for arg in args if arg!='--background']
         if not args:raise SystemExit('--background requires a prompt or --job')
     if interactive:
-        print('AI Manga Studio\n\n1  生成壁纸（默认）\n2  打开图库\n3  设置成品位置\n4  仅生成底图\n5  打开节点编辑器\n0  退出')
+        print('AI Manga Studio\n\n1  生成 4K 壁纸（默认）\n2  打开图库\n3  设置成品位置\n4  仅生成底图\n5  打开节点编辑器\n0  退出')
         choice=input('选择 [1] ').strip() or '1'
         if choice=='0':return
         if choice=='3':

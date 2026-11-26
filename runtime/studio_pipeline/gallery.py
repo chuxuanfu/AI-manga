@@ -49,7 +49,7 @@ def write_gallery(job, rec, studio):
         if not source.exists():continue
         assessment = row['review']
         items.append(dict(stage=row['stage']+' · '+assessment['status'],url=quote(row['file'],safe='/.'),note=assessment.get('note',''),
-                          native=row['stage'].endswith('final-art'),repairSource=str(source),
+                          native=row['stage'].endswith('final-art') and rec.get('delivery_edge',7680)==7680,repairSource=str(source),
                           comparison=quote(row['stage']+'-reference-comparison.jpg') if assessment.get('参考比较') else None,
                           structure=quote(row['stage']+'-structure-and-support.jpg') if assessment.get('结构审查') else None))
     if items:

@@ -201,6 +201,7 @@ def main():
     parser.add_argument('--style',help='可选画材或画风，例如透明水彩')
     parser.add_argument('--accept-final',metavar='SHA256',help='目检后，按当前母版指纹标记定稿')
     parser.add_argument('--skip-focus',nargs='*',type=int,choices=(1,2,3),default=None,help='对照后撤回指定编号的8K局部采样；不带编号可全部恢复。')
+    parser.add_argument('--8k',dest='eight_k',action='store_true',help='在默认 4K 成品之外生成并审查 8K')
     parser.add_argument('--full-8k-diffusion',action='store_true',help='4K、8K 两级均进行全幅重叠分块扩散')
     parser.add_argument('--native-4k',action='store_true',help='直接在长边 3840 的画布采样，耗时较长')
     parser.add_argument('--native-only',action='store_true',help='生成并保留各张原生底图，供原尺寸查看')
@@ -221,6 +222,7 @@ def main():
     parser.add_argument('--object',help='可选，指定需要保护轮廓的对象，如 porcelain teapot')
     parser.add_argument('--repair-text',help='这个区域应当画成什么样')
     args=parser.parse_args()
+    args.eight_k=args.eight_k or args.full_8k_diffusion or args.keep_native or args.skip_focus is not None
     if args.prompt and not args.style and KEY_VISUAL not in args.prompt:
         if args.prompt.lstrip().startswith(('日系商业插画，','日系商业插画：','日系商业插画,','日系商业插画:')):
             args.style='anime-key-visual'
@@ -252,6 +254,7 @@ def main():
             if args.seed is None:args.seed=earlier.get('seed')
             if earlier.get('原生4K'):args.native_4k=True
             if earlier.get('输出模式')=='全幅双级扩散':args.full_8k_diffusion=True
+            args.eight_k=args.eight_k or earlier.get('delivery_edge',7680)==7680
             if not args.from_image and not args.reviewed_image:
                 if earlier.get('底图'):args.reviewed_image=Path(earlier['底图'])
                 elif earlier.get('输入底图'):args.from_image=[Path(x) for x in earlier['输入底图']]
@@ -312,9 +315,11 @@ def main():
         rec=dict(prompt=prompt,seed=seed,positive=positive,parts=json.loads(raw),reviews=[],status='选片',工作流='reference-illustration-v1',原生4K=(args.native_4k or any(t in prompt.lower().replace(' ','') for t in ('原生4k','native4k'))),画法参考=hashlib.sha256((INPUT/REFERENCE).read_bytes()).hexdigest())
         rec['画法自适应']=True
         rec['画材']=KEY_VISUAL if KEY_VISUAL in prompt else requested_medium(prompt)
-        rec['输出模式']='全幅双级扩散' if args.full_8k_diffusion else '全幅4K扩散与8K焦点精修'
+        rec['delivery_edge']=7680 if args.eight_k else 3840
+        rec['输出模式']=('全幅双级扩散' if args.full_8k_diffusion else '全幅4K扩散与8K焦点精修') if args.eight_k else '全幅4K精绘'
         rec['笔触参考']=hashlib.sha256((INPUT/BRUSHWORK).read_bytes()).hexdigest()
         save(manifest,rec)
+    four_only=rec.get('delivery_edge',7680)==3840
     if args.aspect!='auto':rec['aspect']=args.aspect
     if args.round_worker:rec['执行模式']='离线自动定稿'
     reference_style=rec.get('工作流')=='reference-illustration-v1'
@@ -579,13 +584,17 @@ def main():
         focus_mode=rec.get('输出模式')=='全幅4K扩散与8K焦点精修'
         medium=rec.get('画材','')
         natural_sr=continuous_tone(medium) and (RUNTIME/'models/upscale_models'/NATURAL_UP).is_file()
-        if reference_style:
+        if reference_style or four_only:
             graph,ids=print_graph(source,prefix+'/pending-review/'+stage,seed+320,native_four=native_four,
-                                  medium=medium,four_steps=4,four_only=focus_mode,upscale_model=NATURAL_UP if natural_sr else UP)
+                                  medium=medium,four_steps=4,four_only=four_only or focus_mode,upscale_model=NATURAL_UP if natural_sr else UP)
         else:
             graph,ids=finish(source,prompt,prefix+'/pending-review/'+stage,seed+320)
         save(job/(stage+'workflow.json'),graph.ui())
         hist=post_graph(graph.api,args.port,job,stage,graph.ui() if reference_style else None)
+        if four_only:
+            four=output_image(hist[ids['small']])
+            rec['精绘区域报告']={'覆盖':'原生4K' if native_four else '4K全幅分块扩散','长边':[3840]}
+            return preserve_source_marks(source_path,four),None
         if focus_mode:
             small=output_image(hist[ids['small']])
             # Use actual landmarks from the approved image; there are no scene-specific coordinates.
@@ -668,24 +677,31 @@ def main():
         label='final-art' if attempt==0 else f'revision-{attempt}-final-art'
         release_idle_renderer(args.port)
         final=check(master,label,focus)
-        rec['8K']=os.path.relpath(master,job);rec['4K']=os.path.relpath(small,job)
+        rec['4K']=os.path.relpath(master if four_only else small,job)
+        if not four_only:rec['8K']=os.path.relpath(master,job)
         rec['status']='离线逐块终审中';save(manifest,rec)
         # A decisive failed structural review must not be released on a second model's vote.
         if final['status']=='global':
             rec['终审退回原因']=final['note'];break
         print_focus=dict(rec.get('精绘区域报告') or {})
         if repair_check:print_focus['repair_check']=repair_check
-        judged=print_inspect(master,prompt,job,final,small=small,focus=print_focus,draft=approved)
+        baseline=approved if four_only else small
+        judged=print_inspect(master,prompt,job,final,small=baseline,focus=print_focus,
+                             draft=None if four_only else approved,source_comparison=four_only)
         rec['逐块终审']={'sha256':judged['sha256'],'状态':judged['status'],'已看视图':len(judged['views']),
                       '计划视图':judged['planned'],'原像素图块':judged['planned_native'],'报告':judged['report']}
         save(manifest,rec)
         if judged['status']=='pass' and usable(final):
-            if judged['comparison_sha256']!=fingerprint(small):raise ValueError('4K 版本在对照审查后改变')
-            with Image.open(master) as eight, Image.open(small) as four:
-                if max(eight.size)!=7680 or max(four.size)!=3840 or any(abs(a-b*2)>1 for a,b in zip(eight.size,four.size)):
-                    raise ValueError('定稿尺寸不一致')
+            if judged['comparison_sha256']!=fingerprint(baseline):raise ValueError('对照图在审查后改变')
+            with Image.open(master) as finished:
+                if max(finished.size)!=rec.get('delivery_edge',7680):raise ValueError('定稿尺寸不一致')
+                if small is not None:
+                    with Image.open(small) as four:
+                        if max(four.size)!=3840 or any(abs(a-b*2)>1 for a,b in zip(finished.size,four.size)):
+                            raise ValueError('定稿尺寸不一致')
             rec['自动定稿']={'model':MODEL,'模型指纹':judged['model_id'],'sha256':judged['sha256'],
-                         '4K指纹':fingerprint(small),'终审报告':judged['report'],'审图版本':judged['revision'],
+                         '4K指纹':judged['sha256'] if four_only else judged['comparison_sha256'],
+                         '对照指纹':judged['comparison_sha256'],'终审报告':judged['report'],'审图版本':judged['revision'],
                          '原像素图块':judged['planned_native'],'已看视图':len(judged['views'])}
             rec.pop('终审退回原因',None)
             rec['status']='已通过离线终审'
@@ -743,7 +759,8 @@ def main():
                 revised=repaint(original.convert('RGB'),focus,issue['fix'],rec['positive'],seed+650+attempt,args.port,
                                 job,stage,issue.get('target'),[o for o,_ in rec['parts']],reference_style,
                                 rebuild_shape=issue.get('operation')=='redraw')
-        if native:master,small=native_pair(revised,stage,(small,master))
+        if native and four_only:master=revised
+        elif native:master,small=native_pair(revised,stage,(small,master))
         else:
             approved=revised
             master,small=render(approved,stage)

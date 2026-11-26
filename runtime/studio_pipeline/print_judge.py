@@ -256,7 +256,7 @@ def independent_detail_check(url, images, overview, brief):
     return report
 
 
-def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None):
+def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None, source_comparison=False):
     digest=fingerprint(path)
     model_id=model_identity(MODEL)
     if not model_id:raise RuntimeError('缺少已安装的 Qwen3.8-27B 终审模型')
@@ -271,6 +271,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
     repair=(focus or {}).get('repair_check')
     key=hashlib.sha256(json.dumps([REVISION,model_id,brief,regions,dispute,prior_id,draft_id,focals,constraints,repair],sort_keys=True,
                                  ensure_ascii=False).encode()).hexdigest()[:16]
+    if source_comparison:key+='-source'
     directory=root/'print-review'
     directory.mkdir(exist_ok=True)
     report=directory/(digest+'-'+key+'.json')
@@ -315,6 +316,9 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     sites.append(center)
             if not sites:sites=[(.5,.5)]
             comparisons=[('comparison',centered_crop(image.size,site,448)) for site in sites]
+            if source_comparison:
+                if max(before.size)>=max(image.size):comparisons=[]
+                if digest!=prior_id:comparisons.append(('palette',(0,0,w,h)))
             if draft_id:
                 with Image.open(draft) as fp:draft_image=fp.convert('RGB')
                 if max(draft_image.size)<max(before.size):
@@ -336,10 +340,13 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 question=('Judge the whole composition, subject identity and count, depicted actions, connections, visual hierarchy, light and requested style. '
                           'Independently verify this earlier observation if present: '+dispute)
             elif kind=='palette':
+                stages=(before,image) if source_comparison else (draft_image,before,image)
                 panels=[im.resize((max(1,round(im.width*360/max(im.size))),max(1,round(im.height*360/max(im.size)))),Image.Resampling.LANCZOS)
-                        for im in (draft_image,before,image)]
+                        for im in stages]
                 view=panels
-                question=('Image 1 is the approved draft, image 2 is 4K, image 3 is 8K. Compare object colors, hue relationships, shadow temperature, highlights and contrast. '
+                order=('Image 1 is the source, image 2 is the finished 4K.' if source_comparison else
+                       'Image 1 is the approved draft, image 2 is 4K, image 3 is 8K.')
+                question=(order+' Compare object colors, hue relationships, shadow temperature, highlights and contrast. '
                           'Flag a visible hue drift, washed-out darks, clipped highlight shapes, or a named color contradicted by the images. Respect the requested medium and lighting. '
                           'Coordinates refer to the affected area in the last image. Ignore pixel-level sharpness in these overview images.')
             elif kind=='construction':
