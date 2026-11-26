@@ -166,7 +166,12 @@ def assess_local_edit(before, after, box, correction, symptom=None):
     old,new=before.crop(bounds).convert('RGB'),after.crop(bounds).convert('RGB')
     if not ImageChops.difference(old,new).getbbox():
         return {'verdict':'unchanged','evidence':'Identical source and proposed region.'}
-    for image in (old,new):image.thumbnail((960,960),Image.Resampling.LANCZOS)
+    # A tiny crop otherwise occupies only a handful of vision-encoder patches.
+    # Use identical optical zoom for both samples, without synthesizing pixels.
+    edge=max(old.size)
+    scale=min(3,640/edge) if edge<640 else min(1,960/edge)
+    size=tuple(max(1,round(side*scale)) for side in old.size)
+    old,new=(im.resize(size,Image.Resampling.LANCZOS) for im in (old,new))
     props={'verdict':{'enum':['resolved','still_present','new_defect','uncertain']},
            'evidence':{'type':'string'},'next_edit':{'type':'string'}}
     question=('Inspect this single candidate crop in isolation. An earlier version had this reported defect: '

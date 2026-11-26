@@ -25,7 +25,7 @@ from review import audit, reviewer, RUNTIME, CHECKS
 from manga_materials.planner import plan_scene, requested_medium
 from focus_print import PATCH, centers, sampled_surfaces, combine_source, detail_graph, finish_neural, neural_double, repair_print_pair, preserve_source_marks
 from masks import object_mask, structural_composite
-from erase import duplicate_box, masked_candidate, MODEL as ERASE_MODEL
+from erase import duplicate_box, erase_region, masked_candidate, MODEL as ERASE_MODEL
 
 STUDIO = RUNTIME.parent
 OUTPUT = STUDIO / 'images'
@@ -128,7 +128,7 @@ def region(issue,assessment):
     return box if valid(box) else None
 
 
-def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False):
+def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False, reconstruction_attempt=0):
     # Re-sample only the interior; the wider square gives diffusion scene context.
     if reference_style and rebuild_shape:
         from construction_review import plan_local_repair
@@ -157,9 +157,20 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
         if rebuild_shape:
             # Preserve the surroundings, attachment and light while clearing the faulty drawing.
             subject=object_mask(crop,crop,target,mask,neighbours,confirmed_shape=True)
-            guidance=Image.composite(crop.filter(ImageFilter.GaussianBlur(max(5,span*.11))),crop,subject)
+            if reconstruction_attempt and ERASE_MODEL.is_file():
+                # Remove the previous silhouette from conditioning when diffusion has
+                # already copied its defect. Retain the outer context and attachment.
+                clear=subject if reconstruction_attempt==1 else mask
+                # LaMa receives an explicit binary support, without Gaussian tails.
+                clear=clear.point(lambda pixel: 255 if pixel>=64 else 0)
+                if clear.getbbox():
+                    guidance=erase_region(crop,clear)
+                placeholder='locally cleared area'
+            else:
+                guidance=Image.composite(crop.filter(ImageFilter.GaussianBlur(max(5,span*.11))),crop,subject)
+                placeholder='soft placeholder'
             named=target if target and target.casefold() not in ('local','global','none') else 'subject'
-            text=('Replace the soft placeholder with a fully drawn '+named+
+            text=('Draw a complete '+named+' in the '+placeholder+
                   '. Reconstruct its silhouette, internal parts and attachment in the local pose; '
                   'match the tapered contours, local colors, material and shadows of its surroundings. '+description)
         layout=local_image(guidance.resize(size,Image.Resampling.LANCZOS))
@@ -686,7 +697,8 @@ def main():
         for variant in range(3):
             name=stage if variant==0 else f'{stage}-variant-{variant+1}'
             revised=repaint(before,box,instruction,rec['positive'],edit_seed+variant*1753,args.port,
-                            job,name,issue.get('target'),[o for o,_ in rec['parts']],reference_style,rebuild_shape=True)
+                            job,name,issue.get('target'),[o for o,_ in rec['parts']],reference_style,rebuild_shape=True,
+                            reconstruction_attempt=variant)
             release_idle_renderer(args.port)
             with Image.open(revised) as proposed:
                 verdict=assess_local_edit(before,proposed,box,issue['fix'],issue.get('symptom'))
