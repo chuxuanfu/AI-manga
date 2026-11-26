@@ -1,6 +1,7 @@
 """Inspect native evidence for the most specific visible promises in the brief."""
 import json
 import re
+from pathlib import Path
 
 from evidence import ask, model_identity
 from PIL import Image
@@ -119,6 +120,22 @@ def check_body_level(url,overview,brief,tag):
                            top=max(0,min(ys)-50),bottom=min(1000,max(ys)+50))
 
 
+def identity_reference(quote):
+    """Only use a reference labeled for the named species or breed being judged."""
+    if re.search(r'\b(?:no|not|without|exclude|instead of)\b|不要|不含|禁止',quote,re.I):return None
+    directory=Path(__file__).resolve().parents[2]/'assets/repair-guides'
+    index=directory/'index.json'
+    if not index.is_file():return None
+    guides=[]
+    for guide in json.loads(index.read_text()):
+        for term in guide.get('identity_terms',[]):
+            match=(re.search(r'\b'+re.escape(term)+r's?\b',quote,re.I) if term.isascii() else term in quote)
+            if match and (directory/guide['file']).is_file():
+                guides.append((directory/guide['file'],guide))
+                break
+    return guides[0] if len(guides)==1 else None
+
+
 def subject_witness(url, image, overview, brief, tag):
     position={key:{'type':'integer','minimum':0,'maximum':1000} for key in ('left','top','right','bottom')}
     properties={'quote':{'type':'string'},'inspect':{'type':'string'},**position}
@@ -168,7 +185,8 @@ def subject_witness(url, image, overview, brief, tag):
         n['reading']=readings[k]
         vote=n['reading']
         viewpoint=bool(VIEWPOINT.search(n['quote']))
-        if issue or (vote['decision']=='supported' and not viewpoint):
+        guide=identity_reference(n['quote'])
+        if issue or (vote['decision']=='supported' and not viewpoint and not guide):
             continue
         # The overview reader can reverse an instrument's direction or mistake a rail
         # for its supporting post. Independently trace the same requirement in context.
@@ -176,8 +194,18 @@ def subject_witness(url, image, overview, brief, tag):
         reviewer=alternate if tag!=alternate and model_identity(alternate) else tag
         proof_fields={'actual_landmarks':{'type':'string'},'finding':{'enum':['match','contradiction','unreadable']},
                       'repair_instruction':{'type':'string'}}
-        evidence=json.loads(ask(url,[overview,crop],
-            'The first image is a complete illustration and the second is an enlargement from it. '
+        examples=[overview,crop]
+        reference_instruction=''
+        if guide:
+            filename,description=guide
+            with Image.open(filename) as source:examples.append(source.convert('RGB'))
+            n['identity_reference']={'file':filename.name,'source':description['source']}
+            reference_instruction=('The third image is a documented reference for the named subject. '
+                'Use it only to identify characteristic anatomy or coat, allowing the pose, stylization, '
+                'age, palette and any expressly requested variation in the artwork. Never count the reference '
+                'as an extra subject. Relevant features: '+description['construction']+' ')
+        evidence=json.loads(ask(url,examples,
+            'The first image is a complete illustration and the second is an enlargement from it. '+reference_instruction+
             'First trace the actual shape, alignment, position and connection using at least two '
             'identifiable visible landmarks. Then compare with this requirement: '+repr(n['quote'])+
             ('. For a viewpoint, determine the side, front or back visible to the viewer from the silhouette '

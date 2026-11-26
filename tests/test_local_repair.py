@@ -977,6 +977,15 @@ class LocalRepairTests(unittest.TestCase):
         self.assertIsNone(changed_clipped_field(proposal,proposal.copy()))
         self.assertEqual(changed_clipped_field(ImageOps.invert(source),ImageOps.invert(proposal))['tone'],'white')
 
+    def test_identity_guides_only_match_a_single_requested_species(self):
+        from brief_check import identity_reference
+        self.assertEqual(identity_reference('One yellow cockatiel perches on a branch.')[0].name,
+                         'cockatiel-crest.jpg')
+        self.assertEqual(identity_reference('Japanese spitz at her boots')[0].name,'japanese-spitz-coat.jpg')
+        for unrelated in ['A parrot at her boots.','Do not add a barn owl.',
+                          'A Japanese spitz and a cockatiel.']:
+            self.assertIsNone(identity_reference(unrelated))
+
     def test_boat_hitch_and_dock_ring_select_distinct_construction_guides(self):
         from illustration import construction_guide
         cleat=construction_guide('Tie the rope to a cleat on the bow. Preserve the mooring ring on the dock.')

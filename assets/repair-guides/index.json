@@ -133,7 +133,13 @@
     "author": "Thomas G. Barnes / U.S. Fish and Wildlife Service",
     "license": "Public domain in the United States, US federal government work",
     "license_url": "https://commons.wikimedia.org/wiki/Template:PD-USGov-FWS",
-    "changes": "Cropped around the head and shoulder, converted to grayscale and resized to 750 pixels."
+    "changes": "Cropped around the head and shoulder, converted to grayscale and resized to 750 pixels.",
+    "identity_terms": [
+      "barn owl",
+      "Tyto alba",
+      "仓鸮",
+      "仓鸮属"
+    ]
   },
   {
     "file": "seated-cat-side-profile.jpg",
@@ -208,5 +214,63 @@
     "license": "Apache License 2.0",
     "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
     "changes": "Locally rotated the canonical face surface, rendered a grayscale orthographic view and projected the eyelid landmarks. See mediapipe-license.txt."
+  },
+  {
+    "file": "cockatiel-crest.jpg",
+    "requires": [
+      [
+        "cockatiel",
+        "玄凤鹦鹉",
+        "鸡尾鹦鹉"
+      ],
+      [
+        "head",
+        "crest",
+        "crown",
+        "profile",
+        "颊",
+        "冠羽"
+      ]
+    ],
+    "identity_terms": [
+      "cockatiel",
+      "玄凤鹦鹉",
+      "鸡尾鹦鹉"
+    ],
+    "construction": "A slender swept crest emerges at the forehead, stands clear of the round head and tapers backward. The compact hooked beak and cheek patch sit below it. Color varies with the bird requested.",
+    "source": "https://commons.wikimedia.org/wiki/File:CockatielsLutinoNatural.JPG",
+    "author": "Oldcockatoo",
+    "license": "Public domain (released by the author)",
+    "modifications": "Cropped one bird from the lower left, keeping the crest, face and upper body."
+  },
+  {
+    "file": "japanese-spitz-coat.jpg",
+    "requires": [
+      [
+        "Japanese spitz",
+        "Nihon Supittsu",
+        "日本尖嘴犬",
+        "日本银狐犬"
+      ],
+      [
+        "coat",
+        "muzzle",
+        "fur",
+        "head",
+        "毛",
+        "吻部"
+      ]
+    ],
+    "identity_terms": [
+      "Japanese spitz",
+      "Nihon Supittsu",
+      "日本尖嘴犬",
+      "日本银狐犬"
+    ],
+    "construction": "A long white stand-off coat, pointed muzzle, small triangular ears and dark nose. Keep the pose, lighting and painted medium of the requested scene.",
+    "source": "https://commons.wikimedia.org/wiki/File:JapaneseSp1.jpg",
+    "author": "Canarian",
+    "license": "CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/",
+    "modifications": "Cropped to the head and neck. This crop is distributed under the same CC BY-SA 4.0 license."
   }
 ]
