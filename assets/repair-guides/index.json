@@ -344,5 +344,32 @@
     "license": "Public domain in the United States, work of the U.S. federal government",
     "license_url": "https://www.nps.gov/aboutus/disclaimer.htm",
     "modifications": "Cropped the working lens from the view inside the Bodie Island lantern room."
+  },
+  {
+    "file": "flat-hand-dorsal-view.jpg",
+    "requires": [
+      [
+        "hand",
+        "palm",
+        "fingers",
+        "手掌",
+        "手指"
+      ],
+      [
+        "palm down",
+        "palm-down",
+        "palm flat",
+        "rests flat",
+        "flat on",
+        "平放",
+        "掌心向下"
+      ]
+    ],
+    "construction": "Look at the hand from the back. Four fingers arise separately along the knuckle arc, with their fingertips at different lengths. The thumb originates lower on the radial side of the palm. Turn or mirror this guide to match the actual wrist, handedness and camera angle. Keep contact with the depicted support and preserve the original character design and drawing medium.",
+    "source": "https://commons.wikimedia.org/wiki/File:Hand_of_a_Human_Male.png",
+    "author": "Eyefive45",
+    "license": "CC BY-SA 4.0, including this resized reference",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+    "modifications": "Resized the original photograph and placed the transparent area on a light grey background."
   }
 ]
