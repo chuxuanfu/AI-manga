@@ -1,5 +1,5 @@
 """Offline print inspection. Stage coordinates are always mapped back to the real master."""
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import fcntl
 import hashlib
 import json
@@ -1209,16 +1209,33 @@ def check_brief_after_clearance(url, image, overview, brief, view):
             'box': [contradiction[k] for k in ('left', 'top', 'right', 'bottom')]}
 
 
-def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None, source_comparison=False, construction_draft=False):
+@contextmanager
+def print_lock(path, root):
     digest=fingerprint(path)
     directory=root/'print-review'
     directory.mkdir(exist_ok=True)
-    # A resume and a gallery recheck can request the very same pixels. Serialize
-    # receipt access before loading it so the second reader resumes from disk.
     with (directory/('.'+digest+'.lock')).open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
+        yield digest
+
+
+def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None, source_comparison=False, construction_draft=False):
+    with print_lock(path,root) as digest:
         return _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,
                               source_comparison,construction_draft)
+
+
+def grade_finished_print(path, brief, root, check_structure, *, small, focus, draft, source_comparison):
+    """Keep one graphics lease across the structural and pixel checks on this exact print."""
+    from evidence import review_session
+    # A gallery process may already be reviewing the same print. Acquire its
+    # report lock before the device so that neither reviewer can strand the other.
+    with print_lock(path,root) as digest, review_session() as timings:
+        preliminary=check_structure()
+        report=None
+        if preliminary['status']!='global':
+            report=_inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_comparison,False)
+    return preliminary,report,timings
 
 
 def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_comparison,construction_draft):

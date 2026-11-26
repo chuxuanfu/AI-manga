@@ -1305,7 +1305,7 @@ def main():
         rec['已有修订稿']={'来源':str(supplied),'指纹':fingerprint(master),'底图指纹':fingerprint(approved)}
     else:
         master,small=native_pair(approved,'native-repair') if args.keep_native else render(approved,'refine')
-    from print_judge import actionable_edit, fingerprint, inspect as print_inspect, MODEL
+    from print_judge import actionable_edit, fingerprint, grade_finished_print, MODEL
     from production import publish
     detail_rebuilt=False
     tried_focus_fields=set()
@@ -1321,18 +1321,17 @@ def main():
         if four_only and not args.repair_box and not args.keep_native:
             from lettering import clean_lettering
             master=clean_lettering(master,prompt,job,label)
-        final=check(master,label,focus)
         rec['4K']=os.path.relpath(master if four_only else small,job)
         if not four_only:rec['8K']=os.path.relpath(master,job)
         rec['status']='离线逐块终审中';save(manifest,rec)
-        # A decisive failed structural review must not be released on a second model's vote.
-        if final['status']=='global':
-            rec['终审退回原因']=final['note'];break
         print_focus=dict(rec.get('精绘区域报告') or {})
         if repair_check:print_focus['repair_check']=repair_check
         baseline=approved if four_only else small
-        judged=print_inspect(master,prompt,job,final,small=baseline,focus=print_focus,
-                             draft=None if four_only else approved,source_comparison=four_only)
+        final,judged,timings=grade_finished_print(master,prompt,job,lambda:check(master,label,focus),
+            small=baseline,focus=print_focus,draft=None if four_only else approved,source_comparison=four_only)
+        rec.setdefault('终审设备耗时',{})[label]=timings
+        if judged is None:
+            rec['终审退回原因']=final['note'];break
         if four_only:rec['底图']=str(baseline)
         rec['逐块终审']={'sha256':judged['sha256'],'状态':judged['status'],'已看视图':len(judged['views']),
                       '计划视图':judged['planned'],'原像素图块':judged['planned_native'],'报告':judged['report']}
