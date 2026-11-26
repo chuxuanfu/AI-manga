@@ -9,6 +9,15 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'runtime/studio_pipeli
 
 
 class WorkmanshipTests(unittest.TestCase):
+    def test_landscape_and_portrait_receive_the_same_full_picture_area(self):
+        from reference_review import artwork_sheet
+        areas=[]
+        for width,height in ((1920,1080),(1080,1920),(1024,1024)):
+            sheet=artwork_sheet(Image.new('RGB',(width,height),'red'),[])
+            areas.append(dict((color,count) for count,color in sheet.getcolors())[255,0,0])
+        self.assertLess(max(areas)-min(areas),2000)
+        self.assertGreater(min(areas),398000)
+
     def test_consistent_evidence_in_both_orders(self):
         from reference_review import order_verdict
         def decision(a,b,text='two separate marks'):
@@ -27,6 +36,7 @@ class WorkmanshipTests(unittest.TestCase):
         board=Image.new('RGB',(1152,1104),'white')
         grades={axis:dict(level='tie',evidence='Each material has clear directional marks.',left_detail='Twisted strands around the mooring ring.',right_detail='Sleeve seams follow the folded elbow.') for axis in AXES}
         with patch('reference_review.available',return_value=True),patch('reference_review.comparison',return_value=board), \
+                patch('reference_review.artwork_pair',return_value=[board,board.copy()]), \
                 patch('reference_review.backend',side_effect=lambda tag:nullcontext('local')), \
                 patch('reference_review.ask',return_value=json.dumps(grades)) as reader:
             for final,tag in ((False,TAG),(True,MODEL)):

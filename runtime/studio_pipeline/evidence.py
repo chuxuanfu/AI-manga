@@ -164,7 +164,13 @@ def _model_answer(url,images,prompt,schema,tag,reason):
           'messages':[{'role':'user','content':prompt,'images':encoded}]}
     if tag=='qwen3.8:27b':data['think']=reason
     if schema:data['format']=schema
-    for attempt,limit in enumerate((1800,3200) if reason else (360,900,1400)):
+    # A two-sided four-axis assessment contains at least sixteen required fields.
+    # Give wide structured answers room on their first decode, avoiding a full second vision pass.
+    properties=(schema or {}).get('properties',{})
+    required_fields=sum(max(1,len(field.get('required',[]))) for field in properties.values())
+    initial_limit=900 if required_fields>=12 else 360
+    limits=(1800,3200) if reason else ((900,1400) if initial_limit==900 else (360,900,1400))
+    for attempt,limit in enumerate(limits):
         data['options']['num_predict']=limit
         if attempt:
             data['messages'][0]['content']=prompt+' Keep every description under 20 words. Return a complete compact answer.'

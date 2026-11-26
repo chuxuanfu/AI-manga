@@ -1,6 +1,7 @@
 """Compare finish at matched viewing sizes without treating the reference as the requested scene."""
 from pathlib import Path
 import json
+import math
 from PIL import Image, ImageDraw, ImageOps
 from evidence import ask, backend, available, TAG
 from illustration import REFERENCE
@@ -64,28 +65,50 @@ def comparison(im,regions,target):
     return page
 
 
+def artwork_sheet(image, boxes):
+    """Give full views equal pixel area and keep both supporting details at readable scale."""
+    sheet=Image.new('RGB',(960,960),'#f4f2eb')
+    if image.width>=image.height:
+        viewport=(0,0,960,636)
+        details=((0,644,476,316),(484,644,476,316))
+    else:
+        viewport=(0,0,636,960)
+        details=((644,0,316,476),(644,484,316,476))
+
+    def place(picture,slot,area):
+        x,y,width,height=slot
+        scale=min(width/picture.width,height/picture.height,math.sqrt(area/(picture.width*picture.height)))
+        size=(max(1,round(picture.width*scale)),max(1,round(picture.height*scale)))
+        fitted=picture.resize(size,Image.Resampling.LANCZOS)
+        sheet.paste(fitted,(x+(width-fitted.width)//2,y+(height-fitted.height)//2))
+
+    place(image,viewport,400000)
+    for (_,box),slot in zip(boxes,details):
+        pixels=tuple(round(value*extent) for value,extent in zip(box,image.size*2))
+        if pixels[2]>pixels[0] and pixels[3]>pixels[1]:
+            place(image.crop(pixels),slot,105000)
+    return sheet
+
+
+def artwork_pair(image,regions):
+    with Image.open(BENCHMARK) as reference:
+        return [artwork_sheet(reference.convert('RGB'),REF_BOXES),artwork_sheet(image,detail_boxes(regions))]
+
+
+PAIR_INSTRUCTION=(' You receive two sheets. Left means the FIRST sheet, right the SECOND. Each has a full picture '
+                  'and two enlarged details. Compare the execution of the materials depicted. A paper relief can show '
+                  'depth through cut-edge shadows, a woodcut through carved contours and value, and a painting through '
+                  'local color and illumination. Identify a visible weakness in its own medium when rating one side '
+                  'lower. A greater number of lights, objects, textures or colors alone does not establish better execution.')
+
+
 def resolve_workmanship(url, im, regions, instruction, ambiguous, *, sided=False):
     from construction_review import LARGE
     if not available(LARGE):
         return {'decision':'review','reason':'缺少独立画质复审模型'}
-    # Preserve detail at a larger scale on individual sheets. Side-by-side
-    # thumbnails can conceal thin lines and small points of contact.
-    def proof(image, boxes):
-        sheet=Image.new('RGB',(768,1144),'#f4f2eb')
-        full=ImageOps.contain(image,(768,740),Image.Resampling.LANCZOS)
-        sheet.paste(full,((768-full.width)//2,(740-full.height)//2))
-        for i,(_,box) in enumerate(boxes[:2]):
-            pixels=tuple(round(n*k) for n,k in zip(box,image.size*2))
-            if pixels[2]<=pixels[0] or pixels[3]<=pixels[1]:continue
-            patch=ImageOps.contain(image.crop(pixels),(380,396),Image.Resampling.LANCZOS)
-            sheet.paste(patch,(i*384+(384-patch.width)//2,746+(396-patch.height)//2))
-        return sheet
-    with Image.open(BENCHMARK) as ref:
-        first=proof(ref.convert('RGB'),REF_BOXES)
-    last=proof(im,detail_boxes(regions))
+    first,last=artwork_pair(im,regions)
     schema=grade_schema(ambiguous,sided)
-    question=(instruction+' Images are provided as two separate sheets, each with its own enlarged details. '
-              'Use left for the FIRST sheet and right for the SECOND. Trace visible evidence in both. '
+    question=(instruction+('' if PAIR_INSTRUCTION in instruction else PAIR_INSTRUCTION)+' Trace visible evidence in both. '
               'Compare only these aspects: '+', '.join(ambiguous)+'.')
     readings=[json.loads(ask(url,pair,question,schema,tag=LARGE)) for pair in ([first,last],[last,first])]
     result=order_verdict(*readings,ambiguous,sided=sided)
@@ -179,19 +202,23 @@ def compare(im,regions,path,brief='',*,final=False):
         instruction+=SIDE_INSTRUCTION+' Judge each picture in the medium visibly used on that side.'
     elif brief:
         instruction+=' The new image has its own requested medium: '+brief+'. Evaluate construction and deliberate marks within each medium. Spare ink, flat cel shading, paper cutouts, monochrome or visible print dots may be fully resolved. Do not reward merely having more texture.'
-    # Mask identifying headings and evaluate in both orders to detect position bias.
-    neutral=board.copy()
-    draw=ImageDraw.Draw(neutral)
-    draw.rectangle((0,0,1151,24),fill='#f4f2eb')
-    draw.rectangle((0,768,1151,797),fill='#f4f2eb')
-    reverse=Image.new('RGB',neutral.size)
-    reverse.paste(neutral.crop((576,0,1152,1104)),(0,0))
-    reverse.paste(neutral.crop((0,0,576,1104)),(576,0))
+    if final:
+        pair=artwork_pair(im,regions)
+        presentations=(pair,list(reversed(pair)))
+        instruction+=PAIR_INSTRUCTION
+    else:
+        neutral=board.copy()
+        draw=ImageDraw.Draw(neutral)
+        draw.rectangle((0,0,1151,24),fill='#f4f2eb')
+        draw.rectangle((0,768,1151,797),fill='#f4f2eb')
+        reverse=Image.new('RGB',neutral.size)
+        reverse.paste(neutral.crop((576,0,1152,1104)),(0,0))
+        reverse.paste(neutral.crop((0,0,576,1104)),(576,0))
+        presentations=([neutral],[reverse])
     try:
         with backend(tag) as url:
             schema=grade_schema(AXES,final)
-            forward=json.loads(ask(url,[neutral],instruction,schema,tag=tag))
-            backward=json.loads(ask(url,[reverse],instruction,schema,tag=tag))
+            forward,backward=[json.loads(ask(url,pictures,instruction,schema,tag=tag)) for pictures in presentations]
             result=order_verdict(forward,backward,AXES,sided=final)
             if result['decision']=='review':
                 independent=resolve_workmanship(url,im,regions,instruction,result['unresolved_axes'],sided=final)
