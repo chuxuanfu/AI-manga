@@ -23,18 +23,21 @@ from structure import inspect_small_figure_support
 
 class LocalRepairTests(unittest.TestCase):
     def test_tile_subjects_align_with_the_actual_sampler_in_portrait_and_landscape(self):
-        from focal_edit import print_subjects
+        from focal_edit import print_subjects, print_constraints
         from illustration import print_graph
         from manga_materials import MaterialTiles, starts, TILE
         import torch
+        restrictions=print_constraints('An ink illustration, no lettering.')
+        self.assertIn('no lettering',restrictions)
         def identify(url, images, prompt, schema, tag):
+            self.assertIn(restrictions,prompt)
             return json.dumps({n:'surface '+n for n in schema['required']})
         with TemporaryDirectory() as temp, patch('focal_edit.model_identity', return_value='fixture'), \
              patch('focal_edit.backend',return_value=nullcontext('local')),patch('focal_edit.ask',side_effect=identify) as ask:
             for width,height in ((384,256),(256,384)):
                 source=Image.new('RGB',(width,height))
                 cache=Path(temp)/f'{width}.json'
-                subjects=print_subjects(source,1920,cache)
+                subjects=print_subjects(source,1920,cache,constraints=restrictions)
                 scaled=(width*5,height*5)
                 fields=[(x,y) for y in starts(0,scaled[1],scaled[1],TILE) for x in starts(0,scaled[0],scaled[0],TILE)]
                 self.assertEqual(set(subjects),{f'{x},{y}' for x,y in fields})
@@ -42,7 +45,7 @@ class LocalRepairTests(unittest.TestCase):
                         'none','Dry ink',json.dumps(subjects))
                 self.assertEqual(prompts,[subjects[f'{x},{y}']+'. Dry ink' for x,y,*_ in plan])
                 calls=ask.call_count
-                self.assertEqual(print_subjects(source,1920,cache),subjects)
+                self.assertEqual(print_subjects(source,1920,cache,constraints=restrictions),subjects)
                 self.assertEqual(calls,ask.call_count)
         g,_=print_graph('source.png','case',23,four_only=True,tile_subjects={3840:subjects})
         sample=next(n for n in g.api.values() if n['class_type']=='KSampler')

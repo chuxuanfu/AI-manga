@@ -823,11 +823,12 @@ def main():
         medium=rec.get('画材','')
         natural_sr=continuous_tone(medium) and (RUNTIME/'models/upscale_models'/NATURAL_UP).is_file()
         if reference_style or four_only:
-            from focal_edit import print_subjects
+            from focal_edit import print_constraints, print_subjects
+            restrictions=print_constraints(prompt)
             scales=([3840] if not native_four else [])+([] if four_only or focus_mode else [7680])
-            subjects={edge:print_subjects(composition,edge,job/(stage+'-tile-subjects-'+str(edge)+'.json')) for edge in scales}
+            subjects={edge:print_subjects(composition,edge,job/(stage+'-tile-subjects-'+str(edge)+'.json'),constraints=restrictions) for edge in scales}
             graph,ids=print_graph(source,prefix+'/pending-review/'+stage,seed+320,native_four=native_four,
-                                  medium=medium,four_steps=4,four_only=four_only or focus_mode,upscale_model=NATURAL_UP if natural_sr else UP,tile_subjects=subjects)
+                                  medium=medium+' '+restrictions,four_steps=4,four_only=four_only or focus_mode,upscale_model=NATURAL_UP if natural_sr else UP,tile_subjects=subjects)
         else:
             graph,ids=finish(source,prompt,prefix+'/pending-review/'+stage,seed+320)
         save(job/(stage+'workflow.json'),graph.ui())
@@ -876,7 +877,7 @@ def main():
                 batch=redraw[offset:offset+6]
                 batch_stage=stage+'-detail-'+str(offset)
                 prefix8=prefix+'/pending-review/'+batch_stage
-                detail,nodes=detail_graph(names[offset:offset+6],rec.get('画材',''),seed+12020+offset,
+                detail,nodes=detail_graph(names[offset:offset+6],medium+' '+restrictions,seed+12020+offset,
                                           prefix8,roles=[role for role,_,_ in batch],descriptions=descriptions[offset:offset+6])
                 save(job/(batch_stage+'-workflow.json'),detail.ui())
                 patches=post_graph(detail.api,args.port,job,batch_stage,detail.ui())
@@ -1201,12 +1202,12 @@ def main():
             low_resolution=max(original.size)<1024
             rebuild_size=detail_canvas(original.size)
         if four_only and attempt<2 and not (args.keep_native or args.selection_mask or args.repair_box):
-            from focal_edit import failed_focus, repaint_definition
+            from focal_edit import failed_focus, print_constraints, repaint_definition
             pixels=failed_focus(judged)
             if pixels and pixels not in tried_focus_fields:
                 tried_focus_fields.add(pixels)
                 stage=f'print-definition-{attempt+1}'
-                revised=repaint_definition(master,pixels,rec.get('画材',''),seed+17041+attempt,job,stage,
+                revised=repaint_definition(master,pixels,rec.get('画材','')+' '+print_constraints(prompt),seed+17041+attempt,job,stage,
                                            args.port,prefix+'/pending-review/'+stage,local_image=local_image,
                                            post_graph=post_graph,output_image=output_image,models=RUNTIME/'ComfyUI/models')
                 if revised:

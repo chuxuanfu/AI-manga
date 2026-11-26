@@ -83,12 +83,18 @@ def describe_tiles(canvas, names, fields, patch_size, directory, path):
     return descriptions
 
 
-def print_subjects(source, edge, path):
+def print_constraints(brief):
+    from print_judge import excluded_by_brief
+    clauses=excluded_by_brief(brief)
+    return ('Respect the author’s explicit exclusions: '+'. '.join(clauses)+'.') if clauses else ''
+
+
+def print_subjects(source, edge, path, *, constraints=""):
     """Name actual subjects for overlapping print fields before the first diffusion pass."""
     from manga_materials import starts, TILE
     from hashlib import sha256
     size = tuple(round(v * edge / max(source.size)) for v in source.size)
-    key = [sha256(source.tobytes()).hexdigest(),list(source.size),list(size),model_identity(LARGE),'field-atlas-1']
+    key = [sha256(source.tobytes()).hexdigest(),list(source.size),list(size),model_identity(LARGE),'field-atlas-2',constraints]
     saved = json.loads(path.read_text()) if path.is_file() else {}
     result = saved.get('subjects',{}) if saved.get('key') == key else {}
     points = [(x,y) for y in starts(0,size[1],size[1],TILE) for x in starts(0,size[0],size[0],TILE)]
@@ -119,7 +125,8 @@ def print_subjects(source, edge, path):
                 'The last image is the entire artwork, with crop locations marked. For each of the preceding '
                 'images, name the particular visible subject, surface and existing marks within that crop, '
                 'in the order shown. Use a short concrete phrase per crop. Avoid describing an object '
-                'outside the actual crop. Preserve smooth fills, deliberate softness and flat color.',schema,tag=LARGE))
+                'outside the actual crop. Describe symbols as actual shapes rather than guesses at lettering. '
+                'Preserve smooth fills, deliberate softness and flat color. '+constraints,schema,tag=LARGE))
             for name,(x,y) in zip(names,batch):
                 phrase = readings[name].strip()
                 if not phrase:
