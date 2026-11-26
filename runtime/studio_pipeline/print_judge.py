@@ -790,7 +790,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
     prior_id=fingerprint(small) if small else None
     draft_id=fingerprint(draft) if draft and small else None
     repair=(focus or {}).get('repair_check')
-    key=hashlib.sha256(json.dumps([REVISION,model_id,brief,regions,dispute,prior_id,draft_id,focals,constraints,repair],sort_keys=True,
+    key=hashlib.sha256(json.dumps([REVISION,'print-overlay-1',model_id,brief,regions,dispute,prior_id,draft_id,focals,constraints,repair],sort_keys=True,
                                  ensure_ascii=False).encode()).hexdigest()[:16]
     if source_comparison:key+='-source'
     if construction_draft:key+='-draft-structure'
@@ -872,6 +872,16 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 for kind,rect in windows:
                     if kind!=comparison:continue
                     pair=compare_pixels(lower,upper,rect,image.size)
+                    from print_artifacts import unsupported_lines
+                    overlay=unsupported_lines(*pair)
+                    if overlay['hold']:
+                        region=[round(v*1000/n) for v,n in zip(rect,image.size*2)]
+                        result.update(status='local',overlay_check=dict(stage=comparison,pixels=list(rect),**overlay),
+                                      issue={'category':'other','operation':'redraw','box':region,'target':'unsupported strokes',
+                                             'symptom':'A new fan of straight lines crosses previously quiet areas from a common point.',
+                                             'fix':'Remove the overlaid rays. Redraw fine marks within their own material boundaries.'})
+                        store(report,result)
+                        return result
                     stage.append(dict(pixels=list(rect),**resize_only(pair)))
                 checks.append({'stage':comparison,'fields':stage})
                 structured=[r for r in stage if r['condition']!='smooth']

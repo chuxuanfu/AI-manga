@@ -172,7 +172,7 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
     source_sha=fingerprint(master)
     receipt=folder/(stage+'-definition.json')
     destination=folder/(stage+'-refined.png')
-    identity=[source_sha,list(pixels),medium,seed,editor,model_identity(LARGE),'focal-definition-1']
+    identity=[source_sha,list(pixels),medium,seed,editor,model_identity(LARGE),'focal-definition-2']
     if receipt.is_file():
         saved=json.loads(receipt.read_text())
         if saved.get('key')==identity:
@@ -195,7 +195,8 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
                +caption['subject']+'. Material and medium: '+caption['material']+'. Existing marks: '+caption['marks']
                +'. Requested medium: '+medium+'. Keep other subjects outside the crop. Preserve shadow direction and silhouette.')
     if magnified:
-        direction+=' Draw these fine internal marks individually: '+caption['detail_direction']
+        direction+=' Draw the proposed marks only within each individual form. Each mark terminates before that '
+        direction+='form’s boundary. Preserve the original background pixels. '+caption['detail_direction']
     work_size=(1152,1152) if magnified else base.size
     editable=base.resize(work_size,Image.Resampling.LANCZOS)
     editable.putalpha(ImageOps.invert(mask.resize(work_size,Image.Resampling.BILINEAR)))
@@ -211,20 +212,24 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
     before=base.crop(target);after=corrected.crop(target)
     evidence={'key':identity,'caption':caption,'raw_sha256':fingerprint(raw),'field':list(bounds),'target':list(target),
               'signal':resize_only((before,after)),'decision':'hold'}
-    if evidence['signal']['condition']!='distinct_signal':
+    from print_artifacts import unsupported_lines
+    evidence['new_line_geometry']=unsupported_lines(before,after)
+    if evidence['new_line_geometry']['hold'] or evidence['signal']['condition']!='distinct_signal':
         store(receipt,evidence);return None
     fields={'same_subject_and_pose':{'type':'boolean'},'same_medium_and_light':{'type':'boolean'},
-            'introduced_defect':{'type':'boolean'},'trace':{'type':'string'}}
+            'introduced_defect':{'type':'boolean'},'marks_follow_surfaces':{'type':'boolean'},'trace':{'type':'string'}}
     with backend(LARGE) as url:
         check=json.loads(ask(url,[base,paint,locator],
             'Compare the ORIGINAL crop (1), raw editor output (2), and the scene locator (3). A small change to '
             'fine lines is desired. Trace an actual feature in both crops. Hold a changed species or person, '
             'new object, shifted pose, damaged contact, doubled silhouette, lettering, new seam, or a material '
-            'or light change. The subject identified before the edit was: '+caption['subject']+'.',
+            'or light change. Follow a NEW mark from its start to its end. A graphic overlay, texture crossing a '
+            'silhouette, invented hatching across different materials, or rays radiating into formerly empty space '
+            'cannot count as a mark belonging to the depicted surface. Subject before the edit: '+caption['subject']+'.',
             {'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
         evidence['continuity']=check
         if (check['same_subject_and_pose'] is True and check['same_medium_and_light'] is True
-                and check['introduced_defect'] is False and check['trace'].strip()):
+                and check['introduced_defect'] is False and check['marks_follow_surfaces'] is True and check['trace'].strip()):
             votes=[ordered_detail(url,after,before),ordered_detail(url,before,after)]
             evidence['comparisons']=votes
             if [v['judgment'] for v in votes]==['A','B'] and all(v['feature'].strip() for v in votes):

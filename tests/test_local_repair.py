@@ -133,6 +133,21 @@ class LocalRepairTests(unittest.TestCase):
         self.assertFalse(denies_lettering('A line of illegible printed glyphs is visible.'))
         self.assertFalse(denies_lettering('A row of printed glyphs with no readable words.'))
 
+    def test_new_radiating_lines_across_an_empty_ground_are_held(self):
+        import math
+        from print_artifacts import unsupported_lines
+        source=Image.new('RGB',(448,448),'#174874')
+        ImageDraw.Draw(source).ellipse((145,100,330,360),fill='#d6e4ee',outline='#163b5b',width=3)
+        painted=source.copy();draw=ImageDraw.Draw(painted)
+        for deg in range(0,360,7):
+            angle=math.radians(deg)
+            draw.line((220,224,round(220+180*math.cos(angle)),round(224+180*math.sin(angle))),fill='white',width=2)
+        self.assertTrue(unsupported_lines(source,painted)['hold'])
+        self.assertFalse(unsupported_lines(painted,painted)['hold'])
+        boundary=source.copy()
+        ImageDraw.Draw(boundary).line((50,20,385,420),fill='white',width=2)
+        self.assertFalse(unsupported_lines(source,boundary)['hold'])
+
     def test_ctc_word_decoder_preserves_double_letters_separated_by_blanks(self):
         import numpy as np
         from lettering import decode_word
