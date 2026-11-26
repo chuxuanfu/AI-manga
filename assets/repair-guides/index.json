@@ -321,5 +321,28 @@
     "license": "CC BY 2.0",
     "license_url": "https://creativecommons.org/licenses/by/2.0/",
     "modifications": "Resized the original photograph."
+  },
+  {
+    "file": "lighthouse-fresnel-prisms.jpg",
+    "requires": [
+      [
+        "Fresnel lens",
+        "Fresnel prisms",
+        "菲涅耳透镜",
+        "菲涅尔透镜"
+      ],
+      [
+        "lighthouse",
+        "lantern room",
+        "灯塔",
+        "灯室"
+      ]
+    ],
+    "construction": "Stacked glass prism courses follow the lantern optic around its vertical axis. Align the stepped glass faces with the supporting frame. Match illumination, engraving and perspective to the requested illustration.",
+    "source": "https://commons.wikimedia.org/wiki/File:The_first_order_fresnel_lens_and_the_view_from_the_Bodie_Island_Lighthouse._(5d77b4f1-1dd8-b71c-071b-eb2a7815ea4e).jpg",
+    "author": "Dave Krueger, U.S. National Park Service",
+    "license": "Public domain in the United States, work of the U.S. federal government",
+    "license_url": "https://www.nps.gov/aboutus/disclaimer.htm",
+    "modifications": "Cropped the working lens from the view inside the Bodie Island lantern room."
   }
 ]
