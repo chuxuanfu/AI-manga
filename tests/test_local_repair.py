@@ -13,11 +13,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
 from construction_review import LARGE, assess_local_edit, verify_interior_figure
 from masks import structural_composite
-from print_judge import issue_category
+from print_judge import actionable_edit, issue_category
 from production import repeated_rejection
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_negative_edit_instructions_cannot_trigger_a_redraw(self):
+        for text in (None, '', 'none', 'No correction needed; the contour is continuous.',
+                     'No repair is necessary.', '无需修改。'):
+            self.assertFalse(actionable_edit(text))
+        self.assertTrue(actionable_edit('Redraw the joint where it meets the handle.'))
+
     def test_repair_preserves_a_new_contour_and_the_crop_boundary(self):
         original = Image.new('RGB', (180, 128), 'beige')
         proposal = original.copy()

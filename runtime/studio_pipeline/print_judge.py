@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-27'
+REVISION = 'print-inspection-28'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -48,6 +48,13 @@ def crop_brief(brief):
             'The composition is inspected separately in full. '
             + ('Medium and finish: '+style+'. ' if sep else 'Respect the visible artwork medium. ')
             + ('Local focus instructions: '+'. '.join(handling) if handling else ''))
+
+
+def actionable_edit(text):
+    if not isinstance(text,str) or not text.strip():return False
+    return not re.match(r'^(?:none\b|n/?a\b|no (?:visual )?(?:correction|repair|edit|change|action|fix)'
+                        r'(?=\s+(?:is\s+)?(?:needed|required|necessary)|[.;,!]|$)|'
+                        r'无需(?:修复|修改|更改)|不需要(?:修复|修改))',text.strip(),re.I)
 
 
 def excluded_by_brief(brief):
@@ -492,6 +499,14 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             inspection_brief=crop_brief(brief) if local else brief
             guidance=inspection_brief+'\n'+constraints
             prompt=GUIDE+'\n'+question+' A quiet or intentionally blurred surface can pass on its own. Never guess what is outside the crop.\n'+guidance
+            if kind=='palette':
+                # These thumbnails carry color relationships, not reliable small contours.
+                # Construction and all overlapping native tiles have dedicated views.
+                prompt=('Review only color fidelity across these palette previews. '+question+
+                        ' Flag an issue only for a visible color change or a contradiction with a named '
+                        'palette. For clear, describe a matching hue relationship, set operation to none '
+                        'and coordinates to zero. For a color concern give a local box in the final '
+                        'image, normalized to 0..1000, and a concrete color correction. Brief: '+brief)
             row=inspect_native(url,view,prompt) if kind=='native' else judge_view(url,view,prompt)
             record={'view':kind,'pixels':list(rect),'observation':row}
             if row['decision']!='clear':
@@ -529,11 +544,17 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 second=judge_view(url,region,verify,overview=overview)
                 record['context_pixels']=list(context)
                 record['corroboration']=second
-                if second['decision']=='uncertain' and kind not in ('comparison','draft-comparison','palette'):
+                palette_structure=(kind=='palette' and tentative and
+                                   not actionable_edit(second.get('fix')) and
+                                   re.search(r'attach|connect|limb|digit|overlap|occlu|support|merg|fus(?:e|ion)|'
+                                             r'anatom|paws?|fingers?|contour|接合|连接|关节|遮挡|肢体',
+                                             claim,re.I))
+                if second['decision']=='uncertain' and (kind not in ('comparison','draft-comparison','palette') or palette_structure):
                     # Identify the disputed shape without priming the reader with the brief or the alleged defect.
                     identify={'type':'object','properties':{'visible':{'type':'string'},'attachment':{'type':'string'}},
                               'required':['visible','attachment']}
-                    observation=json.loads(ask(url,[region],
+                    blind_detail=region[-1] if palette_structure else region
+                    observation=json.loads(ask(url,[blind_detail],
                         'Describe the actual objects and contours in this enlargement in under 32 words. What does the small shape attach to? If it is unidentifiable, say so. No target description is available.',
                         identify,tag=MODEL))
                     record['blind_zoom_inventory']=observation
@@ -597,6 +618,9 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 if second['decision']!='clear':
                     box=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     verdict=second['decision']
+                    if not actionable_edit(second.get('fix')) and second.get('operation')=='redraw':
+                        second=dict(second,operation='none',fix='')
+                        verdict='uncertain'
                     if verdict=='local' and box:
                         first_box=map_box(row,rect,image.size)
                         corroborating_box=map_box(record['corroboration'],context,image.size)

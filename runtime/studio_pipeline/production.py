@@ -118,17 +118,24 @@ def local_retry_source(previous, brief, *, interrupted=False, review_upgrade=Fal
     image=previous/record['4K']
     candidates=[record['底图'],record.get('高清底图返工',{}).get('重绘')]
     issue=report.get('issue',{})
-    from print_judge import REVISION
+    from print_judge import REVISION, actionable_edit, map_box
     recheck=(review_upgrade and report.get('revision') and report['revision']!=REVISION
-             and entry['状态']=='uncertain' and issue.get('operation') not in ('redraw','remove_forbidden'))
+             and entry['状态']=='uncertain' and (issue.get('operation') not in ('redraw','remove_forbidden')
+             or not actionable_edit(issue.get('fix'))))
     if recheck:
         issue=dict(issue,operation='reinspect',fix=issue.get('fix') or 'Inspect this previously held region.')
         views=report.get('views',[])
-        if views and views[-1].get('observation',{}).get('operation')=='remove_forbidden':
-            issue['unresolved_exclusion']=True
+        if views:
+            original=views[-1].get('observation',{})
+            if original.get('operation')=='remove_forbidden':
+                issue['unresolved_exclusion']=True
+            if original.get('evidence') and all(k in original for k in ('left','top','right','bottom')):
+                location=map_box(original,views[-1]['pixels'],report['size'])
+                if location:
+                    issue.update(box=location,symptom=original['evidence'])
     if (report.get('brief')!=brief or report.get('status')!=entry['状态']
             or (not recheck and issue.get('operation') not in ('redraw','remove_forbidden'))
-            or not issue.get('fix') or not issue.get('box') or not image.is_file()
+            or (not recheck and not actionable_edit(issue.get('fix'))) or not issue.get('box') or not image.is_file()
             or fingerprint(image)!=report.get('sha256')):
         return None
     for name in dict.fromkeys(candidates):

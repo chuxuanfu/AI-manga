@@ -852,7 +852,7 @@ def main():
             return 2
     else:
         master,small=native_pair(approved,'native-repair') if args.keep_native else render(approved,'refine')
-    from print_judge import fingerprint, inspect as print_inspect, MODEL
+    from print_judge import actionable_edit, fingerprint, inspect as print_inspect, MODEL
     from production import publish
     detail_rebuilt=False
     # The model inspects the exact finished files, including every replacement.
@@ -900,7 +900,7 @@ def main():
             candidates=final['issues']
         else:
             candidates=[]
-        issue=next((item for item in candidates if region(item,final) and item.get('fix')),None)
+        issue=next((item for item in candidates if region(item,final) and actionable_edit(item.get('fix'))),None)
         rec['终审退回原因']=judged.get('issue',{}).get('symptom') or final.get('note','')
         repeated=False
         if issue and repair_check:
