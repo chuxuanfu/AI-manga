@@ -23,7 +23,7 @@ from structure import inspect_structure
 from construction_review import review as review_construction
 from review import audit, reviewer, RUNTIME, CHECKS
 from manga_materials.planner import plan_scene, requested_medium
-from focus_print import PATCH, centers, sampled_surfaces, combine_source, detail_graph, finish_neural, neural_double, preserve_source_marks
+from focus_print import PATCH, centers, sampled_surfaces, combine_source, detail_graph, finish_neural, neural_double, repair_print_pair, preserve_source_marks
 from masks import object_mask
 from erase import duplicate_box, masked_candidate, MODEL as ERASE_MODEL
 
@@ -383,7 +383,7 @@ def main():
         args.proof_only=True
     def check(path,stage,focus=None):
         key = hashlib.sha256(path.read_bytes()).hexdigest()
-        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v13' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v4-frame-boundary'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
+        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v14' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v4-frame-boundary'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'
@@ -634,13 +634,14 @@ def main():
             master=preserve_source_marks(source_path,master)
             small=preserve_source_marks(source_path,small)
         return master,small
-    def native_pair(source_path,stage):
+    def native_pair(source_path,stage,prior=None):
         dest=job/'pending-review'/stage
         dest.mkdir(parents=True,exist_ok=True)
         with Image.open(source_path) as im:
             if max(im.size)!=7680:raise ValueError('--keep-native 仅接受长边 7680 的既有母版')
             ratio=3840/max(im.size)
-            scaled=im.convert('RGB').resize(tuple(round(v*ratio) for v in im.size),Image.Resampling.LANCZOS)
+            scaled=(repair_print_pair(*prior,im) if prior else
+                    im.convert('RGB').resize(tuple(round(v*ratio) for v in im.size),Image.Resampling.LANCZOS))
         master=dest/'8K.png';small=dest/'4K.png'
         deliver_file(source_path,master)
         temp=dest/(uuid.uuid4().hex+'.png');scaled.save(temp);temp.replace(small)
@@ -717,7 +718,7 @@ def main():
             else:
                 revised=repaint(original.convert('RGB'),focus,issue['fix'],rec['positive'],seed+650+attempt,args.port,
                                 job,stage,issue.get('target'),[o for o,_ in rec['parts']],reference_style)
-        if native:master,small=native_pair(revised,stage)
+        if native:master,small=native_pair(revised,stage,(small,master))
         else:
             approved=revised
             master,small=render(approved,stage)

@@ -233,6 +233,12 @@ def verify_arm_endpoints(url, im, tag):
                min(im.width, round(px+pad)), min(im.height, round(py+pad)))
         crop = im.crop(box)
         crop.thumbnail((720,720), Image.Resampling.LANCZOS)
+        if state == 'hand':
+            detail = verify_attached_hand(url, crop, tag)
+            point['crop_check'] = detail
+            if detail['visible_hand'] is not True or detail['joins_own_wrist'] is not True or detail['visible_unsupported_end'] is not False:
+                return audit
+            continue
         if state == 'frame_exit':
             # This claim has a measurable boundary. Check the sleeve at the identified
             # original edge, without asking the model to translate prose into five labels.
@@ -257,6 +263,19 @@ def verify_arm_endpoints(url, im, tag):
             return audit
     audit['confirmed'] = True
     return audit
+
+
+def verify_attached_hand(url, crop, tag):
+    fields = {'evidence':{'type':'string'}, 'visible_hand':{'type':'boolean'},
+              'joins_own_wrist':{'type':'boolean'}, 'visible_unsupported_end':{'type':'boolean'}}
+    question = ('Inspect only the pixels of this actual crop. Identify what is near its center. Is an '
+                'identifiable human hand visible here? Can its palm or back be traced continuously to its '
+                'own wrist or sleeve? Is a visibly detached hand or an unsupported interior arm endpoint '
+                'present? A sleeve, a paw, or an object alone cannot demonstrate a wrist connection. '
+                'If the hand is absent both visible_hand and joins_own_wrist are false. If its attachment '
+                'cannot be seen, joins_own_wrist is false. Briefly name what meets what.')
+    schema = {'type':'object', 'properties':fields, 'required':list(fields)}
+    return json.loads(ask(url, [crop], question, schema, tag=tag))
 
 
 def verify_frame_exit(url, original, crop, side, edge, tag):

@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-15'
+REVISION = 'print-inspection-16'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -93,6 +93,28 @@ def map_box(row, rect, size):
     if d<=a or e<=c:return None
     return [round(v*1000/n) for v,n in zip((l+(r-l)*a/1000,t+(b-t)*c/1000,
                         l+(r-l)*d/1000,t+(b-t)*e/1000),size*2)]
+
+def repair_extent(final_box, earlier_boxes):
+    """Keep adjoining evidence for a single part when a closer view picks just one tip."""
+    if not final_box:
+        return None
+    if (final_box[2]-final_box[0])*(final_box[3]-final_box[1]) > 120000:
+        return final_box
+    left,top,right,bottom = final_box
+    for candidate in earlier_boxes:
+        if not candidate:
+            continue
+        l,t,r,b = candidate
+        w,h = right-left,bottom-top
+        if r-l > max(40,3*w) or b-t > max(40,3*h):
+            continue
+        if max(l-right,left-r) > max(4,w*.12) or max(t-bottom,top-b) > max(4,h*.12):
+            continue
+        merged = min(l,left),min(t,top),max(r,right),max(b,bottom)
+        if (merged[2]-merged[0])*(merged[3]-merged[1]) <= 120000:
+            left,top,right,bottom = merged
+    return [left,top,right,bottom]
+
 
 def judge_view(url, image, prompt, *, reason=False, overview=None):
     images=list(image) if isinstance(image,(list,tuple)) else [image]
@@ -362,6 +384,9 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     box=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     verdict=second['decision']
                     if verdict=='local' and box:
+                        first_box=map_box(row,rect,image.size)
+                        corroborating_box=map_box(record['corroboration'],context,image.size)
+                        box=repair_extent(box,[first_box,corroborating_box])
                         for axis in (0,1):
                             if box[axis+2]-box[axis]<12:
                                 box[axis]=min(988,max(0,(box[axis]+box[axis+2])//2-6))

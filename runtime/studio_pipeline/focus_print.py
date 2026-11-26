@@ -215,6 +215,32 @@ def finish_neural(small,neural,patches,target,medium=''):
         verified.verify()
     tmp.replace(target)
 
+def repair_print_pair(previous_small, previous_master, revised_master):
+    """Carry just the native repair into the independently refined 4K print."""
+    from PIL import ImageChops
+    with Image.open(previous_small) as small, Image.open(previous_master) as old:
+        if old.size != revised_master.size:
+            raise ValueError('Local repair must preserve the master dimensions')
+        four = small.convert('RGB')
+        new = revised_master.convert('RGB')
+        prior = old.convert('RGB')
+        box = ImageChops.difference(prior,new).getbbox()
+        if not box:
+            return four
+        sx,sy = prior.width/four.width, prior.height/four.height
+        # The three-lobe Lanczos kernel can affect adjacent samples.
+        import math
+        area = (max(0,math.floor(box[0]/sx)-3), max(0,math.floor(box[1]/sy)-3),
+                min(four.width,math.ceil(box[2]/sx)+3), min(four.height,math.ceil(box[3]/sy)+3))
+        pixels = tuple(v*scale for v,scale in zip(area,(sx,sy,sx,sy)))
+        size = area[2]-area[0],area[3]-area[1]
+        def reduced(image):
+            return np.asarray(image.resize(size,Image.Resampling.LANCZOS,box=pixels),dtype=np.int16)
+        corrected = np.asarray(four.crop(area),dtype=np.int16) + reduced(new) - reduced(prior)
+        four.paste(Image.fromarray(corrected.clip(0,255).astype(np.uint8)),area[:2])
+        return four
+
+
 def preserve_source_marks(reference, print_path):
     """Return aligned fine pigment that neural super-resolution removed inside forms."""
     import cv2
