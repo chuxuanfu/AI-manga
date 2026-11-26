@@ -1190,26 +1190,54 @@ def check_plateau_material(url, pair, overview, brief):
     if not model_identity(LARGE):
         return {'confirmed':False}
     fields={'boundary_trace':{'type':'string'},'material':{'type':'string'},
-            'role':{'enum':['secondary_surface','focal_feature','unidentified']},
             'contour':{'enum':['resolved','degraded','unreadable']},
             'source_detail':{'enum':['preserved','missing','unreadable']},
             'abnormal_blur_or_artifact':{'type':'boolean'}}
     schema={'type':'object','properties':fields,'required':list(fields)}
-    prompt=('Image 1 is the whole illustration; its box locates the detail. Image 2 is the final '
-            'native patch. Image 3 is the registered source enlarged equally. Locate the patch in '
-            'the actual composition and name its material. Trace at least one real material boundary '
-            'through a change of direction, an intersection or a transition to another surface. '
-            'If the source has fine structure that disappeared, record missing. An expected smooth '
-            'interior may coexist with sharp boundaries. Where a focal eye, animal marking, anatomy '
-            'or other feature is itself unresolved, record focal_feature or degraded. Check for '
-            'ringing, damage to a line, invented texture and abnormally blurred edges. '
-            'If the crop has no traceable boundary or you cannot identify it, record unreadable. '
-            'Judge the final image 2. Brief: '+brief)
-    read=json.loads(ask(url,[overview,pair[1],pair[0]],prompt,schema,tag=LARGE))
-    ok=(read['role']=='secondary_surface' and read['contour']=='resolved'
-        and read['source_detail']=='preserved' and read['abnormal_blur_or_artifact'] is False
-        and len(read['boundary_trace'].split())>=6 and bool(read['material'].strip()))
-    return {'confirmed':ok,'model':LARGE,**read}
+    prompt=('Compare only these two aligned crops of the same location. Image 1 is the enlarged source, '
+            'image 2 the finished native print. Name the material in the CENTER of these crops and trace '
+            'one of its boundaries through a turn or intersection. Check whether any visible source line '
+            'or surface feature disappeared. Mark an abnormal blur or artifact if the final shows a broken '
+            'or smeared line, ringing, or unrelated texture. Use unreadable when evidence is insufficient.')
+    read=json.loads(ask(url,list(pair),prompt,schema,tag=MODEL))
+    result={'confirmed':False,'model':MODEL,'crop_only':True,**read}
+    if (read['contour']!='resolved' or read['source_detail']!='preserved'
+            or read['abnormal_blur_or_artifact'] is not False
+            or len(read['boundary_trace'].split())<6 or not read['material'].strip()):
+        return result
+    role_fields={'role':{'enum':['secondary_surface','focal_feature','unidentified']},
+                 'matching_feature':{'type':'boolean'},'location_evidence':{'type':'string'}}
+    context=('The marked area in the first image and the second image show the same location. The second '
+             'is the exact native-pixel crop. Verify that the following material and trace belong to the '
+             'center of the marked area. Identify its role in the entire composition. A peripheral sliver '
+             'of a different subject does not describe the center. If the marked area contains a main focal '
+             'feature such as the eye or a critical contact, use focal_feature. Check both images yourself. '
+             'Use unidentified for uncertainty. Material and trace: '+read['material']+'. '+read['boundary_trace']
+             +' Author brief: '+brief)
+    located=json.loads(ask(url,[overview,pair[1]],context,
+                            {'type':'object','properties':role_fields,'required':list(role_fields)},tag=LARGE))
+    result.update(role=located['role'],context_witness=located,context_model=LARGE,
+                  confirmed=(located['role']=='secondary_surface' and located['matching_feature'] is True
+                             and bool(located['location_evidence'].strip())))
+    return result
+
+
+def verify_secondary_field(url, record, pair, image, baseline, baseline_id, brief, result):
+    from construction_review import edit_locator
+    rect=tuple(record['pixels'])
+    boundary=check_plateau_material(url,pair,edit_locator(image,rect),brief)
+    record['secondary_material']=boundary
+    if not boundary['confirmed']:
+        return None
+    # A well-preserved supporting surface only qualifies if a different focal detail truly improves.
+    checked=result.setdefault('focal_definition',{})
+    if baseline_id not in checked:
+        checked[baseline_id]=inspect_focal_definition(url,image,baseline,brief)
+    proof=checked[baseline_id]
+    if not proof.get('confirmed') or tuple(proof.get('pixels',()))==rect:
+        return None
+    return dict(record.get('corroboration') or record['observation'],decision='clear',operation='none',
+                fix='',target='',evidence=boundary['boundary_trace'])
 
 
 def plateau_candidate(record):
@@ -1495,6 +1523,29 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
                                                      decision='clear',operation='none',target='',fix='',evidence=evidence)
                     result.update(status='running')
                     result.pop('issue',None)
+                store(report,result)
+    if result['status']=='uncertain' and result.get('views') and small:
+        held=result['views'][-1]
+        earlier=held.get('secondary_material') or {}
+        if earlier and not earlier.get('crop_only') and plateau_candidate(held):
+            report=report.with_name(report.stem+'-centered-material.json')
+            if report.exists():
+                result=json.loads(report.read_text())
+            else:
+                use_draft=held['view']=='draft-comparison'
+                source_path,upper_path=(draft,small) if use_draft else (small,path)
+                baseline_id=draft_id if use_draft else prior_id
+                with Image.open(source_path) as low, Image.open(upper_path) as high, Image.open(path) as original:
+                    scene=original.convert('RGB')
+                    baseline=low.convert('RGB')
+                    pair=compare_pixels(baseline,high.convert('RGB'),held['pixels'],scene.size)
+                    with backend(MODEL) as url:
+                        resolved=verify_secondary_field(url,held,pair,scene,baseline,baseline_id,brief,result)
+                if resolved:
+                    held['independent_context']=resolved
+                    result.update(status='running')
+                    result.pop('issue',None)
+                result['report']=str(report.relative_to(root))
                 store(report,result)
     if result['status'] in ('pass','running'):
         whole = next((v for v in result['views'] if needs_brief_after_clearance(v)), None)
@@ -1882,22 +1933,12 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
                                         'samples do not establish improved definition of '+focal_proof['location']['feature']+'.')
                             record['independent_context']=second
                 if second['decision']=='uncertain' and plateau_candidate(record):
-                    from construction_review import edit_locator
-                    boundary=check_plateau_material(url,view,edit_locator(image,rect),brief)
-                    record['secondary_material']=boundary
-                    if boundary['confirmed']:
-                        # A sharp frame edge cannot compensate for a blurred main subject.
-                        # Establish improvement on the actual focal subject at its own location.
-                        baseline=draft_image if kind=='draft-comparison' else before
-                        key=draft_id if kind=='draft-comparison' else prior_id
-                        checked=result.setdefault('focal_definition',{})
-                        if key not in checked:
-                            checked[key]=inspect_focal_definition(url,image,baseline,brief)
-                        proof=checked[key]
-                        if proof.get('confirmed') and tuple(proof.get('pixels',()))!=tuple(rect):
-                            second=dict(second,decision='clear',operation='none',fix='',target='',
-                                        evidence=boundary['boundary_trace'])
-                            record['independent_context']=second
+                    baseline=draft_image if kind=='draft-comparison' else before
+                    baseline_id=draft_id if kind=='draft-comparison' else prior_id
+                    resolved=verify_secondary_field(url,record,view,image,baseline,baseline_id,brief,result)
+                    if resolved:
+                        second=resolved
+                        record['independent_context']=resolved
                 anchor=known[rect]['box'] if kind=='previous_local' else tentative
                 if (anchor and second['decision'] in ('local','uncertain') and
                         kind not in ('comparison','draft-comparison','palette')):

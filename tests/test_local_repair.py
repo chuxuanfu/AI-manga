@@ -210,14 +210,18 @@ class LocalRepairTests(unittest.TestCase):
         from print_judge import check_plateau_material,plateau_candidate
         sample=Image.new('RGB',(96,96))
         base={'material':'enamel','boundary_trace':'The blue cell turns at the vertical raised seam.',
-              'role':'secondary_surface','contour':'resolved','source_detail':'preserved','abnormal_blur_or_artifact':False}
-        for delta in ({},{'role':'focal_feature'},{'contour':'degraded'},{'source_detail':'missing'},
+              'role':'secondary_surface','matching_feature':True,'location_evidence':'A secondary area beside the sleeve.',
+              'contour':'resolved','source_detail':'preserved','abnormal_blur_or_artifact':False}
+        for delta in ({},{'role':'focal_feature'},{'matching_feature':False},{'contour':'degraded'},{'source_detail':'missing'},
                       {'abnormal_blur_or_artifact':True},{'boundary_trace':''}):
             with patch('print_judge.model_identity',return_value='fixture'),patch('print_judge.ask',
                     return_value=json.dumps({**base,**delta})) as judge:
                 result=check_plateau_material('local',(sample,sample),sample,'an enamel portrait')
                 self.assertEqual(result['confirmed'],not delta)
-                self.assertEqual(len(judge.call_args.args[1]),3)
+                self.assertEqual(judge.call_args_list[0].args[1],[sample,sample])
+                self.assertNotIn('enamel portrait',judge.call_args_list[0].args[2])
+                if len(judge.call_args_list)>1:
+                    self.assertIn('enamel portrait',judge.call_args_list[1].args[2])
         record={'view':'comparison','issue_category':'unresolved_focus','part_verification':{'decision':'clear'},
                 'blind_detail_check':{'trace':{'new_artifact':False}}}
         self.assertTrue(plateau_candidate(record))
