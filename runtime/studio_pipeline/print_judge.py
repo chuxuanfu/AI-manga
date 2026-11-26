@@ -613,6 +613,28 @@ def compare_local_definition(url, pair):
     return dict(graded, final_patch=final)
 
 
+def print_field_context(master, rect, coordinate_size):
+    """Show where the exact native field falls both in the scene and on its immediate subject."""
+    bounds=tuple(round(v*n/d) for v,n,d in zip(rect,master.size*2,coordinate_size*2))
+    around=expanded(expanded(bounds,master.size),master.size)
+    panels=[]
+    for field in ((0,0,*master.size),around):
+        l,t,r,b=field
+        preview=master.crop(field).convert('RGB')
+        preview.thumbnail((486,440),Image.Resampling.LANCZOS)
+        overlay=ImageDraw.Draw(preview)
+        overlay.rectangle([round((v-start)*extent/source) for v,start,extent,source in
+                          zip(bounds,(l,t,l,t),preview.size*2,(r-l,b-t,r-l,b-t))],outline='#fc1682',width=3)
+        panels.append(preview)
+    board=Image.new('RGB',(988,470),'#ededed')
+    draw=ImageDraw.Draw(board)
+    for i,(title,preview) in enumerate(zip(('Full composition','Surrounding subject'),panels)):
+        x=4+i*494+(486-preview.width)//2
+        draw.text((x,4),title,fill='black')
+        board.paste(preview,(x,24+(440-preview.height)//2))
+    return board
+
+
 def detail_comparison_prompt(question, brief):
     return ('You are inspecting two matched print samples for optical resolution. '+question+
             ' Grade the visible marks and tones in image 2. Whole-scene anatomy, the number of objects '
@@ -1133,6 +1155,15 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             else:
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
                 result.pop('issue',None)
+    if result.get('status')=='uncertain' and result.get('views'):
+        last=result['views'][-1]
+        if (last.get('view') in ('comparison','draft-comparison') and not last.get('context_at_two_scales')
+                and result.get('issue',{}).get('operation')=='none'):
+            report=report.with_name(report.stem+'-field-context.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
+                result.pop('issue',None)
     if result['status'] in ('pass','local','global','uncertain'):return result
     with ExitStack() as resources:
         with Image.open(path) as source:image=source.convert('RGB')
@@ -1256,6 +1287,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
         for i,(kind,rect) in enumerate(windows):
             if i<len(result['views']):continue
             started=time.monotonic()
+            field_context=None
             if kind in ('whole','construction'):
                 view=overview_image
             elif kind not in ('comparison','draft-comparison','palette'):
@@ -1286,6 +1318,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             elif kind in ('comparison','draft-comparison'):
                 low,high=(before,image) if kind=='comparison' else (draft_image,before)
                 view=compare_pixels(low,high,rect,image.size)
+                field_context=print_field_context(high,rect,image.size)
                 question=('Image 1 is the lower resolution enlarged to match; image 2 is the same field at final pixel scale. Compare these separately supplied images. '
                           'Identify physically coherent separated tips, fine strokes or edges in image 2. '
                           'Flag smeared focal boundaries, a soft enlarged silhouette with unresolved internal structures, '
@@ -1302,7 +1335,9 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 question+=' This is the composition draft before print rendering. Check visible structure, declared material and contact at this drawing scale. Fine print resolution is evaluated on a later file.'
             prompt=GUIDE+'\n'+question+' A quiet or intentionally blurred surface can pass on its own. Never guess what is outside the crop.\n'+guidance
             if kind in ('comparison','draft-comparison'):
-                prompt=detail_comparison_prompt(question,brief)
+                prompt=(detail_comparison_prompt(question,brief)+' Image 3 has two labeled panels, the whole '
+                        'composition and the surrounding subject. The pink rectangle on each identifies exactly '
+                        'the matching sample. Decide whether the visible marks in image 2 resolve that surface.')
             if kind=='palette':
                 # These thumbnails carry color relationships, not reliable small contours.
                 # Construction and all overlapping native tiles have dedicated views.
@@ -1324,18 +1359,19 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             elif kind=='previous_local':
                 row,prior_reading=inspect_repaired_region(url,view,known[rect]['symptom'],guidance)
             else:
-                row=judge_view(url,view,prompt)
+                row=judge_view(url,view,prompt,overview=field_context)
             if kind=='whole' and row['decision']=='clear':
                 from brief_check import subject_witness
                 witnesses,contradiction=subject_witness(url,image,overview_image,brief,MODEL)
                 if contradiction:row=contradiction
             if kind in ('comparison','draft-comparison') and row['decision']=='uncertain':
-                detail_reading=independent_detail_check(url,view,overview_image,inspection_brief)
+                detail_reading=independent_detail_check(url,view,field_context,inspection_brief)
                 if detail_reading['confirmed']:
                     prior_reading=row
                     row=dict(decision='clear',operation='none',fix='',target='',left=0,top=0,right=0,bottom=0,
                              evidence=detail_reading['trace']['improvement'])
             record={'view':kind,'pixels':list(rect),'observation':row}
+            if field_context is not None:record['context_at_two_scales']=True
             if witnesses:record['brief_witnesses']=witnesses
             if detail_reading is not None:record['blind_detail_check']=detail_reading
             if kind=='native':record['native_key']=native_key
@@ -1374,7 +1410,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     draw.rectangle(tuple(round(v*n/k) for v,n,k in zip(rect,overview.size*2,image.size*2)),outline='#ec407a',width=2)
                     verify=GUIDE+' '+question+' The last image locates the inspected area in the full composition. Use it to identify deliberate softness. Previous claim: '+claim+' Brief: '+inspection_brief
                     if kind in ('comparison','draft-comparison'):
-                        verify=(detail_comparison_prompt(question,brief)+' Image 3 locates the samples. '
+                        overview=field_context
+                        verify=(detail_comparison_prompt(question,brief)+' Image 3 shows the marked position on the whole composition and the surrounding subject. '
                                 'Verify whether this alleged optical defect is visible in image 2: '+claim)
                 if kind=='whole' and tentative:
                     record['whole_context_visible']=True

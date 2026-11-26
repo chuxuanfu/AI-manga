@@ -86,5 +86,29 @@
     "license": "CC BY-SA 2.5",
     "license_url": "https://creativecommons.org/licenses/by-sa/2.5/",
     "changes": "Cropped to the bridge and string path, converted to grayscale and resized to 840 pixels."
+  },
+  {
+    "file": "barn-owl-facial-disc.jpg",
+    "requires": [
+      [
+        "barn owl",
+        "Tyto alba",
+        "仓鸮"
+      ],
+      [
+        "crown",
+        "facial disc",
+        "facial disk",
+        "tuft",
+        "脸盘",
+        "羽角"
+      ]
+    ],
+    "construction": "The rounded crown flows into a heart-shaped facial disc with two dark eyes and a narrow beak between them. Follow the silhouette in the drawing’s own orientation.",
+    "source": "https://commons.wikimedia.org/wiki/File:Tyto_alba_Thomas_Barnes.jpg",
+    "author": "Thomas G. Barnes / U.S. Fish and Wildlife Service",
+    "license": "Public domain in the United States, US federal government work",
+    "license_url": "https://commons.wikimedia.org/wiki/Template:PD-USGov-FWS",
+    "changes": "Cropped around the head and shoulder, converted to grayscale and resized to 750 pixels."
   }
 ]
