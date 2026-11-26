@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-21'
+REVISION = 'print-inspection-22'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -195,6 +195,21 @@ def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
               'part that must be reconstructed together with its attachment (for instance a hand for fused digits or a wheel for misaligned spokes). Independent description of the pixels: '+json.dumps(inventory)+
               '. Proposed finding: '+original['evidence']+' Second reading: '+corroboration['evidence'])
     read=json.loads(ask(url,[detail,locator],question,schema,tag=MODEL,reason=True))
+    if read['outcome']=='insufficient':
+        # Resolve a contradictory decision only when another reading can account for
+        # the entire disputed contour on the actual crop, independently of its locator.
+        props={'target_visible':{'type':'boolean'},'entire_disputed_contour_resolved':{'type':'boolean'},
+               'defect':{'enum':['present','absent','ambiguous']},'visible_trace':{'type':'string'}}
+        repeat=json.loads(ask(url,[detail],
+            'Inspect only the disputed physical feature in this crop. Proposed defect: '
+            +original['evidence']+' A previous reader traced these pixels: '+read['evidence']
+            +'. Independently trace the contour, both boundaries and attachments. Only report absent '
+             'if visible evidence disproves the entire proposed defect. Use ambiguous for partial or '
+             'obscured evidence or for disputed texture resolution you cannot compare at this scale.',
+            {'type':'object','properties':props,'required':list(props)},tag=MODEL,reason=True))
+        if (repeat['defect']=='absent' and repeat['target_visible'] is True
+                and repeat['entire_disputed_contour_resolved'] is True and repeat['visible_trace'].strip()):
+            read=dict(read,outcome='disproved',evidence=repeat['visible_trace'])
     if read['outcome']=='disproved':
         return dict(corroboration,decision='clear',operation='none',target='',fix='',evidence=read['evidence'])
     outcome='uncertain'
