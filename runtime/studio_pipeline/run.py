@@ -17,7 +17,7 @@ import torch
 
 from gallery import write_gallery, write_focus_proof
 from graphs import UP, draft, finish
-from illustration import has_drawing_model, text_composition, DRAW_UNET, installed_editor, instruction_edit, detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
+from illustration import pigment_edit, has_drawing_model, text_composition, DRAW_UNET, installed_editor, instruction_edit, detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
 from reference_review import compare
 from structure import inspect_structure
 from construction_review import review as review_construction
@@ -243,13 +243,17 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     prepared.putalpha(ImageOps.invert(mask.resize(size,Image.Resampling.BILINEAR)))
     prefix = (directory.relative_to(OUTPUT)/stage).as_posix()
     model_root=RUNTIME/'ComfyUI/models'
+    recolor=pigment_edit(original_request[1])
     specialist=(installed_editor(model_root) if allow_specialist and reference_style and rebuild_shape
-                and reconstruction_attempt>=2 else None)
+                and (recolor or reconstruction_attempt>=2) else None)
     if specialist:
         source=local_image(prepared)
-        edit=instruction_edit('Edit this same illustration close-up. Preserve the original edge alignment, '
-                              'colors, light and medium. Reconstruct '+str(target or 'the damaged structure')+
-                              ' as follows: '+description,seed,source,prefix,specialist,masked=True)
+        direction=('Repaint the pigment and pattern of the specified surface. Keep its silhouette, pose, contact shadows '
+                   'and linework. Make the requested colors and pattern clearly visible over the intended surface. '
+                   if recolor else 'Reconstruct the specified part and its visible connections. ')
+        edit=instruction_edit('Edit this same illustration close-up. '+direction+
+                              'Preserve the surrounding objects, light and medium. Target: '+
+                              str(target or 'the selected area')+'. '+description,seed,source,prefix,specialist,masked=True)
         graph=edit.api
         output=str(len(edit.nodes))
     elif reference_style:

@@ -220,6 +220,13 @@ class LocalRepairTests(unittest.TestCase):
             Image.new('L',(1680,944),color=150).save(base)
             self.assertIsNone(previous_print_pair(root,source,record))
 
+    def test_pigment_corrections_do_not_pin_the_previous_target_color(self):
+        from illustration import pigment_edit
+        for instruction in ('Repaint the fur pigmentation of the cat.', 'Correct its fabric color.', '重新上色'):
+            self.assertTrue(pigment_edit(instruction))
+        for instruction in ('Reconstruct a wrist; preserve the colors of the shirt.', 'Correct the finger count.'):
+            self.assertFalse(pigment_edit(instruction))
+
     def test_existing_print_requires_a_smaller_matching_baseline(self):
         from focus_print import validate_print_pair
         from tempfile import TemporaryDirectory

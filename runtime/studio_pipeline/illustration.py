@@ -1,4 +1,5 @@
 """Offline illustration graphs based on the publishers' ComfyUI examples."""
+import re
 from graphs import Graph, UP
 
 KEY_VISUAL = ('Japanese anime key visual, clean tapered linework with varied line weight. Group fine strokes into readable forms, picking out a few crisp accents at the focal point. '
@@ -72,6 +73,15 @@ def text_composition(text,seed,width,height,prefix):
     decoded=g.add('VAEDecode','Decode',(1340,145),['IMAGE'],[('samples',(sample,0)),('vae',(vae,0))])
     g.save('Local drawing',(1620,145),decoded,prefix)
     return g
+
+
+def pigment_edit(instruction):
+    """Route explicit pigment and marking changes without confusing preserved colors with edits."""
+    return bool(re.search(r'\brecolou?r\b|\brepaint (?:the |its )?(?:(?:fur|fabric|coat|surface) )?'
+                          r'(?:pigmentation|colou?r|markings|pattern)\b|'
+                          r'\b(?:change|replace|restore|correct|adjust) (?:the |its )?'
+                          r'(?:(?:base|local|coat|fabric|fur|surface) )?(?:colou?r|pigmentation|coat pattern|markings)\b|'
+                          r'重新上色|改成.{0,6}色|更改.{0,8}(?:颜色|花纹)|重绘.{0,6}(?:毛色|花纹)',instruction,re.I))
 
 
 def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, masked=False, detail_reference=None):
