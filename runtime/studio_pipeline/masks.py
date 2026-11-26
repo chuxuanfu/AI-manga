@@ -230,3 +230,49 @@ def structural_composite(before, after, area, canvas_edges):
     original=np.asarray(before,dtype=np.float32)
     result=original+(result-original)*fade[:,:,None]
     return Image.fromarray(np.uint8(np.clip(result.round(),0,255)))
+
+
+def pose_outline(photo, subject):
+    """Reduce a pose-only reference to its silhouette and the main internal contours."""
+    import cv2
+    working=photo.convert('RGB')
+    working.thumbnail((640,640),Image.Resampling.LANCZOS)
+    score=probabilities(working,[subject])[0]
+    if score.max()<.60:return None
+    rough=Image.fromarray(np.uint8(score>max(.28,float(score.max())*.48))*255).resize(working.size,Image.Resampling.BILINEAR)
+    alpha=refine_subject_mask(working,rough)
+    if alpha is rough:return None
+    silhouette=np.uint8(np.asarray(alpha)>128)*255
+    contours,_=cv2.findContours(silhouette,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:return None
+    contour=max(contours,key=cv2.contourArea)
+    area=cv2.contourArea(contour)
+    if area<200 or area<.9*sum(cv2.contourArea(c) for c in contours):return None
+    # A fine fur pattern or photographic highlight must not condition the painter.
+    # Keep just a few connected internal strokes and a flat tone inside the outline.
+    gray=cv2.cvtColor(np.asarray(working),cv2.COLOR_RGB2GRAY)
+    softened=cv2.bilateralFilter(cv2.GaussianBlur(gray,(0,0),1.9),9,30,12)
+    lines=cv2.Canny(softened,25,68)
+    lines&=cv2.erode(silhouette,np.ones((5,5),np.uint8))
+    _,labels,stats,_=cv2.connectedComponentsWithStats(lines,connectivity=8)
+    lengths=np.maximum(stats[:,cv2.CC_STAT_WIDTH],stats[:,cv2.CC_STAT_HEIGHT])
+    accepted=(lengths>=max(6,min(working.size)*.018))
+    accepted[0]=False
+    paper=np.full(silhouette.shape,247,np.uint8)
+    inside=silhouette!=0
+    volumes=cv2.GaussianBlur(softened,(0,0),max(2,min(working.size)*.012))
+    cutoffs=np.quantile(volumes[inside],[.25,.65])
+    paper[inside]=np.choose(np.digitize(volumes[inside],cutoffs),[198,212,224])
+    dark_landmark=(gray<cv2.GaussianBlur(gray,(0,0),4).astype(np.int16)-30)&inside
+    _,parts,areas,_=cv2.connectedComponentsWithStats(np.uint8(dark_landmark),connectivity=8)
+    anchors=(areas[:,cv2.CC_STAT_AREA]>=max(6,round(area*.0001)))&(areas[:,cv2.CC_STAT_AREA]<area*.008)
+    anchors[0]=False
+    paper[anchors[parts]]=108
+    paper[accepted[labels]]=115
+    outline=cv2.approxPolyDP(contour,1.1,True)
+    cv2.polylines(paper,[outline],True,65,2,lineType=cv2.LINE_AA)
+    x,y,w,h=cv2.boundingRect(contour)
+    if min(x,y,working.width-x-w,working.height-y-h)<1:return None
+    pad=max(3,round(max(w,h)*.014))
+    return Image.fromarray(paper).crop((max(0,x-pad),max(0,y-pad),min(working.width,x+w+pad),
+                                       min(working.height,y+h+pad))).convert('RGB')

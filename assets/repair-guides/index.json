@@ -172,7 +172,8 @@
     "author": "Hortensja Bukietowa",
     "license": "CC BY-SA 4.0",
     "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
-    "changes": "Cropped to the seated animal and its point of support, resized and JPEG-encoded."
+    "changes": "Cropped to the seated animal and its point of support, resized and JPEG-encoded.",
+    "pose_subject": "cat"
   },
   {
     "file": "three-quarter-face-geometry.png",

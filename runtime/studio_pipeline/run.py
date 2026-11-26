@@ -270,17 +270,25 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
             file,credit=guide
             with Image.open(file) as photo:guide_image=photo.convert('RGB')
             framing=None
-            if credit.get('neutral_plate_subject'):
-                from masks import frame_neutral_guide
-                guide_image,framing=frame_neutral_guide(guide_image,crop,credit['neutral_plate_subject'])
-            reference=local_image(guide_image)
-            reference_record={**credit,'input':reference}
-            if framing:
-                reference_record['source_part_extent']=framing
-                direction+=('The neutral plate is registered to the source crop. Draw the corrected '
-                            'part at that size and location relative to the surrounding anatomy. ')
+            plate_subject=credit.get('neutral_plate_subject')
+            if credit.get('pose_subject') and not recolor:
+                from masks import pose_outline
+                guide_image=pose_outline(guide_image,credit['pose_subject'])
+                plate_subject=credit['pose_subject']
+            if guide_image is not None:
+                if plate_subject:
+                    from masks import frame_neutral_guide
+                    guide_image,framing=frame_neutral_guide(guide_image,crop,plate_subject)
+                    direction+=('Use the neutral outline only for the silhouette and placement of joints. '
+                                'Render all interior marks, colors and shading in the original illustration medium. ')
+                reference=local_image(guide_image)
+                reference_record={**credit,'input':reference}
+                if framing:
+                    reference_record['source_part_extent']=framing
+                    direction+=('The neutral plate is registered to the source crop. Draw the corrected '
+                                'part at that size and location relative to the surrounding anatomy. ')
             construction=credit['construction']
-            direction+=('Image 2 shows only a physical relationship: '+construction+
+            direction+=(('Image 2 shows only a physical relationship: ' if reference else 'Follow this construction: ')+construction+
                         ' Orient that relationship to the perspective and physical contact in image 1. '
                         'Keep the surrounding surfaces, scale, graphic style, and palette in image 1. ')
         if scene_depth or (not recolor and reconstruction_attempt>=2 and cw*ch<.85*w*h):

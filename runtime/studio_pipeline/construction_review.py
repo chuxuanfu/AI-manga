@@ -362,8 +362,8 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
     if not ImageChops.difference(old,new).getbbox():
         return {'verdict':'unchanged','evidence':'Identical source and proposed region.'}
     from illustration import construction_guide
-    face_guide=construction_guide(correction)
-    if face_guide and face_guide[1].get('neutral_plate_subject')=='face':
+    guide=construction_guide(correction)
+    if guide and guide[1].get('neutral_plate_subject')=='face':
         from masks import unintended_portrait_scale
         drift=unintended_portrait_scale(old,new,correction)
         if drift:
@@ -462,6 +462,24 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
         if boundary.get('status')!='intact' or not boundary.get('trace','').strip():
             result.update(verdict='new_defect' if boundary.get('status')=='new_damage' else 'uncertain',
                           next_edit='Preserve the original contours crossing the change boundary. '+boundary.get('trace',''))
+    if result.get('verdict')=='resolved' and guide and guide[1].get('pose_subject'):
+        # A correct silhouette can still look pasted in when the editor borrows
+        # a specimen photograph's lighting or finish from a construction guide.
+        props={'medium':{'enum':['consistent','mismatch','uncertain']},
+               'interior_marks':{'type':'string'},'silhouette':{'type':'string'}}
+        cue=('Image 1 is the original painting. Image 2 contains a corrected pose of the same subject. '
+             'Inspect the stroke boundaries and shading on that subject against the drawing nearby, '
+             'even when its anatomy is now correct. Trace one actual interior mark and one outer contour. '
+             'Choose mismatch for a photographic or foreign surface pasted into the illustration. '
+             'Allow pose changes, sensible variations in lighting and the rendering appropriate to each material.')
+        with backend(LARGE) as addr:
+            medium_check=json.loads(ask(addr,[old,new,*context],cue,
+                {'type':'object','properties':props,'required':list(props)},tag=LARGE))
+        result['medium_comparison']=medium_check
+        if (medium_check['medium']!='consistent' or not medium_check['interior_marks'].strip()
+                or not medium_check['silhouette'].strip()):
+            result.update(verdict='new_defect' if medium_check['medium']=='mismatch' else 'uncertain',
+                          next_edit='Use the original drawn line, light and texture on the corrected subject.')
     if result.get('verdict')=='resolved' and not str(result.get('evidence') or '').strip():
         result['verdict']='uncertain'
     return result
