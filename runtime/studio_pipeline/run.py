@@ -217,7 +217,7 @@ def draft_repair_issue(result):
                  or issue.get('operation') in ('redraw','remove_forbidden'))),None)
 
 
-def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False, reconstruction_attempt=0, allow_specialist=True):
+def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False, reconstruction_attempt=0, allow_specialist=True, design_reference=None):
     # Re-sample only the interior; the wider square gives diffusion scene context.
     original_request=(box,description,target)
     if reference_style and rebuild_shape:
@@ -248,7 +248,7 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     guide=construction_guide(original_request[1],attempt=reconstruction_attempt) if reference_style and rebuild_shape else None
     scene_depth='whole scene as a depth reference' in original_request[1].casefold()
     specialist=(installed_editor(model_root) if allow_specialist and reference_style and rebuild_shape
-                and (guide or scene_depth or recolor or reconstruction_attempt>=2) else None)
+                and (design_reference or guide or scene_depth or recolor or reconstruction_attempt>=2) else None)
     if specialist:
         if reconstruction_attempt>=3 and not recolor and ERASE_MODEL.is_file():
             # A masked editor can still copy a malformed silhouette from its visual
@@ -265,7 +265,16 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
         reference=None
         scene_reference=None
         reference_record={}
-        if guide:
+        if design_reference:
+            with Image.open(design_reference) as design:
+                rect=tuple(round(v*n/m) for v,n,m in zip((x,y,x+cw,y+ch),design.size*2,(w,h,w,h)))
+                sample=design.convert('RGB').crop(rect).resize(size,Image.Resampling.LANCZOS)
+            reference=local_image(sample)
+            reference_record={'approved_design_crop':reference,'source_file':str(design_reference)}
+            direction+=('Image 2 shows this same area in the earlier selected design. Restore the '
+                        'physical feature from this corresponding area. Keep the new picture direction '
+                        'of light, shading, and the intact surroundings from image 1. ')
+        elif guide:
             file,credit=guide
             with Image.open(file) as photo:guide_image=photo.convert('RGB')
             framing=None
@@ -1222,7 +1231,26 @@ def main():
         save(job/(stage+'-workflow.json'),graph.ui())
         outputs=post_graph(graph.api,args.port,job,stage,graph.ui())
         candidate=output_image(outputs[str(len(graph.nodes))])
-        aligned=same_composition(approved,candidate,prompt)
+        from reference_review import review_finish_changes
+        finding=review_finish_changes(approved,candidate,prompt)
+        save(job/(stage+'-design-review.json'),finding)
+        aligned=finding['verdict']=='coherent'
+        if finding['verdict']=='local':
+            from construction_review import assess_local_edit
+            with Image.open(candidate) as picture:before=picture.convert('RGB')
+            target_box=finding['box']
+            corrected=repaint(before,target_box,finding['fix'],prompt,seed+882502,args.port,job,
+                              stage+'-design-repair',finding.get('target'),reference_style=True,
+                              rebuild_shape=True,design_reference=approved)
+            with Image.open(corrected) as picture:
+                repair=assess_local_edit(before,picture.convert('RGB'),target_box,
+                                         finding['fix'],finding.get('observation'),prompt)
+            save(job/(stage+'-design-repair-review.json'),repair)
+            if repair['verdict']=='resolved':
+                candidate=corrected
+                aligned=same_composition(approved,candidate,prompt)
+        elif finding.get('independent',{}).get('verdict')=='faithful':
+            aligned=same_composition(approved,candidate,prompt)
         rec['画法整图返工']={'前一版本':str(master),'前一版本指纹':fingerprint(master),
                            '重绘':str(candidate),'重绘指纹':fingerprint(candidate),
                            '保留构图':aligned,'修改要求':instruction,'步数':40 if full else 4}

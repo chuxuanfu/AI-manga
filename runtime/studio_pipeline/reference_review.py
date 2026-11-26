@@ -182,6 +182,57 @@ def final_repaint_direction(assessment):
     return assessment.get('redraw_direction') or redraw_direction(assessment,'')
 
 
+def review_finish_changes(original,candidate,brief):
+    """Localize an unintended design change made by the finish editor before reprinting."""
+    from construction_review import SCHEMA,LARGE
+    from print_judge import MODEL,actionable_edit
+    images=[]
+    for path in (original,candidate):
+        with Image.open(path) as image:
+            rgb=image.convert('RGB')
+            rgb.thumbnail((1280,1280),Image.Resampling.LANCZOS)
+            images.append(rgb)
+    prompt=('Image 1 is the selected design; image 2 is a repaint of that design. Inspect the subjects, '
+            'costume edges, accessories, silhouette and materials side by side. Check identity, action, '
+            'framing, requested colors and physical medium. Better lighting, depth, marks and naturally '
+            'modelled surfaces are intended. Report a concrete unwanted change only if it alters the '
+            'established design or breaks physical construction. If it is confined to one feature, '
+            'give a tight box around it in image 2 in coordinates 0..1000 and how to restore the '
+            'corresponding feature from image 1. Use global for a changed overall composition, '
+            'unclear for insufficient evidence, coherent for a faithful repaint. Author brief: '+brief)
+    with backend(MODEL) as url:
+        first=json.loads(ask(url,images,prompt,SCHEMA,tag=MODEL))
+        if first['verdict']!='local':return first
+        box=first.get('box')
+        if (not isinstance(box,list) or len(box)!=4 or not all(type(v) is int for v in box)
+                or not 0<=box[0]<box[2]<=1000 or not 0<=box[1]<box[3]<=1000
+                or (box[2]-box[0])*(box[3]-box[1])>200000 or not actionable_edit(first.get('fix'))
+                or not available(LARGE)):
+            return {**first,'verdict':'unclear'}
+        margin=max(22,round(.45*max(box[2]-box[0],box[3]-box[1])))
+        bounds=[max(0,box[0]-margin),max(0,box[1]-margin),min(1000,box[2]+margin),min(1000,box[3]+margin)]
+        crops=[]
+        for path in (original,candidate):
+            with Image.open(path) as image:
+                crop=image.convert('RGB').crop(tuple(round(f*k/1000) for f,k in zip(bounds,image.size*2)))
+                if crops:
+                    crops.append(crop.resize(crops[0].size,Image.Resampling.LANCZOS))
+                else:
+                    crops.append(ImageOps.contain(crop,(580,580),Image.Resampling.LANCZOS))
+        props={'verdict':{'enum':['unintended_change','faithful','unclear']},'original_feature':{'type':'string'},
+               'repainted_feature':{'type':'string'},'restore':{'type':'string'}}
+        check=json.loads(ask(url,crops,'These corresponding native detail crops show the selected artwork '
+                'and its repaint. Describe the physical construction in EACH. Does the second add an '
+                'incompatible object, change the design, or damage a connection? Treat intentional '
+                'refinement in the same medium as faithful. If a change is confirmed, specify the '
+                'original feature to restore while retaining the new lighting. Brief: '+brief,
+                {'type':'object','properties':props,'required':list(props)},tag=LARGE))
+        if (check['verdict']=='unintended_change' and actionable_edit(check.get('restore'))
+                and all(check.get(k,'').strip() for k in ('original_feature','repainted_feature'))):
+            return {**first,'fix':check['restore'],'independent':check}
+        return {**first,'verdict':'unclear','independent':check}
+
+
 def last_finish_direction(record):
     for row in reversed(record.get('reviews',[])):
         assessment=row.get('review',{}).get('参考比较') or {}

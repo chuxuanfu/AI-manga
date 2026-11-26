@@ -56,6 +56,33 @@ class WorkmanshipTests(unittest.TestCase):
                     self.assertIn('left_detail',reader.call_args.args[3]['properties']['lighting']['required'])
                 reader.reset_mock()
 
+    def test_finish_material_regression_requires_a_second_reading_of_corresponding_crops(self):
+        from contextlib import nullcontext
+        from tempfile import TemporaryDirectory
+        from reference_review import review_finish_changes
+        from construction_review import LARGE
+        first=dict(verdict='local',box=[240,580,360,660],target='sleeve',observation='New transparent band.',
+                   fix='Restore the paper cuff.')
+        second=dict(verdict='unintended_change',original_feature='Folded opaque paper.',
+                    repainted_feature='A transparent rectangular band.',restore='Restore the opaque folded cuff.')
+        with TemporaryDirectory() as tmp:
+            old,new=Path(tmp)/'old.png',Path(tmp)/'new.png'
+            Image.new('RGB',(800,600),'gold').save(old)
+            Image.new('RGB',(1600,1200),'olive').save(new)
+            with patch('reference_review.backend',return_value=nullcontext('local')), \
+                    patch('reference_review.available',return_value=True), \
+                    patch('reference_review.ask',side_effect=[json.dumps(first),json.dumps(second)]) as reader:
+                result=review_finish_changes(old,new,'Layered paper illustration.')
+                self.assertEqual(result['fix'],second['restore'])
+                self.assertEqual(reader.call_args.kwargs['tag'],LARGE)
+                pair=reader.call_args.args[1]
+                self.assertEqual(pair[0].size,pair[1].size)
+                self.assertEqual(pair[0].getpixel((5,5)),(255,215,0))
+            with patch('reference_review.backend',return_value=nullcontext('local')), \
+                    patch('reference_review.ask',return_value=json.dumps({**first,'box':[0,0,1000,1000]})) as reader:
+                self.assertEqual(review_finish_changes(old,new,'A paper study.')['verdict'],'unclear')
+                self.assertEqual(reader.call_count,1)
+
     def test_finish_repaint_uses_approved_scene_and_only_confirmed_final_feedback(self):
         from illustration import finish_repaint_graph
         from reference_review import final_repaint_direction
