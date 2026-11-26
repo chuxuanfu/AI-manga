@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-43'
+REVISION = 'print-inspection-44'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -35,7 +35,7 @@ If a small object, background animal, person, lettering or other feature explici
 use local and remove_forbidden even if it is otherwise well drawn. Use redraw for a malformed requested subject.
 Use under 32 words in evidence. When coordinates are requested, a clear view has zero coordinates and operation none."""
 
-SOFT_HANDLING=re.compile(r'blur(?:red|ry)?|out[- ]of[- ]focus|defocus|bokeh|shallow depth|soft(?:ened|ness|ly|[- ](?:focus|edges|background|blended))|flat[- ](?:colou?r|fills?|shading)|negative space|虚化|虚焦|失焦|浅景深|朦胧|柔焦|模糊|平涂|留白|ぼけ|ボケ',re.I)
+SOFT_HANDLING=re.compile(r'quieter edges|subdued distant (?:edges|detail)|atmospheric perspective|morning mist|misty (?:distance|background)|远景弱化|远处.{0,8}(?:雾|淡化)|blur(?:red|ry)?|out[- ]of[- ]focus|defocus|bokeh|shallow depth|soft(?:ened|ness|ly|[- ](?:focus|edges|background|blended))|flat[- ](?:colou?r|fills?|shading)|negative space|虚化|虚焦|失焦|浅景深|朦胧|柔焦|模糊|平涂|留白|ぼけ|ボケ',re.I)
 
 def requested_handling(phrase,brief):
     return bool(isinstance(phrase,str) and phrase.strip() and phrase.strip().casefold() in brief.casefold()
@@ -1064,20 +1064,30 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                                         row['evidence']+' '+second['evidence'],re.I)):
                         second=anchored
                         record['independent_context']=second
-                if second['decision']=='uncertain' and SOFT_HANDLING.search(brief):
+                if (second['decision']=='uncertain' and SOFT_HANDLING.search(brief) and
+                        (record.get('issue_category')=='unresolved_focus' or
+                         (not record.get('issue_category') and OPTICAL_SYMPTOM.search(second['evidence']) and
+                          issue_category(url,region,second['evidence'],brief)=='unresolved_focus'))):
                     overview=overview_image.copy()
                     overview.thumbnail((800,800),Image.Resampling.LANCZOS)
                     outline=ImageDraw.Draw(overview)
                     outline.rectangle(tuple(round(v*n/k) for v,n,k in zip(context,overview.size*2,image.size*2)),outline='#ec407a',width=2)
-                    policy={'type':'object','properties':{'outcome':{'enum':['intentional','defect','unresolved']},'phrase':{'type':'string'},'evidence':{'type':'string'}},'required':['outcome','phrase','evidence']}
-                    instruction=('Image 1 locates this region, image 2 shows its detail. Resolve the editor’s uncertainty using the author’s brief. '
-                                 'Choose intentional ONLY if the sole concern is explicitly requested softness or flatness here, and the visible handling matches. '
-                                 'Distinguish the intended focal subject from its background. Any other visible defect or ambiguous intent must remain held. '
-                                 'Quote the exact words explicitly requesting soft or flat handling in this particular part of the picture in phrase. A medium name alone is insufficient. Give concrete visual evidence. Concern: '+second['evidence']+' Actual brief: '+brief)
-                    detail=list(region) if isinstance(region,(tuple,list)) else [region]
-                    intent=json.loads(ask(url,[overview,*detail],instruction,policy,tag=MODEL))
+                    fields={'outcome':{'enum':['intentional','defect','unresolved']},'phrase':{'type':'string'},
+                            'evidence':{'type':'string'},'requested_plane':{'type':'boolean'},
+                            'other_defect':{'type':'boolean'}}
+                    instruction=('Image 1 locates the patch. Image 2 shows only the FINISHED print at that site. '
+                                 'Name the visible part, whether it is in the foreground or background, and one actual boundary. '
+                                 'Choose intentional only when an exact phrase in the brief asks for that handling at this location. '
+                                 'A distant haze directive cannot explain a soft focal face, a malformed limb or a broken connection. '
+                                 'Set other_defect true for a visibly damaged shape, ringing or a material flaw. Use unresolved for ambiguity. '
+                                 'Quote the matching phrase verbatim. Concern: '+second['evidence']+' Brief: '+brief)
+                    final_patch=region[-1] if isinstance(region,(list,tuple)) else region
+                    intent=json.loads(ask(url,[overview,final_patch],instruction,
+                                          {'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
                     record['style_intent']=intent
-                    if intent.get('outcome')=='intentional' and requested_handling(intent.get('phrase'),brief) and str(intent.get('evidence') or '').strip():
+                    if (intent.get('outcome')=='intentional' and intent.get('requested_plane') is True and
+                            intent.get('other_defect') is False and requested_handling(intent.get('phrase'),brief)
+                            and str(intent.get('evidence') or '').strip()):
                         second=dict(second,decision='clear',evidence=intent['evidence'],operation='none',fix='',target='')
                         record['independent_context']=second
                 anchor=known[rect]['box'] if kind=='previous_local' else tentative
