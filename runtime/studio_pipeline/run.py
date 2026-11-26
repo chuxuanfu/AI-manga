@@ -860,15 +860,25 @@ def main():
         with Image.open(source) as canvas:
             scale=min(1,(1536*1024/(canvas.width*canvas.height))**.5)
             size=tuple(max(32,round(n*scale/16)*16) for n in canvas.size)
-            reference=local_image(canvas.convert('RGB').resize(size,Image.Resampling.LANCZOS))
+            rgb=canvas.convert('RGB')
+            reference=local_image(rgb.resize(size,Image.Resampling.LANCZOS))
+            # The editor internally reduces its semantic view to roughly 384x384.
+            # Supply native neighboring contours for small defects in a wide composition.
+            from print_judge import expanded
+            pixels=tuple(round(v*n/1000) for v,n in zip(box,rgb.size*2))
+            detail=rgb.crop(expanded(pixels,rgb.size))
+            detail.thumbnail((1152,1152),Image.Resampling.LANCZOS)
+            detail_reference=local_image(detail)
         center=((box[0]+box[2])/20,(box[1]+box[3])/20)
-        text=('Edit the supplied complete illustration with the whole scene visible. Preserve its framing, '
+        text=('Edit image 1 as a complete illustration. Image 2 enlarges the defect in this same drawing. '
+              'Use its surrounding contours to locate and repair that part in image 1. Output the complete '
+              'scene as one uninterrupted image. Preserve its framing, '
               'subjects, identities, gestures, clothes, colors, lighting, and original drawing medium. '
               'The local crop editor could not construct this part with coherent connections to its '
               'surroundings. Redraw the part together with its connected structures in the full composition. '
               f'Location about {center[0]:.0f}% of width from left and {center[1]:.0f}% of height from top. '
               'Required correction: '+issue['fix']+' Original art direction: '+prompt)
-        graph=instruction_edit(text,seed+1621,reference,prefix+'/'+stage,editor)
+        graph=instruction_edit(text,seed+1621,reference,prefix+'/'+stage,editor,detail_reference=detail_reference)
         try:
             history=post_graph(graph.api,args.port,job,stage,graph.ui())
         except RuntimeError as exc:

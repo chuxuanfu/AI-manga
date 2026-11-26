@@ -43,7 +43,7 @@ def installed_editor(model_root):
     return None
 
 
-def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, masked=False):
+def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, masked=False, detail_reference=None):
     """Comfy's Qwen-Image-Edit-2511 Lightning graph for a local repair crop."""
     g=Graph('studio-instruction-edit')
     source=g.add('LoadImage','Source crop',(0,0),['IMAGE','MASK'],values={'image':reference})
@@ -54,6 +54,9 @@ def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, mask
                 values={'lora_name':EDIT_LORA,'strength_model':1.0})
     model=g.add('ModelSamplingAuraFlow','Edit timestep shift',(670,300),['MODEL'],[('model',(model,0))],values={'shift':3.1})
     inputs=[('clip',(clip,0)),('vae',(vae,0)),('image1',(source,0))]
+    if detail_reference:
+        detail=g.add('LoadImage','Detail of the existing drawing',(0,760),['IMAGE','MASK'],values={'image':detail_reference})
+        inputs.append(('image2',(detail,0)))
     pos=g.add('TextEncodeQwenImageEditPlus','Edit instruction',(350,0),['CONDITIONING'],inputs,values={'prompt':text})
     neg=g.add('TextEncodeQwenImageEditPlus','Unconditional',(350,170),['CONDITIONING'],inputs,values={'prompt':''})
     latent=g.add('VAEEncode','Crop latent',(680,0),['LATENT'],[('pixels',(source,0)),('vae',(vae,0))])

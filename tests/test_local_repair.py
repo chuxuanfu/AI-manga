@@ -41,6 +41,17 @@ class LocalRepairTests(unittest.TestCase):
             changed[index] = alternative
             self.assertNotEqual(baseline, inspection_key(*changed))
 
+    def test_full_scene_repair_sees_the_native_detail_but_uses_the_full_canvas(self):
+        graph = instruction_edit('Repair this connection', 77, 'whole.png', 'trial',
+                                 detail_reference='detail.png').api
+        encoder = next(n for n in graph.values() if n['class_type'] == 'TextEncodeQwenImageEditPlus')
+        latent = next(n for n in graph.values() if n['class_type'] == 'VAEEncode')
+        full = encoder['inputs']['image1'][0]
+        detail = encoder['inputs']['image2'][0]
+        self.assertEqual(graph[full]['inputs']['image'], 'whole.png')
+        self.assertEqual(graph[detail]['inputs']['image'], 'detail.png')
+        self.assertEqual(latent['inputs']['pixels'][0], full)
+
     def test_structural_edit_sampling_is_anchored_to_the_source_and_mask(self):
         editors = (reference_draft('Fix a seam', 77, 960, 960, 'trial', reference='guide.png',
                                    edit=True, masked_source='original-mask.png', preserve_layout=True),
