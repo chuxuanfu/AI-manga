@@ -22,6 +22,15 @@ from structure import inspect_small_figure_support
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_returned_job_page_does_not_offer_a_historical_print_as_current(self):
+        from production import dashboard
+        with TemporaryDirectory() as tmp:
+            job=Path(tmp)
+            (job/'final').mkdir()
+            Image.new('RGB',(32,32),'ivory').save(job/'final/4K.png')
+            dashboard(job,{'prompt':'A coastal scene','rounds':[],'status':'本轮未达标，自动重试'})
+            self.assertNotIn('href="4K.png"',(job/'proofs.html').read_text())
+
     def test_independent_readers_receive_lossless_color_samples(self):
         import base64
         import io
