@@ -67,6 +67,30 @@ class LocalRepairTests(unittest.TestCase):
         tile.putpixel((5, 5), (254, 255, 255))
         self.assertNotEqual(key, native_review_key(tile, *arguments))
 
+    def test_only_a_general_lettering_ban_enables_surface_cleaning(self):
+        from lettering import blank_surfaces_requested
+        for text in ('A poster. No captions, signatures or lettering.', 'No text or watermarks.',
+                     '书店，无文字。', 'A figure without lettering.'):
+            self.assertTrue(blank_surfaces_requested(text), text)
+        for text in ('No captions. Storefront with a sign.', 'No lettering on her jacket.',
+                     'No lettering except the station name.', 'A page with no text bubbles.',
+                     '手绘海报，不要文字气泡。', 'A sign with legible text.'):
+            self.assertFalse(blank_surfaces_requested(text), text)
+
+    def test_glyph_masks_clean_both_polarities_and_leave_the_surface_edge_intact(self):
+        from lettering import glyph_mask
+        for paper, ink in (('white','black'),('black','white')):
+            art=Image.new('RGB',(200,120),paper)
+            draw=ImageDraw.Draw(art)
+            draw.line((0,94,199,94),fill=ink,width=3)
+            draw.text((60,50),'POST 27',fill=ink,stroke_width=1)
+            region=Image.new('L',art.size)
+            ImageDraw.Draw(region).rectangle((53,41,119,72),fill=255)
+            mask=glyph_mask(art,region)
+            self.assertIsNotNone(mask)
+            self.assertIsNone(mask.crop((0,90,200,120)).getbbox())
+        self.assertIsNone(glyph_mask(Image.new('RGB',art.size,'grey'),region))
+
     def test_full_scene_repair_sees_the_native_detail_but_uses_the_full_canvas(self):
         graph = instruction_edit('Repair this connection', 77, 'whole.png', 'trial',
                                  masked=True, detail_reference='detail.png').api

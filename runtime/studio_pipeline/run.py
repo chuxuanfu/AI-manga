@@ -600,6 +600,9 @@ def main():
     approved=None
     focus=args.repair_box
     def check_composition(path,label):
+        if not args.from_image and not args.repair_box:
+            from lettering import clean_lettering
+            path=clean_lettering(path,prompt,job,label)
         result=check(path,label)
         duplicate=duplicate_box(result) if rec.get('画法自适应') and not args.repair_box and ERASE_MODEL.exists() else None
         if not duplicate and args.round_worker and ERASE_MODEL.is_file() and any(

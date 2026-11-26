@@ -267,5 +267,11 @@
     "sha256": "de0d236e54ecf2c43b32447d13478c6eae0d361b1fed48c69675b084fa240d87",
     "size": 849608296,
     "profile": "large-edit"
+  },
+  {
+    "path": "runtime/models/text-detection/text_detection_cn_ppocrv3_2023may.onnx",
+    "url": "https://huggingface.co/opencv/text_detection_ppocr/resolve/c299e81aedeaf5d4f741fccccea491fb32db005f/text_detection_cn_ppocrv3_2023may.onnx",
+    "sha256": "03f550c6b406fda8bf54bd8327815f6c7e2edd98cea02348c93d879254366587",
+    "size": 2423490
   }
 ]
