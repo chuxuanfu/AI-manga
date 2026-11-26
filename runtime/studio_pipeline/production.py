@@ -96,11 +96,12 @@ def export_release(job,state):
 
 
 def dashboard(job,state):
+    from library import published_cover, publication_label
+    art=published_cover(job,state)
     parts=['<!doctype html><meta charset="utf-8"><title>离线出片</title>',
            '<style>body{max-width:58rem;margin:4rem auto;padding:0 1rem;font:18px/1.65 system-ui;background:#f7f5ef;color:#272923}a{color:#305647}li{margin:1rem 0}</style>',
-           '<h1>离线出片</h1><p>'+html.escape(state['prompt'])+'</p><strong>'+html.escape(state['status'])+'</strong>']
-    from library import published_cover
-    if not state.get('rechecking_approved') and published_cover(job,state) is not None:
+           '<h1>离线出片</h1><p>'+html.escape(state['prompt'])+'</p><strong>'+html.escape(publication_label(state,art))+'</strong>']
+    if not state.get('rechecking_approved') and art is not None:
         eight='<a href="8K.png">打开 8K</a>　' if (job/'final/8K.png').is_file() else ''
         parts.append('<p><a href="4K.png">打开 4K</a>　'+eight+'<a href="final/review-receipt.json">终审凭据</a>　<a href="final/tile-inspection.json">逐块目检记录</a></p>')
     parts.append('<ol>')
@@ -369,13 +370,18 @@ def run(args,job,entry):
             folder=job/state['selected']
             record=json.loads((folder/'review.json').read_text())
             receipt=record['自动定稿']
-            stale=(state.get('delivery_edge')==3840 and
-                   (receipt.get('审图版本')!=REVISION or receipt.get('模型指纹')!=model_identity(MODEL)))
+            stale=receipt.get('审图版本')!=REVISION or receipt.get('模型指纹')!=model_identity(MODEL)
             if not stale:
                 publish(job,folder,record)
                 export_release(job,state);save(job,state)
                 print('已自动定稿',job/'final',flush=True);return 0
-            state['retained_print_pair']=previous_print_pair(job,folder,record)
+            if state.get('delivery_edge',7680)==3840:
+                state['retained_print_pair']=previous_print_pair(job,folder,record)
+            else:
+                # An 8K receipt binds its 4K source as the comparison image.
+                four=(job/'final/4K.png').resolve()
+                if four.is_file() and fingerprint(four)==receipt.get('4K指纹')==receipt.get('对照指纹',receipt.get('4K指纹')):
+                    state['retained_4k_source']=str(four)
             state['rechecking_approved']=True
             state['status']='按新版标准重新审查'
             save(job,state)
@@ -397,6 +403,13 @@ def run(args,job,entry):
                 del options[previous:previous+2]
             pending_pair=state.pop('retained_print_pair',None)
             if pending_pair:row['reinspection_pair']=pending_pair
+            retained_four=state.pop('retained_4k_source',None)
+            if retained_four:row['reinspection_source']=retained_four
+            if row.get('reinspection_source'):
+                # Use only the previously checked 4K master as the native composition.
+                aspect=options[options.index('--aspect')+1] if '--aspect' in options else 'auto'
+                print_options=['--full-8k-diffusion'] if '--full-8k-diffusion' in options else []
+                options=['--reviewed-image',row['reinspection_source'],'--aspect',aspect,*print_options]
             if row.get('reinspection_pair'):
                 baseline,printed=row['reinspection_pair']
                 aspect=options[options.index('--aspect')+1] if '--aspect' in options else 'auto'

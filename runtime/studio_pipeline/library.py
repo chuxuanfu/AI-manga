@@ -80,6 +80,11 @@ def published_cover(job, data):
         return art
     return None
 
+def publication_label(state, art):
+    if art is None and state.get('status')=='已自动定稿':return '旧版定稿，等待按当前标准复查'
+    return state.get('status','等待审查')
+
+
 def jobs(folder):
     tiles=[];cover=None
     for job in sorted((p for p in folder.iterdir() if p.is_dir()),key=lambda p:p.name,reverse=True):
@@ -88,7 +93,7 @@ def jobs(folder):
         if not dashboard.exists():continue
         art=published_cover(job,data)
         if art and cover is None:cover=art
-        tiles.append(card(folder,data.get('prompt',job.name),dashboard,art,data.get('status',job.name)))
+        tiles.append(card(folder,data.get('prompt',job.name),dashboard,art,publication_label(data,art)))
     page(folder/ALBUM,'新提示词与定稿',grid(tiles) if tiles else '<p>新任务会出现在这里。</p>')
     return folder/ALBUM,cover
 
