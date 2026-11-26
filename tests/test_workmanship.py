@@ -25,7 +25,7 @@ class WorkmanshipTests(unittest.TestCase):
         from print_judge import MODEL
         from reference_review import AXES, compare
         board=Image.new('RGB',(1152,1104),'white')
-        grades={axis:dict(level='tie',evidence='The rope and fabric each show distinct directional marks.') for axis in AXES}
+        grades={axis:dict(level='tie',evidence='Each material has clear directional marks.',left_detail='Twisted strands around the mooring ring.',right_detail='Sleeve seams follow the folded elbow.') for axis in AXES}
         with patch('reference_review.available',return_value=True),patch('reference_review.comparison',return_value=board), \
                 patch('reference_review.backend',side_effect=lambda tag:nullcontext('local')), \
                 patch('reference_review.ask',return_value=json.dumps(grades)) as reader:
@@ -33,7 +33,15 @@ class WorkmanshipTests(unittest.TestCase):
                 result=compare(board,{},None,brief='A moored boat in woodcut.',final=final)
                 self.assertEqual((result['decision'],result['assessment_model']),('candidate',tag))
                 self.assertEqual([call.kwargs['tag'] for call in reader.call_args_list],[tag,tag])
+                if final:
+                    self.assertNotIn('A moored boat in woodcut.',reader.call_args.args[2])
+                    self.assertIn('left_detail',reader.call_args.args[3]['properties']['lighting']['required'])
                 reader.reset_mock()
+
+    def test_shared_unlocated_reference_evidence_requires_another_reader(self):
+        from reference_review import order_verdict
+        weak=dict(level='tie',evidence='Both use paper.',left_detail='Both use layered paper.',right_detail='Both use layered paper.')
+        self.assertEqual(order_verdict({'axis':weak},{'axis':weak},['axis'],sided=True)['decision'],'review')
 
     def test_coordinates_without_a_name_use_observed_part_and_wider_pixels(self):
         from construction_review import verify_repair_location

@@ -8,7 +8,17 @@ from illustration import REFERENCE
 BENCHMARK=Path(__file__).resolve().parents[1]/'ComfyUI/input'/REFERENCE
 AXES=('form_and_contact','material_construction','lighting','depth_and_finish')
 GRADE={'type':'object','properties':{'level':{'type':'string','enum':['left','right','tie','unclear']},'evidence':{'type':'string'}},'required':['level','evidence']}
-SCHEMA={'type':'object','properties':{key:GRADE for key in AXES},'required':list(AXES)}
+SIDE_GRADE={'type':'object','properties':{**GRADE['properties'],'left_detail':{'type':'string'},
+            'right_detail':{'type':'string'}},'required':['level','evidence','left_detail','right_detail']}
+SIDE_INSTRUCTION=(' Inspect each picture separately before grading. In left_detail and right_detail, name '
+                  'one specific visible object or area and describe its physical evidence for this axis on that '
+                  'side alone. Keep each to eight words. Describe only subjects you can see. Mark unclear if a '
+                  'detail cannot be located. In evidence give a short reason for the relative grade.')
+
+
+def grade_schema(axes,sided):
+    return {'type':'object','properties':{axis:SIDE_GRADE if sided else GRADE for axis in axes},'required':list(axes)}
+
 
 
 REF_BOXES=(('hands / sleeve',(.295,.535,.578,.728)),('knit / folds',(.18,.65,.445,.842)))
@@ -54,7 +64,7 @@ def comparison(im,regions,target):
     return page
 
 
-def resolve_workmanship(url, im, regions, instruction, ambiguous):
+def resolve_workmanship(url, im, regions, instruction, ambiguous, *, sided=False):
     from construction_review import LARGE
     if not available(LARGE):
         return {'decision':'review','reason':'缺少独立画质复审模型'}
@@ -73,19 +83,24 @@ def resolve_workmanship(url, im, regions, instruction, ambiguous):
     with Image.open(BENCHMARK) as ref:
         first=proof(ref.convert('RGB'),REF_BOXES)
     last=proof(im,detail_boxes(regions))
-    schema={'type':'object','properties':{axis:GRADE for axis in ambiguous},'required':list(ambiguous)}
+    schema=grade_schema(ambiguous,sided)
     question=(instruction+' Images are provided as two separate sheets, each with its own enlarged details. '
               'Use left for the FIRST sheet and right for the SECOND. Trace visible evidence in both. '
               'Compare only these aspects: '+', '.join(ambiguous)+'.')
     readings=[json.loads(ask(url,pair,question,schema,tag=LARGE)) for pair in ([first,last],[last,first])]
-    result=order_verdict(*readings,ambiguous)
+    result=order_verdict(*readings,ambiguous,sided=sided)
     return dict(result,model=LARGE,orders=readings)
 
 
-def order_verdict(forward,backward,axes):
+def order_verdict(forward,backward,axes,*,sided=False):
     supported=(('right','left'),('tie','tie'),('tie','left'),('right','tie'))
     pairs={axis:(forward[axis]['level'],backward[axis]['level']) for axis in axes}
     valid={k for k in axes if all(str(v[k].get('evidence') or '').strip() for v in (forward,backward))}
+    if sided:
+        def side_evidence(grade):
+            marks=[str(grade.get(field) or '').strip().casefold() for field in ('left_detail','right_detail')]
+            return all(len(mark.split())>=3 and not mark.startswith(('both ','both:','both pictures','both sides')) for mark in marks)
+        valid={axis for axis in valid if all(side_evidence(row[axis]) for row in (forward,backward))}
     deficits=[k for k in axes if k in valid and pairs[k]==('left','right')]
     ambiguous=[k for k in axes if k not in valid or (pairs[k] not in supported and k not in deficits)]
     return dict(decision='below' if deficits else 'review' if ambiguous else 'candidate',
@@ -98,10 +113,12 @@ def compare(im,regions,path,brief='',*,final=False):
     board=comparison(im,regions,path)
     if not available(tag):return {'decision':'review','reason':'参考图比较模型未就绪'}
     instruction=('Compare these two illustrations as peers. They may show identical art or different scenes. For each axis indicate which side demonstrates visibly stronger workmanship, or tie when both are comparable. '
-                 'Use unclear only if the evidence is too small. Check each picture on its own visible subjects. Trace a joint, supporting contact or joined object; judge how the artist depicts the materials actually present, such as folded cloth, taut cord, timber or layered paper. Compare lighting within the intended medium and the separation of focal and distant shapes. A subject present on just one side does not confer an advantage. '
+                 'Use unclear only if the evidence is too small. Check each picture on its own visible subjects. Trace a joint, supporting contact or joined object; judge how the artist depicts the materials actually present through their edges, joints or changes of surface. Compare lighting within the intended medium and the separation of focal and distant shapes. A subject present on just one side does not confer an advantage. '
                  'Ignore personal preferences, differences in subject matter, relative zoom of detail crops and which painting appears first. '
                  'Give under twelve words of concrete evidence per axis. Use left, right, tie or unclear.')
-    if brief:
+    if final:
+        instruction+=SIDE_INSTRUCTION+' Judge each picture in the medium visibly used on that side.'
+    elif brief:
         instruction+=' The new image has its own requested medium: '+brief+'. Evaluate construction and deliberate marks within each medium. Spare ink, flat cel shading, paper cutouts, monochrome or visible print dots may be fully resolved. Do not reward merely having more texture.'
     # Mask identifying headings and evaluate in both orders to detect position bias.
     neutral=board.copy()
@@ -113,16 +130,17 @@ def compare(im,regions,path,brief='',*,final=False):
     reverse.paste(neutral.crop((0,0,576,1104)),(576,0))
     try:
         with backend(tag) as url:
-            forward=json.loads(ask(url,[neutral],instruction,SCHEMA,tag=tag))
-            backward=json.loads(ask(url,[reverse],instruction,SCHEMA,tag=tag))
-            result=order_verdict(forward,backward,AXES)
+            schema=grade_schema(AXES,final)
+            forward=json.loads(ask(url,[neutral],instruction,schema,tag=tag))
+            backward=json.loads(ask(url,[reverse],instruction,schema,tag=tag))
+            result=order_verdict(forward,backward,AXES,sided=final)
             if result['decision']=='review':
-                independent=resolve_workmanship(url,im,regions,instruction,result['unresolved_axes'])
+                independent=resolve_workmanship(url,im,regions,instruction,result['unresolved_axes'],sided=final)
                 result.update(decision=independent['decision'],first_unresolved_axes=result['unresolved_axes'],
                               unresolved_axes=independent.get('unresolved_axes',result['unresolved_axes']),
                               independent_review=independent)
                 if independent.get('consistent_deficits'):
                     result['consistent_deficits']=independent['consistent_deficits']
-        return dict(result,assessment_model=tag,reference_on_left=forward,reference_on_right=backward)
+        return dict(result,assessment_model=tag,separate_material_evidence=final,reference_on_left=forward,reference_on_right=backward)
     except (RuntimeError,OSError,ValueError,KeyError) as exc:
         return {'decision':'review','reason':str(exc)[:180]}
