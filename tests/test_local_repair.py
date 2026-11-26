@@ -157,6 +157,9 @@ class LocalRepairTests(unittest.TestCase):
         wanted={'dog':1}
         shiba,species=observed(('Shiba Inu','dog',1))
         self.assertFalse(count_conflict(wanted,shiba,[],{'dog'},species))
+        literal,species=observed(('Shiba Inu','Shiba Inu',1))
+        self.assertEqual(literal,{'dog':1})
+        self.assertFalse(count_conflict(wanted,literal,[],{'dog'},species))
         fox,species=observed(('red fox','fox',1))
         self.assertTrue(count_conflict(wanted,fox,[],{'dog'},species))
         pair,species=observed(('Shiba Inu','dog',1),('basenji','dog',1),('dog','dog',2))
@@ -226,6 +229,21 @@ class LocalRepairTests(unittest.TestCase):
             self.assertTrue(pigment_edit(instruction))
         for instruction in ('Reconstruct a wrist; preserve the colors of the shirt.', 'Correct the finger count.'):
             self.assertFalse(pigment_edit(instruction))
+
+    def test_ambiguous_local_label_requires_two_physical_traces_of_the_same_visible_part(self):
+        from construction_review import verify_repair_location
+        source=Image.new('RGB',(600,700))
+        suspect=dict(verdict='local',target='[400,210,600,480] wrist',observation='Wrist has a broken outline.',
+                     box=[300,250,650,575],fix='Reconnect the wrist.')
+        label=dict(state='target_absent_or_unclear',evidence='The sleeve edge appears continuous with the wrist.')
+        trace=dict(part_visible=True,landmark_one='sleeve',landmark_two='wrist',
+                   trace='A continuous edge joins the sleeve and wrist.',finding='visible_and_coherent')
+        with patch('construction_review.available',return_value=True),patch('construction_review.ask',side_effect=[
+                json.dumps(label),json.dumps(trace),json.dumps(trace)]) as query:
+            verify_repair_location('local',source,suspect,'test-model')
+        self.assertEqual(suspect['verdict'],'coherent')
+        self.assertEqual(len(suspect['location_verification'][0]['independent_traces']),2)
+        for call in query.call_args_list:self.assertNotIn('[400,210,600,480]',call.args[2])
 
     def test_existing_print_requires_a_smaller_matching_baseline(self):
         from focus_print import validate_print_pair

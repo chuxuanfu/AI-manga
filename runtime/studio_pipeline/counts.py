@@ -34,7 +34,8 @@ def inventory_counts(items):
         elif item['kind']=='animal':
             reported=item.get('counting_species','').strip().lower()
             name=reported if reported not in ('','unknown','animal','animals') else label
-            name=english.get(name,name)
+            from animal_identity import domestic_species
+            name=domestic_species(label) or domestic_species(name) or english.get(name,name)
             if name not in ('animal','animals','unknown'):
                 species.add(name)
             varieties[name][label]=max(n,varieties[name].get(label,0))

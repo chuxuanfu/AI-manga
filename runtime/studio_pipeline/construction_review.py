@@ -1,5 +1,6 @@
 """Independent visual construction check with zoomed evidence and a local 32B VLM."""
 import json
+import re
 from PIL import Image, ImageOps, ImageDraw
 from evidence import ask, available, backend, TAG
 
@@ -39,6 +40,7 @@ def proof(im,regions):
 def verify_repair_location(url,im,result,tag,indicated=None):
     """Confirm a collage finding against actual image coordinates before any inpaint."""
     target=result.get('target','')+' / '+result['observation']
+    target=re.sub(r'\[\s*\d+(?:\s*,\s*\d+){3}\s*\]','',target).strip(' /')
     schema={'type':'object','properties':{'state':{'enum':['defect_visible','target_is_coherent','target_absent_or_unclear']},'evidence':{'type':'string'}},'required':['state','evidence']}
     evidence=[]
     def local(box):
@@ -51,7 +53,28 @@ def verify_repair_location(url,im,result,tag,indicated=None):
                   'Allow normal occlusion and the intended illustration medium. In under 24 words describe the visible evidence. Proposed finding: '+target)
         direct=json.loads(ask(url,[area],question,schema,tag=tag))
         finding={'box':box,'direct':direct};evidence.append(finding)
-        if direct['state']=='target_absent_or_unclear':return None
+        if direct['state']=='target_absent_or_unclear':
+            positive=re.search(r'(?:appears?|looks?|is|are) (?:clearly |visibly )?(?:continuous|coherent|intact)|'
+                               r'claimed defect is not visibly present|encloses? the (?:hand|wrist) naturally|'
+                               r'continuously (?:joins?|connects?)',direct['evidence'],re.I)
+            if not positive:return None
+            from print_judge import MODEL
+            alternate=MODEL if tag!=MODEL and available(MODEL) else tag
+            trace_fields={'part_visible':{'type':'boolean'},'landmark_one':{'type':'string'},
+                          'landmark_two':{'type':'string'},'trace':{'type':'string'},
+                          'finding':{'enum':['incompatible_shape','visible_and_coherent','unreadable']}}
+            trace_schema={'type':'object','properties':trace_fields,'required':list(trace_fields)}
+            read=('Locate the named actual physical part in these pixels. Follow the contour between two '
+                  'visible landmarks, including any visible termination or overlap. Can both landmarks '
+                  'and their physical relationship be seen? Choose unreadable if the relevant endpoint '
+                  'cannot be located. Inspect the geometry directly. Concern: '+target)
+            for sample in (area,ImageOps.mirror(area)):
+                trace=json.loads(ask(url,[sample],read,trace_schema,tag=alternate))
+                finding.setdefault('independent_traces',[]).append(trace)
+                if (trace['finding']!='visible_and_coherent' or not trace['part_visible'] or
+                        not all(str(trace[k]).strip() for k in ('landmark_one','landmark_two','trace'))):
+                    return None
+            return 'target_is_coherent'
         mirror=json.loads(ask(url,[ImageOps.mirror(area)],question,schema,tag=tag));finding['mirror']=mirror
         if direct['state']==mirror['state']:return direct['state']
         return None

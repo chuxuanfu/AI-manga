@@ -25,6 +25,26 @@ def animal_names():
     return names,parents
 
 
+@lru_cache(maxsize=512)
+def domestic_species(label):
+    """Map named domestic breeds to the species counted in a scene inventory."""
+    term=' '.join(re.findall('[a-z]+',label.casefold()))
+    # Some modern breed names postdate WordNet 3.0.
+    if term in ('shiba inu','shiba ken'):return 'dog'
+    if not term or not DICTIONARY.is_file():return None
+    names,parents=animal_names()
+    level=set(names.get(term,()))
+    visited=set()
+    roots={s:species for lemma,species in [('domestic dog','dog'),('domestic cat','cat')]
+           for s in names.get(lemma,())}
+    while level:
+        matches={roots[s] for s in level if s in roots}
+        if len(matches)==1:return matches.pop()
+        visited.update(level)
+        level={p for s in level for p in parents.get(s,())}-visited
+    return None
+
+
 def named_animal_conflict(requirement,blind_description):
     if not DICTIONARY.is_file():return None
     if re.search(r'\b(?:possibly|likely|perhaps|resembles?|similar to|appears to be|either|or)\b',blind_description,re.I):
