@@ -1213,7 +1213,8 @@ def main():
                     with Image.open(master) as img:
                         focus=[round(v*1000/n) for v,n in zip(pixels,img.size*2)]
                     repair_check={'box':focus,'symptom':finding['symptom']}
-                    rec.setdefault('4K焦点重绘',[]).append({'核验':stage+'-definition.json','范围':focus})
+                    receipt=revised.name.removesuffix('-refined.png')+'-definition.json'
+                    rec.setdefault('4K焦点重绘',[]).append({'核验':receipt,'范围':focus})
                     master,small=revised,None
                     save(manifest,rec)
                     continue

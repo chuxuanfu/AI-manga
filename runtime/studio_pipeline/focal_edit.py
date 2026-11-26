@@ -25,7 +25,7 @@ def failed_focus(report):
     return None
 
 
-def framing(size, pixels):
+def framing(size, pixels, *, magnified=False):
     width,height=size
     l,t,r,b=pixels
     if not (0<=l<r<=width and 0<=t<b<=height):raise ValueError('Invalid print coordinates')
@@ -34,6 +34,10 @@ def framing(size, pixels):
     side=min(width,height,1152)
     cap=min(768,side-32)
     if cap<64:return None
+    if magnified:
+        # A small subject occupying a few latent cells cannot acquire fine internal
+        # marks. Spend the edit model's native canvas on that subject and its edge.
+        side=min(side,max(192,round(min(cap,max(r-l,b-t))*1.4)))
     cx,cy=(l+r)//2,(t+b)//2
     x=min(max(0,cx-side//2),width-side);y=min(max(0,cy-side//2),height-side)
     l=max(l,cx-cap//2);r=min(r,cx+(cap+1)//2)
@@ -135,11 +139,21 @@ def ordered_detail(url, first, second):
     return json.loads(ask(url,[first,second],question,{'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
 
 
-def repaint_definition(master, pixels, medium, seed, folder, stage, port, prefix, *, local_image, post_graph, output_image, models):
+def repaint_definition(master, pixels, medium, seed, folder, stage, port, prefix, **tools):
+    for magnified in (False,True):
+        suffix='-closeup' if magnified else ''
+        candidate=_repaint_at_scale(master,pixels,medium,seed+int(magnified)*3877,folder,stage+suffix,port,
+                                    prefix+suffix,magnified=magnified,**tools)
+        if candidate:
+            return candidate
+    return None
+
+
+def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix, *, magnified, local_image, post_graph, output_image, models):
     editor=installed_editor(models)
     if not editor:return None
     with Image.open(master) as opened:original=opened.convert('RGB')
-    layout=framing(original.size,pixels)
+    layout=framing(original.size,pixels,magnified=magnified)
     if layout is None:return None
     bounds,target=layout
     base=original.crop(bounds)
@@ -159,18 +173,33 @@ def repaint_definition(master, pixels, medium, seed, folder, stage, port, prefix
             if destination.is_file() and saved.get('sha256')==fingerprint(destination):return destination
     with backend(LARGE) as url:
         caption=describe_patch(url,base.crop(target),locator)
+        if magnified:
+            details={'mark':{'type':'string'},'placement':{'type':'string'}}
+            drawing=json.loads(ask(url,[base.crop(target),locator],
+                'You are preparing a magnified detail drawing of the first crop. The boxed overview locates it. '
+                'Specify one concrete finer structure a skilled illustrator could resolve within an existing '
+                'feature of this crop. Give the physical direction, spacing or taper of the marks and exactly '
+                'where they belong. Match the existing medium. Preserve smooth areas and silhouettes.',
+                {'type':'object','properties':details,'required':list(details)},tag=LARGE))
+            caption['detail_direction']=drawing['mark']+'. '+drawing['placement']
     direction=('Return the exact composition and framing of image 1. Image 2 shows the whole original illustration '
                'for context. Keep the boundaries and colors of image 1. Re-illustrate the selected surface at print '
                'scale with clearly separated fine marks that follow its existing physical forms. Visible subject: '
                +caption['subject']+'. Material and medium: '+caption['material']+'. Existing marks: '+caption['marks']
                +'. Requested medium: '+medium+'. Keep other subjects outside the crop. Preserve shadow direction and silhouette.')
-    editable=base.copy();editable.putalpha(ImageOps.invert(mask))
+    if magnified:
+        direction+=' Draw these fine internal marks individually: '+caption['detail_direction']
+    work_size=(1152,1152) if magnified else base.size
+    editable=base.resize(work_size,Image.Resampling.LANCZOS)
+    editable.putalpha(ImageOps.invert(mask.resize(work_size,Image.Resampling.BILINEAR)))
     g=instruction_edit(direction,seed,local_image(editable),prefix,editor,masked=True,detail_reference=local_image(context))
     history=post_graph(g.api,port,folder,stage,g.ui())
     raw=output_image(history[str(len(g.nodes))])
     with Image.open(raw) as opened:
         paint=opened.convert('RGB')
-        if paint.size!=base.size:raise ValueError('Local print edit changed the canvas size')
+        if paint.size!=work_size:raise ValueError('Local print edit changed the canvas size')
+        if paint.size!=base.size:
+            paint=paint.resize(base.size,Image.Resampling.LANCZOS)
     corrected=Image.composite(paint,base,mask)
     before=base.crop(target);after=corrected.crop(target)
     evidence={'key':identity,'caption':caption,'raw_sha256':fingerprint(raw),'field':list(bounds),'target':list(target),
