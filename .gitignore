@@ -16,10 +16,11 @@
 !/assets/repair-guides/cello-bridge-and-strings.jpg
 !/assets/repair-guides/barn-owl-facial-disc.jpg
 !/assets/repair-guides/tying-shoelaces.jpg
+!/assets/repair-guides/bookbinding-bone-folder.jpg
 !/scripts/
 !/tests/
 /tests/*
-!/tests/test_local_repair.py
+!/tests/test_*.py
 !/extensions/
 !/runtime/
 /runtime/*

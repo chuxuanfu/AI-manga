@@ -302,5 +302,23 @@
     "license": "CC BY 2.0",
     "license_url": "https://creativecommons.org/licenses/by/2.0/",
     "modifications": "Cropped the wrists, fingers, laces and shoe from the original photograph."
+  },
+  {
+    "file": "bookbinding-bone-folder.jpg",
+    "requires": [
+      [
+        "bone folder",
+        "bonefolder",
+        "Falzbein",
+        "骨质折纸刀",
+        "装订骨刀"
+      ]
+    ],
+    "construction": "One slender solid bone strip with softly curved sides and rounded ends. It lies flat beneath the fingers and has only one thickness. Preserve the original hand and the pressure point.",
+    "source": "https://commons.wikimedia.org/wiki/File:Bookbinders_bone_paper_folder.jpg",
+    "author": "Edinburgh City of Print",
+    "license": "CC BY 2.0",
+    "license_url": "https://creativecommons.org/licenses/by/2.0/",
+    "modifications": "Resized the original photograph."
   }
 ]
