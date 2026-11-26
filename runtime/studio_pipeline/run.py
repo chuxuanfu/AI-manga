@@ -741,7 +741,8 @@ def main():
                 # A rejected composition must be re-rendered and assessed again.
                 # Assess workmanship on the actual version eligible to advance.
                 if result['status']=='pass' or not args.round_worker:
-                    comparison=compare(rgb,result.get('regions',{}),job/(stage+'-reference-comparison.jpg'),brief=prompt if rec.get('画法自适应') else '')
+                    comparison=compare(rgb,result.get('regions',{}),job/(stage+'-reference-comparison.jpg'),
+                                       brief=prompt if rec.get('画法自适应') else '',final=stage.endswith('final-art'))
                     result['参考比较']=comparison
                     if result['status']=='pass' and comparison['decision']=='below':
                         result['status']='global'

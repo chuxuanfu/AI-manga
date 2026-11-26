@@ -2,7 +2,7 @@
 from pathlib import Path
 import json
 from PIL import Image, ImageDraw, ImageOps
-from evidence import ask, backend, available
+from evidence import ask, backend, available, TAG
 from illustration import REFERENCE
 
 BENCHMARK=Path(__file__).resolve().parents[1]/'ComfyUI/input'/REFERENCE
@@ -92,11 +92,13 @@ def order_verdict(forward,backward,axes):
                 consistent_deficits=deficits,unresolved_axes=ambiguous)
 
 
-def compare(im,regions,path,brief=''):
+def compare(im,regions,path,brief='',*,final=False):
+    from print_judge import MODEL
+    tag=MODEL if final else TAG
     board=comparison(im,regions,path)
-    if not available():return {'decision':'review','reason':'参考图比较模型未就绪'}
+    if not available(tag):return {'decision':'review','reason':'参考图比较模型未就绪'}
     instruction=('Compare these two illustrations as peers. They may show identical art or different scenes. For each axis indicate which side demonstrates visibly stronger workmanship, or tie when both are comparable. '
-                 'Use unclear only if the evidence is too small. Check form and contact, clothing construction and folds, light and cast shadows, then spatial depth and fine finishing. '
+                 'Use unclear only if the evidence is too small. Check each picture on its own visible subjects. Trace a joint, supporting contact or joined object; judge how the artist depicts the materials actually present, such as folded cloth, taut cord, timber or layered paper. Compare lighting within the intended medium and the separation of focal and distant shapes. A subject present on just one side does not confer an advantage. '
                  'Ignore personal preferences, differences in subject matter, relative zoom of detail crops and which painting appears first. '
                  'Give under twelve words of concrete evidence per axis. Use left, right, tie or unclear.')
     if brief:
@@ -110,9 +112,9 @@ def compare(im,regions,path,brief=''):
     reverse.paste(neutral.crop((576,0,1152,1104)),(0,0))
     reverse.paste(neutral.crop((0,0,576,1104)),(576,0))
     try:
-        with backend() as url:
-            forward=json.loads(ask(url,[neutral],instruction,SCHEMA))
-            backward=json.loads(ask(url,[reverse],instruction,SCHEMA))
+        with backend(tag) as url:
+            forward=json.loads(ask(url,[neutral],instruction,SCHEMA,tag=tag))
+            backward=json.loads(ask(url,[reverse],instruction,SCHEMA,tag=tag))
             result=order_verdict(forward,backward,AXES)
             if result['decision']=='review':
                 independent=resolve_workmanship(url,im,regions,instruction,result['unresolved_axes'])
@@ -121,6 +123,6 @@ def compare(im,regions,path,brief=''):
                               independent_review=independent)
                 if independent.get('consistent_deficits'):
                     result['consistent_deficits']=independent['consistent_deficits']
-        return dict(result,reference_on_left=forward,reference_on_right=backward)
+        return dict(result,assessment_model=tag,reference_on_left=forward,reference_on_right=backward)
     except (RuntimeError,OSError,ValueError,KeyError) as exc:
         return {'decision':'review','reason':str(exc)[:180]}

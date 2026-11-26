@@ -19,6 +19,22 @@ class WorkmanshipTests(unittest.TestCase):
         self.assertEqual(decision('tie','tie',''),'review')
         self.assertEqual(decision('right','left'),'candidate')
 
+    def test_final_workmanship_grades_both_orders_with_the_print_model(self):
+        from contextlib import nullcontext
+        from evidence import TAG
+        from print_judge import MODEL
+        from reference_review import AXES, compare
+        board=Image.new('RGB',(1152,1104),'white')
+        grades={axis:dict(level='tie',evidence='The rope and fabric each show distinct directional marks.') for axis in AXES}
+        with patch('reference_review.available',return_value=True),patch('reference_review.comparison',return_value=board), \
+                patch('reference_review.backend',side_effect=lambda tag:nullcontext('local')), \
+                patch('reference_review.ask',return_value=json.dumps(grades)) as reader:
+            for final,tag in ((False,TAG),(True,MODEL)):
+                result=compare(board,{},None,brief='A moored boat in woodcut.',final=final)
+                self.assertEqual((result['decision'],result['assessment_model']),('candidate',tag))
+                self.assertEqual([call.kwargs['tag'] for call in reader.call_args_list],[tag,tag])
+                reader.reset_mock()
+
     def test_coordinates_without_a_name_use_observed_part_and_wider_pixels(self):
         from construction_review import verify_repair_location
         from print_judge import MODEL
