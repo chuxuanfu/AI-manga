@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-14'
+REVISION = 'print-inspection-15'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -148,6 +148,14 @@ def compare_pixels(low,high,rect,master_size):
     right=high.crop(bounds)
     left=low.resize(right.size,Image.Resampling.LANCZOS,box=mapped(low.size))
     return left,right
+
+
+def issue_category(url, region, evidence, brief):
+    schema={'type':'object','properties':{'issue':{'enum':['unresolved_focus','other']}},'required':['issue']}
+    task=('Classify the confirmed defect. Choose unresolved_focus only if an intended focal feature is visibly smeared, lacks separable detail or has been enlarged beyond its useful resolution. '
+          'Anatomy, style mismatch, ringing, oversharpening, intentional soft focus and quiet fills belong to other. Evidence: '+evidence+' Brief: '+brief)
+    detail=list(region) if isinstance(region,(tuple,list)) else [region]
+    return json.loads(ask(url,detail,task,schema,tag=MODEL))['issue']
 
 
 def independent_detail_check(url, images, overview, brief):
@@ -327,13 +335,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     record['independent_context']=third
                     second=third
                 if second['decision']=='uncertain' and kind in ('comparison','draft-comparison'):
-                    fields={'concern':{'enum':['resolution_only','other']}}
-                    schema={'type':'object','properties':fields,'required':list(fields)}
-                    classify=('Does the following finding exclusively concern legibility, missing fine resolution or '
-                              'optical softness? Use other for defects of subject, construction, texture artifacts, '
-                              'palette, halos, or an ambiguous type of finding. Finding: '+second['evidence'])
-                    concern=json.loads(ask(url,[],classify,schema,tag=MODEL))['concern']
-                    if concern=='resolution_only':
+                    record['issue_category']=issue_category(url,region,second['evidence'],brief)
+                    if record['issue_category']=='unresolved_focus':
                         check=independent_detail_check(url,view,overview,brief)
                         record['blind_detail_check']=check
                         if check['confirmed']:
@@ -368,11 +371,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     result.update(status=verdict,issue={'box':box,'operation':second.get('operation','redraw'),'fix':second['fix'],'target':second['target'],
                                                         'symptom':second['evidence']})
                     if small and second.get('operation')!='remove_forbidden':
-                        category={'type':'object','properties':{'issue':{'enum':['unresolved_focus','other']}},'required':['issue']}
-                        task=('Classify the confirmed defect. Choose unresolved_focus only if an intended focal feature is visibly smeared, lacks separable detail or has been enlarged beyond its useful resolution. '
-                              'Anatomy, style mismatch, ringing, oversharpening, intentional soft focus and quiet fills belong to other. Evidence: '+second['evidence']+' Brief: '+brief)
-                        detail=list(region) if isinstance(region,(tuple,list)) else [region]
-                        result['issue']['category']=json.loads(ask(url,detail,task,category,tag=MODEL))['issue']
+                        result['issue']['category']=record.get('issue_category') or issue_category(url,region,second['evidence'],brief)
             record['elapsed_seconds']=round(time.monotonic()-started,2)
             result['views'].append(record)
             store(report,result)
