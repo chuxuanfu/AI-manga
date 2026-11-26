@@ -61,6 +61,64 @@ def camera_conflict(requirement,inventory):
     return None
 
 
+BODY_LEVEL=re.compile(r'\b(?:at|near|around|held at|level with) (?:the |her |his |their )?'
+                      r'(chest|waist|hip|shoulder|chin|eye|knee)(?:[- ](?:level|height))?\b|'
+                      r'(胸前|胸口高度|齐腰|腰部高度|与肩齐平|膝盖高度)',re.I)
+
+
+def check_body_level(url,overview,brief,tag):
+    """Locate a specified object against a visible body landmark in the whole composition."""
+    match=BODY_LEVEL.search(brief)
+    if not match:return [],None
+    anchor=match.group(1) or match.group(2)
+    fields={'explicit':{'type':'boolean'},'object_or_point':{'type':'string'},'person':{'type':'string'}}
+    plan=json.loads(ask(url,[],'Identify an explicit request that an object or part be positioned at '
+        'the height of the '+anchor+'. Name the item and the reference person. Include the contact '
+        'point if specified. Omit all desired positions and relative heights from the item name. '
+        'Set explicit false for unrelated body descriptions. Brief: '+brief,
+        {'type':'object','properties':fields,'required':list(fields)},tag=tag))
+    if not plan['explicit'] or not plan['object_or_point'].strip():return [],None
+    unit={'type':'integer','minimum':0,'maximum':1000}
+    positions={'comparable':{'type':'boolean'},'item_x':unit,'item_y':unit,'body_x':unit,
+               'level_top':unit,'level_bottom':unit,'shoulder_y':unit,'hip_y':unit,
+               'trace':{'type':'string'}}
+    instruction=('Look at this full illustration. Find the '+plan['object_or_point']+' and the '
+                 +anchor+' of '+plan['person']+'. Locate the actual visible item or contact point '
+                 'and separately locate the visible vertical extent of that anatomical landmark. '
+                 'Return coordinates relative to the whole image from 0 to 1000. Determine the '
+                 'shoulder and hip heights from the same person. Use comparable false if either '
+                 'point cannot be identified or posture, crop or perspective prevents comparison. '
+                 'Describe where the item actually appears without recommending a placement.')
+    notes=[]
+    other='qwen3-vl:32b-instruct'
+    for model in dict.fromkeys((tag,other)):
+        if model!=tag and not model_identity(model):break
+        row=json.loads(ask(url,[overview],instruction,{'type':'object','properties':positions,
+                            'required':list(positions)},tag=model))
+        notes.append({'model':model,'location':row})
+        torso=row['hip_y']-row['shoulder_y']
+        if not row['comparable'] or torso<60 or row['level_top']>row['level_bottom'] or not row['trace'].strip():break
+        margin=max(24,torso*.25)
+        if row['level_top']-margin<=row['item_y']<=row['level_bottom']+margin:break
+    evidence={'requirement':match.group(),'target':plan,'readings':notes}
+    if len(notes)!=2:return [evidence],None
+    a,b=[n['location'] for n in notes]
+    def offset(v):
+        if not v['comparable'] or not v['trace'].strip():return 0
+        h=v['hip_y']-v['shoulder_y'];top,bottom=v['level_top'],v['level_bottom']
+        if h<60 or top>bottom:return 0
+        pad=max(24,h*.25)
+        return 1 if v['item_y']>bottom+pad else -1 if v['item_y']<top-pad else 0
+    if (not offset(a) or offset(a)!=offset(b) or abs(a['item_x']-b['item_x'])>90
+            or abs(a['item_y']-b['item_y'])>90 or abs(a['level_top']-b['level_top'])>100):return [evidence],None
+    xs=[a['item_x'],b['item_x'],a['body_x'],b['body_x']]
+    ys=[a['item_y'],b['item_y'],a['level_top'],b['level_bottom']]
+    fix='Position '+plan['object_or_point']+' '+match.group()+', preserving its visible attachment and a natural pose.'
+    return [evidence],dict(decision='local',operation='redraw',target=plan['object_or_point'],fix=fix,
+                           evidence=b['trace'],left=max(0,min(xs)-70),right=min(1000,max(xs)+70),
+                           top=max(0,min(ys)-50),bottom=min(1000,max(ys)+50))
+
+
 def subject_witness(url, image, overview, brief, tag):
     position={key:{'type':'integer','minimum':0,'maximum':1000} for key in ('left','top','right','bottom')}
     properties={'quote':{'type':'string'},'inspect':{'type':'string'},**position}
@@ -89,7 +147,7 @@ def subject_witness(url, image, overview, brief, tag):
         bounds=tuple(round(v*n/1000) for v,n in zip(box,image.size*2))
         crop=image.crop(bounds);crop.thumbnail((1024,1024),Image.Resampling.LANCZOS)
         notes.append({'quote':quote,'question':item['inspect'],'box':[l,t,r,b],'crop':crop})
-    if not notes:return [],None
+    if not notes:return check_body_level(url,overview,brief,tag)
     fields={'reading':{'type':'string'},'decision':{'enum':['supported','visible_contradiction','indeterminate']},
             'fix':{'type':'string'}}
     names=['crop_'+str(i+1) for i in range(len(notes))]
@@ -171,4 +229,7 @@ def subject_witness(url, image, overview, brief, tag):
                 else:continue
             issue={'decision':'local','operation':'redraw','target':n['quote'],'fix':fix,
                    'evidence':f"The requested detail {n['quote']!r}: {neutral}",**dict(zip(position,n['box']))}
+    if issue is None:
+        placement,issue=check_body_level(url,overview,brief,tag)
+        notes.extend(placement)
     return notes,issue

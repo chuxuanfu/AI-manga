@@ -58,6 +58,22 @@ class LocalRepairTests(unittest.TestCase):
                 self.assertTrue(second.result(timeout=4))
                 self.assertEqual(calls,[False,True])
 
+    def test_incorrect_prop_height_requires_two_consistent_whole_scene_locations(self):
+        from brief_check import check_body_level
+        image=Image.new('RGB',(400,600),'ivory')
+        plan=dict(explicit=True,object_or_point='paper ticket',person='the girl')
+        low=dict(comparable=True,item_x=380,item_y=700,body_x=450,level_top=330,level_bottom=430,
+                 shoulder_y=295,hip_y=600,trace='Card rests against the thigh.')
+        high=dict(low,item_y=390,trace='Card touches the front of the coat at the chest.')
+        for second,mismatch in [(low,True),(high,False),(dict(low,comparable=False),False)]:
+            with patch('brief_check.model_identity',return_value='weights'), patch('brief_check.ask',side_effect=map(json.dumps,(plan,low,second))):
+                rows,issue=check_body_level('local',image,'A girl holds a paper ticket at chest level.','qwen3.8:27b')
+                self.assertEqual(len(rows[0]['readings']),2)
+                self.assertEqual(bool(issue),mismatch)
+        with patch('brief_check.ask') as unused:
+            self.assertEqual(check_body_level('local',image,'A closed wooden chest.','model'),([],None))
+            unused.assert_not_called()
+
     def test_viewpoint_uses_a_camera_relative_description_of_the_same_subject(self):
         from brief_check import camera_conflict
         request='small ginger cat sits upright in strict side profile facing out to the sea'
