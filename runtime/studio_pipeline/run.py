@@ -496,15 +496,31 @@ def main():
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'
-        prior=next((a for a in rec['reviews'] if a['hash']==key and a.get('rubric')==rubric and a['stage']==stage),None)
+        from review import inspection_environment,inspection_key
+        context_key=inspection_key(rubric,prompt,rec['parts'],focus,rec.get('画法参考'),inspection_environment())
+        def match(row):
+            return row.get('hash')==key and row.get('inspection_key')==context_key
+        prior=next((row for row in rec['reviews'] if match(row) and row['stage']==stage),None)
         if prior:return prior['review']
+        if args.round_worker and args.retry_round and (args.retry_round/'review.json').is_file():
+            previous=json.loads((args.retry_round/'review.json').read_text())
+            prior=next((row for row in previous.get('reviews',[]) if match(row) and row['review']['status']=='pass'),None)
+            if prior:
+                for suffix in ('-inspection.jpg','-inspection-1x.png','-structure-and-support.jpg',
+                               '-contact-and-occlusion.jpg','-reference-comparison.jpg'):
+                    proof=args.retry_round/(prior['stage']+suffix)
+                    if proof.is_file():deliver_file(proof,job/(stage+suffix))
+                rec['reviews'].append(dict(prior,file=os.path.relpath(path,job),stage=stage,
+                                           reused_from=str(args.retry_round),elapsed_seconds=0))
+                save(manifest,rec)
+                return prior['review']
         started=time.monotonic()
         if gaps and args.round_worker:
             mismatch=unrequested_panels(overview,gaps,prompt)
             if mismatch:
                 result=dict(status='global',score=35,note='画面被纸白间隔切成了多个独立画幅。'+mismatch['evidence'],
                             issues=[],regions={},layout=mismatch)
-                rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),review=result))
+                rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,inspection_key=context_key,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),review=result))
                 save(manifest,rec);return result
         with Image.open(path) as image:
             rgb=image.convert('RGB')
@@ -534,7 +550,7 @@ def main():
                     result['note']+=' · 交换左右后仍发现画法差距'
                 elif comparison['decision']=='review':
                     result['note']+=' · 画法对照需目检'
-        rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),review=result))
+        rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,inspection_key=context_key,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),review=result))
         save(manifest,rec)
         print(stage,result['status'],result['note'],flush=True)
         return result

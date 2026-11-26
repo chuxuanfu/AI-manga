@@ -16,9 +16,19 @@ from illustration import instruction_edit, reference_draft
 from masks import structural_composite
 from print_judge import actionable_edit, inspect_repaired_region, issue_category, verify_part_identity
 from production import repeated_rejection
+from review import inspection_key
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_reuse_of_composition_review_binds_the_brief_focus_and_models(self):
+        args = ('rules', 'A bird', [['bird', 1]], [10, 20, 50, 60], 'ref', ['reader-a'])
+        baseline = inspection_key(*args)
+        self.assertEqual(baseline, inspection_key(*args))
+        for index, alternative in enumerate(('new rules', 'Two birds', [['bird', 2]], None, 'other ref', ['reader-b'])):
+            changed = list(args)
+            changed[index] = alternative
+            self.assertNotEqual(baseline, inspection_key(*changed))
+
     def test_structural_edit_sampling_is_anchored_to_the_source_and_mask(self):
         editors = (reference_draft('Fix a seam', 77, 960, 960, 'trial', reference='guide.png',
                                    edit=True, masked_source='original-mask.png', preserve_layout=True),

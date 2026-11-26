@@ -22,6 +22,30 @@ Use local for a repairable area; global for missing subjects, composition/count 
 
 
 @lru_cache(maxsize=1)
+def inspection_environment():
+    import hashlib
+    from evidence import TAG,model_identity
+    from construction_review import LARGE
+    from print_judge import MODEL
+    # Bind reuse to the installed reviewers, prompt logic and local feature extractors.
+    acc=hashlib.sha256()
+    for name in ('review','construction_review','reference_review','evidence','structure','counts','page_layout'):
+        acc.update(Path(__file__).with_name(name+'.py').read_bytes())
+    for family in ('visual_reviewer','clipseg','object_detector'):
+        for path in sorted((RUNTIME/'models'/family).glob('*')):
+            if path.is_file():
+                st=path.stat()
+                acc.update(repr((path.name,st.st_size,st.st_mtime_ns)).encode())
+    return (acc.hexdigest(),*(model_identity(tag) for tag in (TAG,LARGE,MODEL)))
+
+
+def inspection_key(rubric,brief,parts,focus,reference,environment):
+    import hashlib
+    data=json.dumps([rubric,brief,parts,focus,reference,environment],sort_keys=True,ensure_ascii=False)
+    return hashlib.sha256(data.encode()).hexdigest()
+
+
+@lru_cache(maxsize=1)
 def reviewer():
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
     model_dir=RUNTIME/'models/visual_reviewer'
