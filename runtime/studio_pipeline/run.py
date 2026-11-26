@@ -384,6 +384,39 @@ def repair_placement(before,plan,brief,seed,port,directory,stage):
     return path,regions['inspection']
 
 
+def contact_layout_graph(picture, finding, brief, seed, prefix, *, full=False):
+    """Direct a new composition using two independently located endpoints of a failed action."""
+    editor=installed_editor(RUNTIME/'ComfyUI/models')
+    quote=finding.get('requirement','')
+    names=finding.get('items',[])
+    if (not editor or finding.get('confirmed') is not True or finding.get('minimum_gap',0)<=145
+            or not quote or quote.casefold() not in brief.casefold() or len(names)!=2
+            or any(not isinstance(n,str) or not n or n.casefold() not in quote.casefold() for n in names)):
+        return None
+    geometry=[v for v in finding.get('observations',[]) if v.get('relation')=='separated']
+    if not geometry:return None
+    sites=[geometry[0].get(key) for key in ('actor_edge','target_edge')]
+    if not all(isinstance(pt,(tuple,list)) and len(pt)==2 and
+               all(type(v) is int and 0<v<1000 for v in pt) for pt in sites):return None
+    base=picture.convert('RGB')
+    base.thumbnail((1440,1440),Image.Resampling.LANCZOS)
+    locator=base.copy()
+    pen=ImageDraw.Draw(locator)
+    radius=max(7,round(min(locator.size)*.018))
+    for (nx,ny),color in zip(sites,('#d121ae','#24aeaf')):
+        x,y=round(nx*locator.width/1000),round(ny*locator.height/1000)
+        pen.ellipse((x-radius,y-radius,x+radius,y+radius),outline=color,width=max(3,radius//4))
+    direction=('Create one finished illustration. Image 1 is the unmarked earlier composition. '
+               'Image 2 locates the existing working end of '+names[0]+' with a magenta circle and '
+               'the actual working surface of '+names[1]+' with a teal circle. Restage the pose so the '
+               'acting subject faces and reaches that surface. Move the working end into direct contact '
+               'with it. Maintain the natural scale of the tool, the reach of the body and the support '
+               'of both objects. Keep all requested subject identities, handedness, count, lighting and '
+               'medium. Paint the finished artwork free of locator marks. Required action: '+quote+
+               '. Original brief: '+brief)
+    return instruction_edit(direction,seed,local_image(base),prefix,editor,detail_reference=local_image(locator),full=full)
+
+
 def dimensions(prompt):
     if '3:2' in prompt.replace('：',':'):return (1248,832)
     if any(s in prompt.lower() for s in ('16:9','16：9','横屏','横幅','landscape format','landscape orientation','widescreen')):
@@ -936,7 +969,17 @@ def main():
             positive=' '.join(filter(None,[constraint,rec['positive'],*instructions[-3:]]))
             for i in range(2):
                 label=f'recompose-{i+1}'
-                graph=build_draft(positive,seed+800+i,label,i)
+                graph=None
+                if i==0 and reference_style:
+                    for row in reversed(rec['reviews']):
+                        finding=row['review'].get('requested_contact') or {}
+                        if not finding.get('confirmed') or finding.get('minimum_gap',0)<=145:continue
+                        source=job/row['file']
+                        if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest()!=row['hash']:continue
+                        with Image.open(source) as frame:
+                            graph=contact_layout_graph(frame,finding,prompt,seed+800,prefix+'/'+label)
+                        if graph:break
+                if graph is None:graph=build_draft(positive,seed+800+i,label,i)
                 avoid=', '.join('duplicate '+o+', multiple '+o for o,n in terms.items() if n==1)
                 if avoid and not reference_style:graph.api['3']['inputs']['text']+=', '+avoid
                 hist=post_graph(graph.api,args.port,job,label,graph.ui() if reference_style else None)

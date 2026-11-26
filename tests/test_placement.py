@@ -89,3 +89,23 @@ class PlacementTests(unittest.TestCase):
                     self.assertEqual(placement.reposition(self.image,{**plan,'scale':1}) is not None,expected)
         self.assertTrue(placement.placement_requested('Rest the filled saucer on top of the lid.'))
         self.assertTrue(placement.placement_requested('把盛好的盘子放到篮子上面。'))
+
+    def test_recomposition_requires_a_confirmed_gap_and_draws_markers_only_on_the_guide(self):
+        from run import contact_layout_graph
+        statement='The pen touches the paper.'
+        issue=dict(confirmed=True,minimum_gap=250,items=['pen','paper'],requirement=statement,
+                   observations=[dict(relation='separated',actor_edge=[100,400],target_edge=[350,400])])
+        frames=[]
+        def capture(picture):
+            frames.append(picture.copy())
+            return 'view-'+str(len(frames))+'.png'
+        with patch('run.installed_editor',return_value='editor'),patch('run.local_image',side_effect=capture):
+            for override in ({'minimum_gap':10},{'confirmed':False},{'requirement':'another scene'}):
+                self.assertIsNone(contact_layout_graph(self.image,{**issue,**override},statement,2,'local'))
+            graph=contact_layout_graph(self.image,issue,statement,2,'local')
+            self.assertIsNotNone(graph)
+            with self.subTest('the source contains the original pixels'):
+                self.assertEqual(frames[0].tobytes(),self.image.tobytes())
+                self.assertNotEqual(frames[0].tobytes(),frames[1].tobytes())
+            loaders=[v['inputs']['image'] for v in graph.api.values() if v['class_type']=='LoadImage']
+            self.assertCountEqual(loaders,['view-1.png','view-2.png'])
