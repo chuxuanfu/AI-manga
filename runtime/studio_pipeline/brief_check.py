@@ -68,6 +68,31 @@ BODY_LEVEL=re.compile(r'\b(?:at|near|around|held at|level with) (?:the |her |his
                       r'(胸前|胸口高度|齐腰|腰部高度|与肩齐平|膝盖高度)',re.I)
 
 
+def resolve_mixed_bands(url, ruled, model, item, landmark, reading):
+    """Re-read named points separately if paired coordinates contradict the visual account."""
+    reported={reading['item_band'],reading['landmark_band']}
+    cited={int(v) for v in re.findall(r'\bband(?:\s+(?:labeled|labelled|number|numbered))?\s+#?(\d{1,2})\b',
+                                      reading['trace'],re.I)}
+    if not reading['visible'] or len(cited)<2 or reported==cited:return reading
+    fields={'trace':{'type':'string'},'visible':{'type':'boolean'},
+            'band':{'type':'integer','minimum':1,'maximum':20}}
+    result={**reading,'paired':dict(reading),'single_point_checks':{}}
+    for key,name in [('item_band',item),('landmark_band',landmark)]:
+        question=('Locate only the center of '+name+' in this illustration. Identify its visible '
+                  'physical landmarks and follow its height horizontally to the numbered margin. '
+                  'Return the single corresponding band number. Mark invisible if the point cannot be located.')
+        point=json.loads(ask(url,[ruled],question,{'type':'object','properties':fields,'required':list(fields)},tag=model))
+        result['single_point_checks'][key]=point
+        value=point['band']
+        if not point['visible'] or not point['trace'].strip() or value not in cited:
+            result['visible']=False
+            break
+        result[key]=value
+    if result['visible']:
+        result['trace']=' '.join(v['trace'] for v in result['single_point_checks'].values())
+    return result
+
+
 def check_body_level(url,overview,brief,tag):
     """Locate a specified object against a visible body landmark in the whole composition."""
     match=BODY_LEVEL.search(brief)
@@ -120,6 +145,7 @@ def check_body_level(url,overview,brief,tag):
             'containing the center of the '+anchor+' of '+plan['person']+'. Name both actual visible '
             'landmarks. Report their observed positions. Set visible false for an ambiguous identification.',
             {'type':'object','properties':fields,'required':list(fields)},tag=model))
+        check=resolve_mixed_bands(url,ruled,model,plan['object_or_point'],anchor+' of '+plan['person'],check)
         if check['visible'] and check['trace'].strip() and all(1<=check[k]<=20 for k in ('item_band','landmark_band')):
             n=check['landmark_band']
             row=dict(row,item_y=round((check['item_band']-.5)*50),level_top=(n-1)*50,level_bottom=n*50,

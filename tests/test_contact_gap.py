@@ -21,3 +21,18 @@ class ContactGapTests(unittest.TestCase):
             self.assertEqual(answer['confirmed'],expected)
         with patch('brief_check.ask',side_effect=AssertionError('No physical contact specified')):
             self.assertIsNone(confirm_contact_gap(None,im,im,'watches a butterfly','first','second'))
+
+    def test_disputed_band_labels_require_separate_visual_readings(self):
+        from brief_check import resolve_mixed_bands
+        im=Image.new('RGB',(400,650))
+        paired=dict(visible=True,item_band=14,landmark_band=14,
+                    trace='The paper is at band labeled 14. The upper chest is in band 8.')
+        points=[dict(visible=True,band=14,trace='The paper center aligns with 14.'),
+                dict(visible=True,band=8,trace='The lapel center aligns with 8.')]
+        with patch('brief_check.ask',side_effect=map(json.dumps,points)) as reader:
+            result=resolve_mixed_bands(None,im,'reader','paper','upper chest',paired)
+        self.assertEqual((result['item_band'],result['landmark_band']),(14,8))
+        self.assertNotIn('upper chest',reader.call_args_list[0].args[2])
+        inconsistent=dict(visible=True,band=5,trace='Ambiguous point near the top.')
+        with patch('brief_check.ask',return_value=json.dumps(inconsistent)):
+            self.assertFalse(resolve_mixed_bands(None,im,'reader','paper','chest',paired)['visible'])
