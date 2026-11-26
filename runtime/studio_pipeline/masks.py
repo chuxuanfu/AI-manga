@@ -40,3 +40,78 @@ def object_mask(before, after, target, area, neighbours=(), *, confirmed_shape=F
         if support and np.asarray(limited).sum() < .05*support:
             return supported
     return limited
+
+
+def structural_composite(before, after, area, canvas_edges):
+    """Place a rebuilt shape intact, joining the two drawings through agreeing surroundings."""
+    import cv2
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import maximum_flow, breadth_first_order
+
+    # Search for a join in a band around the approved correction. Cost is high on
+    # displaced ink lines and color boundaries. The actual canvas edge needs no join.
+    scale=min(1,192/max(before.size))
+    size=tuple(max(2,round(n*scale)) for n in before.size)
+    old=np.asarray(before.resize(size,Image.Resampling.BOX),dtype=np.float32)
+    new=np.asarray(after.resize(size,Image.Resampling.BOX),dtype=np.float32)
+    core=np.asarray(area.resize(size,Image.Resampling.BILINEAR))>=230
+    if not core.any():return before.copy()
+    distance=ndimage.distance_transform_edt(~core)
+    band=max(6, round(max(size)*.20))
+    outside=distance>=band
+    left,top,right,bottom=canvas_edges
+    if not left:outside[:,0]=True
+    if not top:outside[0,:]=True
+    if not right:outside[:,-1]=True
+    if not bottom:outside[-1,:]=True
+    core=core & ~outside
+    if not core.any():return before.copy()
+    # Positive capacities and fixed terminals guarantee a closed join.
+    discrepancy=np.abs(old-new).mean(axis=2)
+    discrepancy=cv2.GaussianBlur(discrepancy,(0,0),.9)
+    cost=1+np.rint(3*discrepancy).astype(np.int32)
+    ids=np.arange(core.size,dtype=np.int32).reshape(core.shape)
+    a=np.concatenate((ids[:,:-1].ravel(),ids[:-1,:].ravel()))
+    b=np.concatenate((ids[:,1:].ravel(),ids[1:,:].ravel()))
+    weight=cost.ravel()[a]+cost.ravel()[b]
+    src,sink=core.size,core.size+1
+    inner=ids[core];outer=ids[outside]
+    rows=np.concatenate((a,b,np.full(inner.size,src),outer))
+    cols=np.concatenate((b,a,inner,np.full(outer.size,sink)))
+    capacities=np.concatenate((weight,weight,np.full(inner.size+outer.size,1000000,dtype=np.int32)))
+    graph=coo_matrix((capacities,(rows,cols)),shape=(sink+1,sink+1)).tocsr()
+    residual=graph-maximum_flow(graph,src,sink).flow
+    residual.eliminate_zeros()
+    reachable=breadth_first_order(residual,src,directed=True,return_predecessors=False)
+    weights=np.zeros(core.size,dtype=np.uint8)
+    weights[reachable[reachable<core.size]]=255
+    seam=Image.fromarray(weights.reshape(core.shape)).resize(before.size,Image.Resampling.BILINEAR)
+    seam=seam.filter(ImageFilter.GaussianBlur(max(.6,min(before.size)*.003)))
+    # Preserve ink edges at fine scales and blend broad tone changes over a
+    # wider transition. A single thin feather exposes shadows as a rectangular patch.
+    previous=np.asarray(before,dtype=np.float32)
+    proposed=np.asarray(after,dtype=np.float32)
+    alpha=np.asarray(seam,dtype=np.float32)/255
+    layers=[]
+    while min(alpha.shape)>12:
+        old_low=cv2.pyrDown(previous)
+        new_low=cv2.pyrDown(proposed)
+        dims=(alpha.shape[1],alpha.shape[0])
+        old_band=previous-cv2.pyrUp(old_low,dstsize=dims)
+        new_band=proposed-cv2.pyrUp(new_low,dstsize=dims)
+        layers.append(old_band+(new_band-old_band)*alpha[:,:,None])
+        previous,proposed,alpha=old_low,new_low,cv2.pyrDown(alpha)
+    result=previous+(proposed-previous)*alpha[:,:,None]
+    for layer in reversed(layers):
+        result=cv2.pyrUp(result,dstsize=(layer.shape[1],layer.shape[0]))+layer
+    # Exact unchanged pixels at the crop boundary prevent a new line at paste time.
+    fade=np.ones(before.size[::-1],np.float32)
+    length=max(2,round(min(before.size)*.065))
+    ramp=np.linspace(0,1,length,dtype=np.float32)
+    if not left:fade[:,:length]*=ramp
+    if not right:fade[:,-length:]*=ramp[::-1]
+    if not top:fade[:length,:]*=ramp[:,None]
+    if not bottom:fade[-length:,:]*=ramp[::-1,None]
+    original=np.asarray(before,dtype=np.float32)
+    result=original+(result-original)*fade[:,:,None]
+    return Image.fromarray(np.uint8(np.clip(result.round(),0,255)))

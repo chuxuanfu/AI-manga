@@ -24,7 +24,7 @@ from construction_review import review as review_construction
 from review import audit, reviewer, RUNTIME, CHECKS
 from manga_materials.planner import plan_scene, requested_medium
 from focus_print import PATCH, centers, sampled_surfaces, combine_source, detail_graph, finish_neural, neural_double, repair_print_pair, preserve_source_marks
-from masks import object_mask
+from masks import object_mask, structural_composite
 from erase import duplicate_box, masked_candidate, MODEL as ERASE_MODEL
 
 STUDIO = RUNTIME.parent
@@ -177,7 +177,11 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     with Image.open(output_image(hist[output])) as new:
         patched = im.copy()
         proposed=new.convert('RGB').resize((cw,ch),Image.Resampling.LANCZOS)
-        patched.paste(proposed,(x,y),object_mask(crop,proposed,target,mask,neighbours,confirmed_shape=rebuild_shape))
+        if rebuild_shape and reference_style:
+            borders=(x==0,y==0,x+cw==w,y+ch==h)
+            patched.paste(structural_composite(crop,proposed,mask,borders),(x,y))
+        else:
+            patched.paste(proposed,(x,y),object_mask(crop,proposed,target,mask,neighbours))
     target = directory/(stage+'-composite.png')
     patched.save(target)
     return target
