@@ -111,15 +111,15 @@ def pigment_edit(instruction):
                           r'重新上色|改成.{0,6}色|更改.{0,8}(?:颜色|花纹)|重绘.{0,6}(?:毛色|花纹)',instruction,re.I))
 
 
-def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, masked=False, detail_reference=None):
-    """Comfy's Qwen-Image-Edit-2511 Lightning graph for a local repair crop."""
+def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, masked=False, detail_reference=None, full=False):
+    """Qwen-Image-Edit-2511 with a masked local crop and optional second visual reference."""
     g=Graph('studio-instruction-edit')
     source=g.add('LoadImage','Source crop',(0,0),['IMAGE','MASK'],values={'image':reference})
     unet=g.add('UNETLoader','Edit model',(0,300),['MODEL'],values={'unet_name':unet_name,'weight_dtype':'default'})
     clip=g.add('CLIPLoader','Instruction encoder',(0,450),['CLIP'],values={'clip_name':EDIT_CLIP,'type':'qwen_image','device':'default'})
     vae=g.add('VAELoader','Image codec',(0,580),['VAE'],values={'vae_name':'qwen_image_vae.safetensors'})
-    model=g.add('LoraLoaderModelOnly','Four-step edit',(350,300),['MODEL'],[('model',(unet,0))],
-                values={'lora_name':EDIT_LORA,'strength_model':1.0})
+    model=unet if full else g.add('LoraLoaderModelOnly','Four-step edit',(350,300),['MODEL'],[('model',(unet,0))],
+                                  values={'lora_name':EDIT_LORA,'strength_model':1.0})
     model=g.add('ModelSamplingAuraFlow','Edit timestep shift',(670,300),['MODEL'],[('model',(model,0))],values={'shift':3.1})
     inputs=[('clip',(clip,0)),('vae',(vae,0)),('image1',(source,0))]
     if detail_reference:
@@ -133,7 +133,7 @@ def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, mask
                      [('samples',(latent,0)),('mask',(source,1))])
     sample=g.add('KSampler','Repair crop',(990,0),['LATENT'],[('model',(model,0)),('positive',(pos,0)),
                  ('negative',(neg,0)),('latent_image',(latent,0))],values={
-                 'seed':seed,'steps':4,'cfg':1.0,'sampler_name':'euler','scheduler':'simple','denoise':1.0})
+                 'seed':seed,'steps':40 if full else 4,'cfg':4.0 if full else 1.0,'sampler_name':'euler','scheduler':'simple','denoise':1.0})
     decoded=g.add('VAEDecode','Decode',(1300,0),['IMAGE'],[('samples',(sample,0)),('vae',(vae,0))])
     g.save('Edited region',(1600,0),decoded,prefix)
     return g

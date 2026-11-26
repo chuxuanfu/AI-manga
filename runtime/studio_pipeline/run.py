@@ -281,7 +281,8 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
                         'image 1. Keep the pose and distinguish a distant background from an actual support. ')
         edit=instruction_edit('Edit this same illustration close-up. '+direction+
                               'Preserve the surrounding objects, light and medium. Target: '+
-                              str(target or 'the selected area')+'. '+description,seed,source,prefix,specialist,masked=True,detail_reference=reference)
+                              str(target or 'the selected area')+'. '+description,seed,source,prefix,specialist,masked=True,
+                              detail_reference=reference,full=reconstruction_attempt>=4)
         graph=edit.api
         output=str(len(edit.nodes))
     elif reference_style:
@@ -998,7 +999,8 @@ def main():
         with Image.open(source) as original:
             before=original.convert('RGB')
         from production import repeated_rejection
-        strategies=[2,0,1] if previous and repeated_rejection(previous,box) else [0,1,2]
+        recurring=bool(previous and repeated_rejection(previous,box))
+        strategies=[2,0,1] if recurring else [0,1,2]
         for variant,strategy in enumerate(strategies):
             name=stage if variant==0 else f'{stage}-variant-{variant+1}'
             revised=repaint(before,box,instruction,rec['positive'],edit_seed+variant*1753,args.port,
@@ -1016,6 +1018,11 @@ def main():
                 # The specialist reproduced a known geometric error. The next attempt
                 # rebuilds the interior using a cleared visual reference.
                 if 3 not in strategies:strategies.append(3)
+            if (strategy==3 and recurring and verdict.get('verdict') in ('unchanged','still_present')
+                    and installed_editor(RUNTIME/'ComfyUI/models')):
+                # A sequence of rejected short edits can repeat the same geometry. Give
+                # the full base editor one attempt before a complete scene redraw.
+                strategies.append(4)
             save(job/(name+'-patch-review.json'),verdict)
             if verdict['verdict']=='resolved':
                 return revised

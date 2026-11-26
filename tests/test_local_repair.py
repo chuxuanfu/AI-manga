@@ -476,6 +476,16 @@ class LocalRepairTests(unittest.TestCase):
         self.assertNotIn('LoadImage', nodes)
         self.assertEqual(graph[nodes['KSampler']['latent_image'][0]]['class_type'], 'EmptySD3LatentImage')
 
+    def test_full_edit_uses_original_denoiser_with_mask_and_both_images(self):
+        from illustration import instruction_edit
+        graph=instruction_edit('Connect the post to its foot',11,'region.png','test',masked=True,
+                               detail_reference='scene.png',full=True).api
+        nodes={n['class_type']:n['inputs'] for n in graph.values()}
+        self.assertNotIn('LoraLoaderModelOnly',nodes)
+        self.assertEqual((nodes['KSampler']['steps'],nodes['KSampler']['cfg']),(40,4.))
+        self.assertIn('SetLatentNoiseMask',nodes)
+        self.assertIn('image2',nodes['TextEncodeQwenImageEditPlus'])
+
     def test_unchanged_native_tile_requires_same_pixels_brief_location_and_model(self):
         from print_judge import native_review_key
         tile = Image.new('RGB', (8, 8), 'white')
