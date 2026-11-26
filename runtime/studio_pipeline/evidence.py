@@ -114,8 +114,8 @@ def ask(url,images,prompt,schema=None,tag=TAG,*,reason=False):
     encoded=[]
     for image in images:
         buf=io.BytesIO()
-        if tag=='qwen3.8:27b':image.save(buf,format='PNG')
-        else:image.save(buf,format='JPEG',quality=94)
+        # A second reader must see the same pigment boundaries, including fine colored ink.
+        image.save(buf,format='PNG',compress_level=1)
         encoded.append(base64.b64encode(buf.getvalue()).decode('ascii'))
     data={'model':tag,'stream':False,'options':{'temperature':0,'num_ctx':8192,'num_predict':360},
           'messages':[{'role':'user','content':prompt,'images':encoded}]}

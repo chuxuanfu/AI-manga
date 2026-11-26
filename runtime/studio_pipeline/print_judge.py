@@ -1411,8 +1411,12 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     verify=GUIDE+' '+question+' The last image locates the inspected area in the full composition. Use it to identify deliberate softness. Previous claim: '+claim+' Brief: '+inspection_brief
                     if kind in ('comparison','draft-comparison'):
                         overview=field_context
-                        verify=(detail_comparison_prompt(question,brief)+' Image 3 shows the marked position on the whole composition and the surrounding subject. '
-                                'Verify whether this alleged optical defect is visible in image 2: '+claim)
+                        # A comparison is independently repeatable on the same two registered images.
+                        # Giving the second reader the first conclusion invites it to grade the prose.
+                        verify=(detail_comparison_prompt(question,brief)+' Image 3 locates the sample within the scene '
+                                'and its immediate subject. Trace one specific material boundary directly on each '
+                                'of the first two images. Describe how its edge or interior marks resolve, and any '
+                                'new artifact actually visible in image 2.')
                 if kind=='whole' and tentative:
                     record['whole_context_visible']=True
                     # A crop cannot establish that a subject, garment or prop is missing

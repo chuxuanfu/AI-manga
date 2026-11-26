@@ -22,6 +22,22 @@ from structure import inspect_small_figure_support
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_independent_readers_receive_lossless_color_samples(self):
+        import base64
+        import io
+        from evidence import ask
+        sample=Image.new('RGB',(48,48),'midnightblue')
+        draw=ImageDraw.Draw(sample)
+        for x in range(0,48,3):
+            draw.line((x,0,x,47),fill='gold',width=1)
+        for tag in ('qwen3-vl:32b','qwen3.8:27b'):
+            response=io.BytesIO(json.dumps({'message':{'content':'read'}}).encode())
+            with patch('evidence.request.urlopen',return_value=response) as send:
+                self.assertEqual(ask('http://127.0.0.1',[sample],'Inspect ink',tag=tag),'read')
+            message=json.loads(send.call_args.args[0].data)['messages'][0]
+            with Image.open(io.BytesIO(base64.b64decode(message['images'][0]))) as decoded:
+                self.assertEqual(decoded.tobytes(),sample.tobytes())
+
     def test_sequential_review_models_share_one_service_until_the_image_is_graded(self):
         from contextlib import contextmanager
         from evidence import backend,review_session
