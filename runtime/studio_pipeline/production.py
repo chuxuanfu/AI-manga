@@ -149,7 +149,7 @@ def local_retry_source(previous, brief, *, interrupted=False, review_upgrade=Fal
     return None
 
 
-def repeated_rejection(directory, box):
+def repeated_rejection(directory, box, *, minimum=2):
     """Choose a different editor first when multiple nearby repairs actually failed."""
     left,top,right,bottom=box
     area=(right-left)*(bottom-top)
@@ -167,7 +167,7 @@ def repeated_rejection(directory, box):
         overlap=max(0,min(right,r)-max(left,l))*max(0,min(bottom,b)-max(top,t))
         if overlap>=.55*area:
             failures+=1
-            if failures>=2:return True
+            if failures>=minimum:return True
     return False
 
 

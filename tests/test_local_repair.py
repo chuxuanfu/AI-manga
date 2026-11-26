@@ -122,6 +122,9 @@ class LocalRepairTests(unittest.TestCase):
             self.assertFalse(repeated_rejection(folder, target))
             receipt(4, [201, 305, 318, 398], 'new_defect')
             self.assertTrue(repeated_rejection(folder, target))
+            self.assertFalse(repeated_rejection(folder, target, minimum=3))
+            receipt(5, target, 'uncertain')
+            self.assertTrue(repeated_rejection(folder, target, minimum=3))
 
     def test_conflicting_readings_need_a_separate_positive_and_negative_control(self):
         source = Image.new('RGB', (144, 144))

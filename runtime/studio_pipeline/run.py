@@ -822,6 +822,42 @@ def main():
                          +str(verdict.get('next_edit') or 'Redraw the silhouette and its point of support.'))
         return None
 
+    scene_tried=False
+    def redraw_scene(source,issue,box,stage):
+        nonlocal scene_tried
+        if (scene_tried or not reference_style or args.keep_native or args.repair_box or args.selection_mask
+                or not box or issue.get('operation')!='redraw'):
+            return None
+        editor=installed_editor(RUNTIME/'ComfyUI/models')
+        if not editor:return None
+        scene_tried=True
+        with Image.open(source) as canvas:
+            scale=min(1,(1536*1024/(canvas.width*canvas.height))**.5)
+            size=tuple(max(32,round(n*scale/16)*16) for n in canvas.size)
+            reference=local_image(canvas.convert('RGB').resize(size,Image.Resampling.LANCZOS))
+        center=((box[0]+box[2])/20,(box[1]+box[3])/20)
+        text=('Edit the supplied complete illustration with the whole scene visible. Preserve its framing, '
+              'subjects, identities, gestures, clothes, colors, lighting, and original drawing medium. '
+              'The local crop editor could not construct this part with coherent connections to its '
+              'surroundings. Redraw the part together with its connected structures in the full composition. '
+              f'Location about {center[0]:.0f}% of width from left and {center[1]:.0f}% of height from top. '
+              'Required correction: '+issue['fix']+' Original art direction: '+prompt)
+        graph=instruction_edit(text,seed+1621,reference,prefix+'/'+stage,editor)
+        try:
+            history=post_graph(graph.api,args.port,job,stage,graph.ui())
+        except RuntimeError as exc:
+            save(job/(stage+'-editor-failure.json'),{'model':editor,'error':str(exc)[:1200]})
+            return None
+        candidate=output_image(history[str(len(graph.nodes))])
+        release_idle_renderer(args.port)
+        from print_judge import same_composition
+        if not same_composition(source,candidate,prompt):return None
+        screened=check(candidate,stage,box)
+        if not usable(screened):return None
+        rec['高清底图返工']={'源图':str(source),'重绘':str(candidate),'依据':issue['fix'],'模型':editor}
+        save(manifest,rec)
+        return candidate
+
     repair_check=None
     if retry_source:
         last,_,issue=retry_source
@@ -854,6 +890,7 @@ def main():
                 overview=source.copy();overview.thumbnail((1152,1152),Image.Resampling.LANCZOS)
                 framing=verify_frame_exit(address,source,overview,focus,claim,prompt)
             if framing:save(job/'continued-framing-review.json',framing)
+        scene=None
         if issue.get('operation')=='reinspect' or (framing and framing['explained']):
             repaired=last
         else:
@@ -865,9 +902,17 @@ def main():
                 repaired=job/(stage+'-removed-unrequested-object.png')
                 with Image.open(last) as retained:masked_candidate(retained.convert('RGB'),focus).save(repaired)
             else:
-                repaired=correct_shape(last,issue,focus,stage,seed+820,retry_origin) if focus else None
-        if repaired:
-            master,small=repaired,None
+                from production import repeated_rejection
+                if focus and repeated_rejection(retry_origin,focus,minimum=3):
+                    scene=redraw_scene(last,issue,focus,'continued-scene')
+                repaired=correct_shape(last,issue,focus,stage,seed+820,retry_origin) if focus and not scene else None
+        if not repaired and not scene:scene=redraw_scene(last,issue,focus,'continued-scene')
+        if repaired or scene:
+            if scene:
+                approved=scene
+                master,small=render(approved,'continued-scene-print')
+            else:
+                master,small=repaired,None
             repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
             rec['续修来源']=str(last)
         else:
@@ -982,7 +1027,12 @@ def main():
                 corrected.save(temp);temp.replace(revised)
             elif reference_style and issue.get('operation')=='redraw':
                 revised=correct_shape(source,issue,focus,stage,seed+650+attempt)
-                if revised is None:break
+                if revised is None:
+                    candidate=redraw_scene(master,issue,focus,stage+'-scene')
+                    if candidate is None:break
+                    approved=candidate
+                    master,small=render(approved,stage+'-scene-print')
+                    continue
             else:
                 revised=repaint(original.convert('RGB'),focus,issue['fix'],rec['positive'],seed+650+attempt,args.port,
                                 job,stage,issue.get('target'),[o for o,_ in rec['parts']],reference_style,
