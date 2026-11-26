@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-40'
+REVISION = 'print-inspection-41'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -422,6 +422,18 @@ def disputed_action_resolved(reading):
 HARDWARE_CLAIM=re.compile(r'\b(?:brackets?|hinge[sd]?|sockets?|bolts?|welds?|rivets?|mounting|fasteners?|'
                           r'locking mechanism|articulat(?:ion|ed) joint|load path|cleats?|mechanical joint|mechanical.{0,100}(?:joint|articulation)|'
                           r'order of (?:over/under )?crossings)\b|铰链|螺栓|焊缝|紧固件|承力路径',re.I)
+
+
+def compare_local_definition(url, pair):
+    fields={'visible_edges':{'type':'string'},'condition':{'enum':['well_defined','optically_degraded','insufficient']}}
+    message=('The two pictures show the SAME small patch. Image 1 enlarges its lower-resolution '
+             'source. Image 2 shows the higher-resolution rendition. In visible_edges name an actual '
+             'ink stroke, tip, material transition or flat tone and how it renders in each picture. '
+             'Judge only optical definition within these pixels. Soft enlarged boundaries without '
+             'resolved internal marks, excessive sharpening, noise and duplicated outlines are degraded. '
+             'An intentionally flat region can qualify when its boundaries or smooth tones hold up. '
+             'If the actual detail is too ambiguous for this comparison, choose insufficient.')
+    return json.loads(ask(url,pair,message,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
 
 
 CROP_OMISSION=re.compile(r'(?:crop|close.up|field of view).{0,115}?(?:exclude|cut.?off|does not (?:include|show)|'
@@ -1018,12 +1030,19 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                             if kind in ('comparison','draft-comparison'):
                                 # The missing contact now has its own native inspection. Still verify that
                                 # the two ORIGINAL comparison samples agree in sharpness, ink and material.
-                                cross=judge_view(url,view,'Compare only the optical detail visible in both supplied pixel fields. '
-                                    'Look for separated strokes or material edges, smearing, halos and lost contrast. '
-                                    'The missing body part has been checked at another location. Give a concrete observation. '+question)
-                            if cross['decision']=='clear':
-                                second=cross
-                                record['independent_context']=second
+                                optical=compare_local_definition(url,view)
+                                record['definition_at_original_site']=optical
+                                if optical['condition']=='well_defined' and optical['visible_edges'].strip():
+                                    cross=dict(cross,evidence=optical['visible_edges'])
+                                else:
+                                    cross=dict(second,decision='uncertain',operation='none',fix='',target='print detail',
+                                               left=0,top=0,right=1000,bottom=1000,
+                                               evidence=optical['visible_edges'] or 'Definition could not be established at the original site.')
+                                    record['issue_category']='unresolved_focus'
+                                context=rect
+                                region=view
+                            second=cross
+                            record['independent_context']=second
                 if second['decision']!='clear':
                     bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     framing=verify_frame_exit(url,image,overview_image,bounds,
