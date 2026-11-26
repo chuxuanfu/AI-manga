@@ -30,3 +30,19 @@ class PalmEvidenceTests(unittest.TestCase):
             self.assertEqual(result['decision'],expected)
             self.assertEqual([row['order'] for row in result['readings']],[[0,1],[1,0]])
             self.assertEqual([call.kwargs['tag'] for call in judge.call_args_list],['first','second'])
+
+class EditionContextTests(unittest.TestCase):
+    def test_first_picture_and_locator_are_from_the_same_revision(self):
+        from contextlib import nullcontext
+        from construction_review import assess_local_edit
+        from PIL import ImageDraw
+        original=Image.new('RGB',(400,350),'white')
+        candidate=original.copy()
+        ImageDraw.Draw(candidate).rectangle((160,120,250,220),fill='navy')
+        judgement={'verdict':'new_defect','evidence':'A new navy shape crosses the white margin.','next_edit':'Retain the original stroke.'}
+        with patch('construction_review.backend',return_value=nullcontext(None)),patch('construction_review.ask',return_value=json.dumps(judgement)) as judge:
+            out=assess_local_edit(original,candidate,[350,300,680,680],'Repair one local connection.')
+        self.assertEqual(out['verdict'],'new_defect')
+        frames=judge.call_args_list[0].args[1]
+        self.assertEqual(len(frames),2)
+        self.assertEqual(frames[1].getpixel((205,165)),(0,0,128))

@@ -409,10 +409,14 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
     scale=min(3,640/edge) if edge<640 else min(1,960/edge)
     size=tuple(max(1,round(side*scale)) for side in old.size)
     old,new=(im.resize(size,Image.Resampling.LANCZOS) for im in (old,new))
-    context=[] if bounds==(0,0,width,height) else [edit_locator(before,bounds)]
+    context={} if bounds==(0,0,width,height) else {
+        id(old):edit_locator(before,bounds),id(new):edit_locator(after,bounds)}
+
     props={'verdict':{'enum':['resolved','still_present','new_defect','uncertain']},
            'evidence':{'type':'string'},'next_edit':{'type':'string'}}
-    question=('Inspect this single candidate crop in isolation. An earlier version had this reported defect: '
+    question=('Inspect this candidate crop. '+('The second image shows its actual position in this same candidate. ' if context else '')+
+              'Trace the changed part into its parent body or support. Identify any unrelated object which now replaces part of it. '
+              'An earlier version had this reported defect: '
               +str(symptom or 'see correction')+'. The intended result is: '+correction+
               '. Trace the actual visible boundaries, attachments, contact shadows, material and repair seam. '
               'Resolved requires visible evidence for the requested result and no new defect. '
@@ -421,7 +425,7 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
               'the connection visibly plausible. For failure, describe a drawable shape that would correct it.'
               +(' Original scene and medium: '+brief if brief else ''))
     with backend(MODEL) as url:
-        result=json.loads(ask(url,[new],question,
+        result=json.loads(ask(url,[new,context[id(new)]] if context else [new],question,
                     {'type':'object','properties':props,'required':list(props)},tag=MODEL,reason=True))
         if result.get('verdict')=='resolved':
             # The model must also identify the better image with the source/candidate
@@ -432,8 +436,8 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
             else:
                 pair,expected=[old,new],'B'
             pair_fields={'evidence':{'type':'string'},'better':{'enum':['A','B','equal','uncertain']}}
-            choice=json.loads(ask(url,pair+context,'Two independent samples A and B of the same detail. '
-                +('Image 3 only locates the subject and establishes its pose. Compare A and B. ' if context else '')
+            choice=json.loads(ask(url,pair+([context[id(frame)] for frame in pair] if context else []),'Two independent samples A and B of the same detail. '
+                +('Images 3 and 4 show the enclosing scenes of A and B respectively. Trace each part into its own surrounding scene. ' if context else '')
                 +'Trace the visible parts, endpoints and their connections in each sample. Trace the actual '
                 'structure in each image separately. Which better satisfies this goal: '+correction+
                 '? Do not infer the order in which the samples were made. Return equal for indistinguishable '
@@ -459,7 +463,7 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
         traces={}
         with backend(LARGE) as addr:
             for label,frame in zip(('A','B'),pair):
-                traces[label]=json.loads(ask(addr,[frame,*context],query,
+                traces[label]=json.loads(ask(addr,[frame,context[id(frame)]] if context else [frame],query,
                     {'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
         source=traces['B' if expected=='A' else 'A']
         candidate=traces[expected]
@@ -506,7 +510,7 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
              'Choose mismatch for a photographic or foreign surface pasted into the illustration. '
              'Allow pose changes, sensible variations in lighting and the rendering appropriate to each material.')
         with backend(LARGE) as addr:
-            medium_check=json.loads(ask(addr,[old,new,*context],cue,
+            medium_check=json.loads(ask(addr,[old,new,context[id(new)]] if context else [old,new],cue,
                 {'type':'object','properties':props,'required':list(props)},tag=LARGE))
         result['medium_comparison']=medium_check
         if (medium_check['medium']!='consistent' or not medium_check['interior_marks'].strip()
