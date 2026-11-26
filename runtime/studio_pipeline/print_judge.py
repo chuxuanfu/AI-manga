@@ -920,6 +920,16 @@ def independent_detail_check(url, images, overview, brief):
     y,x=np.unravel_index(np.argmax(signal[margin:high.height-margin,margin:high.width-margin]),
                          (high.height-2*margin,high.width-2*margin))
     rect=(int(x),int(y),int(x)+size,int(y)+size)
+    from print_artifacts import resolved_line_pair
+    measured=resolved_line_pair(low,high)
+    if measured:
+        # Inspect the scale at which neighboring marks cease to merge. The
+        # numerical result locates a candidate; both anonymous visual readings
+        # still have to identify meaningful material detail on that same crop.
+        size=min(size,96)
+        cx,cy=measured['center']
+        x=max(0,min(high.width-size,cx-size//2));y=max(0,min(high.height-size,cy-size//2))
+        rect=(x,y,x+size,y+size)
     def loupe(im):
         return im.crop(rect).resize((size*3,size*3),Image.Resampling.NEAREST)
     low_site,high_site=loupe(low),loupe(high)
@@ -931,9 +941,10 @@ def independent_detail_check(url, images, overview, brief):
                  'display magnification occur in both images. Ignore differences limited to grain or '
                  'increased contrast, sharpened halos and paper noise.')
     forward=read([low_site,high_site],instruction,props)
-    evidence={'pixels_in_field':list(rect),'forward':forward}
+    evidence={'pixels_in_field':list(rect),'forward':forward,'line_pair':measured}
     report['contour_magnification']=evidence
-    if (forward['finer_version']=='second' and forward['kind']=='resolved_material_or_contour'
+    if (forward['finer_version']=='second' and (forward['kind']=='resolved_material_or_contour'
+            or measured and forward['kind']=='contrast_or_texture_only')
             and forward['location'].strip() and forward['evidence'].strip()):
         reverse=read([high_site,low_site],instruction,props)
         evidence['reverse']=reverse
@@ -1011,6 +1022,17 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             result=dict(model=MODEL,model_id=model_id,revision=REVISION,sha256=digest,source=str(path),
                         brief=brief,views=[],status='running',report=str(report.relative_to(root)),
                         perspective_review=True,comparison_sha256=prior_id,draft_sha256=draft_id)
+    if result.get('status') in ('local','uncertain') and result.get('views'):
+        held=result['views'][-1]
+        claim=result.get('issue',{}).get('symptom','')
+        detail=held.get('context_pixels')
+        if (held.get('view')=='whole' and detail and detail!=held['pixels'] and not held.get('whole_context_visible')
+                and re.search(r'\b(?:missing|absent from|not in (?:the )?frame|nowhere in)\b',claim,re.I)):
+            report=report.with_name(report.stem+'-whole-context.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
+                result.pop('issue',None)
     if result.get('status')=='uncertain' and result.get('views'):
         check=result['views'][-1].get('independent_action_check',{})
         if check.get('depth_inventory',{}).get('relation')=='undetermined' and 'depth_verification' not in check:
@@ -1258,6 +1280,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                         verify=(detail_comparison_prompt(question,brief)+' Image 3 locates the samples. '
                                 'Verify whether this alleged optical defect is visible in image 2: '+claim)
                 if kind=='whole' and tentative:
+                    record['whole_context_visible']=True
                     # A crop cannot establish that a subject, garment or prop is missing
                     # elsewhere in the scene. Keep the original picture with that evidence.
                     overview=overview_image.copy()

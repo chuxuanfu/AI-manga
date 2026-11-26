@@ -687,6 +687,17 @@ class LocalRepairTests(unittest.TestCase):
         self.assertEqual({forward['status'], reverse['status']}, {'intact', 'new_damage'})
         self.assertEqual(len(forward['transition_sites']), 4)
 
+    def test_native_line_pairs_require_repeated_members_across_a_stroke(self):
+        from print_artifacts import resolved_line_pair
+        from print_judge import resize_only
+        from PIL import ImageFilter
+        im=Image.new('RGB',(192,192),'#c8b79b');d=ImageDraw.Draw(im)
+        for x in range(45,150,8):d.line((x,24,x,167),fill='#35465e',width=2)
+        small=im.resize((32,32),Image.Resampling.LANCZOS).resize(im.size,Image.Resampling.LANCZOS)
+        self.assertIsNotNone(resolved_line_pair(small,im))
+        self.assertIsNone(resolved_line_pair(small,small))
+        self.assertEqual(resize_only((small,small.filter(ImageFilter.UnsharpMask(2,200,0))))['condition'],'resize_or_sharpen')
+
     def test_flat_color_spill_must_cross_the_target_and_destroy_existing_lines(self):
         from construction_review import overpainted_rectangle
         src=Image.new('RGB',(240,160),'#235742')

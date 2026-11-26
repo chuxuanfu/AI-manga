@@ -54,3 +54,39 @@ def unsupported_lines(source, candidate):
             bins=len(np.unique(passing.astype(int)//15))
             if (bins,len(passing))>(widest,best):widest,best=bins,len(passing)
     return {'hold':widest>=5 and best>=8,'rays':best,'angle_bins':widest,'unsupported_segments':len(candidates)}
+
+
+def resolved_line_pair(low, high):
+    """Locate two sustained same-polarity marks that blended at the lower scale."""
+    import cv2
+    import numpy as np
+    if low.size!=high.size or min(high.size)<64:return None
+    old,new=[np.asarray(im.convert('L'),dtype=np.float32) for im in (low,high)]
+    best=None
+    for dx,dy in ((1,0),(0,1),(1,1),(1,-1)):
+        tx,ty=-dy,dx
+        def along(im,offset,x,y):
+            return np.roll(im,(offset*y,offset*x),axis=(0,1))
+        # Average along each stroke so isolated speckles do not count as separable lines.
+        planes=[sum(along(im,k,tx,ty) for k in range(-6,7))/13 for im in (old,new)]
+        for gap in (2,3,4,5):
+            samples=[[along(plane,k*gap,dx,dy) for k in (-2,-1,0,1,2)] for plane in planes]
+            for polarity in (-1,1):
+                readings=[]
+                for left,first,mid,second,right in samples:
+                    contrast=np.minimum.reduce([(left-first)*polarity,(mid-first)*polarity,
+                                                 (mid-second)*polarity,(right-second)*polarity])
+                    readings.append(contrast)
+                old_contrast,new_contrast=readings
+                # Compare an actual alternating five-sample pattern, not the
+                # peak gradient of one sharp edge or its sharpening halo.
+                qualify=(new_contrast>=13)&(old_contrast>=-3)&(old_contrast<=7)&(new_contrast-old_contrast>=11)
+                support=sum(along(qualify.astype(np.uint8),k,tx,ty) for k in range(-4,5))
+                merit=np.where(support>=7,new_contrast-np.maximum(0,old_contrast),0)
+                merit[:20]=0;merit[-20:]=0;merit[:,:20]=0;merit[:,-20:]=0
+                _,peak,_,(x,y)=cv2.minMaxLoc(merit)
+                if peak>0 and (best is None or peak>best['strength']):
+                    best=dict(center=[x,y],normal=[dx,dy],line_separation_px=2*gap*(dx*dx+dy*dy)**.5,
+                              polarity='dark' if polarity==1 else 'light',lower_contrast=round(float(old_contrast[y,x]),2),
+                              print_contrast=round(float(new_contrast[y,x]),2),strength=round(peak,2))
+    return best
