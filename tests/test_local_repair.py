@@ -22,6 +22,37 @@ from structure import inspect_small_figure_support
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_disjoint_word_polygons_do_not_erase_a_neighbouring_contour(self):
+        from lettering import glyph_mask
+        image=Image.new('RGB',(160,80),'white')
+        canvas=ImageDraw.Draw(image)
+        support=Image.new('L',image.size)
+        for x in (15,105):
+            ImageDraw.Draw(support).rectangle((x,30,x+30,52),fill=255)
+            for i in range(3):
+                canvas.rectangle((x+4+i*8,35,x+7+i*8,47),fill='black')
+        canvas.rectangle((68,33,73,50),fill='black')
+        mask=glyph_mask(image,support)
+        self.assertIsNotNone(mask)
+        self.assertIsNotNone(mask.crop((15,30,45,52)).getbbox())
+        self.assertIsNone(mask.crop((60,25,86,57)).getbbox())
+
+    def test_optical_recheck_grades_the_actual_print_before_comparing(self):
+        from print_judge import compare_local_definition
+        source, final = object(), object()
+        clear = {'condition': 'well_defined', 'visible_edges': 'separate feather tips'}
+        blurred = {'condition': 'optically_degraded', 'visible_edges': 'fused tips'}
+        for replies, expected in [([blurred], blurred), ([clear, blurred], blurred),
+                                  ([clear, clear], clear)]:
+            with self.subTest(replies=replies), patch('print_judge.ask', side_effect=[
+                    json.dumps(reading) for reading in replies]) as ask:
+                result = compare_local_definition('local', [source, final])
+                self.assertEqual(result['condition'], expected['condition'])
+                self.assertEqual(ask.call_args_list[0].args[1], [final])
+                self.assertEqual(ask.call_count, len(replies))
+                if len(replies) == 2:
+                    self.assertEqual(ask.call_args_list[1].args[1], [final, source])
+
     def test_occluded_figure_requires_a_traced_edge_and_the_requested_pose(self):
         box = [610, 290, 655, 415]
         for outcome, connection, pose, expected in [('lower_body_occluded', True, True, True),

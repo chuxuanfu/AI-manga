@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-41'
+REVISION = 'print-inspection-42'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -425,15 +425,35 @@ HARDWARE_CLAIM=re.compile(r'\b(?:brackets?|hinge[sd]?|sockets?|bolts?|welds?|riv
 
 
 def compare_local_definition(url, pair):
-    fields={'visible_edges':{'type':'string'},'condition':{'enum':['well_defined','optically_degraded','insufficient']}}
-    message=('The two pictures show the SAME small patch. Image 1 enlarges its lower-resolution '
-             'source. Image 2 shows the higher-resolution rendition. In visible_edges name an actual '
-             'ink stroke, tip, material transition or flat tone and how it renders in each picture. '
-             'Judge only optical definition within these pixels. Soft enlarged boundaries without '
-             'resolved internal marks, excessive sharpening, noise and duplicated outlines are degraded. '
-             'An intentionally flat region can qualify when its boundaries or smooth tones hold up. '
-             'If the actual detail is too ambiguous for this comparison, choose insufficient.')
-    return json.loads(ask(url,pair,message,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    # With both samples visible, a reader can correctly describe blur in the source
+    # and accidentally attribute its severity to the master. Inspect the master alone first.
+    properties = {'visible_edges': {'type': 'string'},
+                  'condition': {'enum': ['well_defined', 'optically_degraded', 'insufficient']}}
+    schema = {'type': 'object', 'properties': properties, 'required': list(properties)}
+    message = ('Inspect only this final print patch at its pixel scale. Trace a specific material edge, '
+               'separated fine stroke or smooth intended tone. Flag smeared or interpolated focal forms, '
+               'halos, noisy sharpening and invented or doubled outlines. For an ambiguous sample choose '
+               'insufficient. State what the pixels actually show.')
+    final = json.loads(ask(url, [pair[1]], message, schema, tag=MODEL))
+    if final['condition'] != 'well_defined' or not final['visible_edges'].strip():
+        return final
+    message = ('Image 1 is the final print patch you are grading. Image 2 is its lower-resolution source '
+               'at matched scale. Trace the same visible feature in each. In image 1 look for a cleanly '
+               'resolved form or intentionally smooth tone. If image 1 merely enlarges a soft focal '
+               'feature, loses real structure or adds noise or halos, choose optically_degraded. '
+               'If the comparison is ambiguous choose insufficient. Classify image 1 only.')
+    graded = json.loads(ask(url, [pair[1], pair[0]], message, schema, tag=MODEL))
+    return dict(graded, final_patch=final)
+
+
+def detail_comparison_prompt(question, brief):
+    return ('You are inspecting two matched print samples for optical resolution. '+question+
+            ' Grade the visible marks and tones in image 2. Whole-scene anatomy, the number of objects '
+            'and connections to objects outside this field have their own inspections. For clear give '
+            'specific pixel evidence, operation none and zero coordinates. When broader context is '
+            'needed to distinguish intended softness choose uncertain. Named subjects may be outside '
+            'both samples. Use the art direction only to interpret the marks that are present: '+brief)
+
 
 
 CROP_OMISSION=re.compile(r'(?:crop|close.up|field of view).{0,115}?(?:exclude|cut.?off|does not (?:include|show)|'
@@ -841,6 +861,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             if construction_draft:
                 question+=' This is the composition draft before print rendering. Check visible structure, declared material and contact at this drawing scale. Fine print resolution is evaluated on a later file.'
             prompt=GUIDE+'\n'+question+' A quiet or intentionally blurred surface can pass on its own. Never guess what is outside the crop.\n'+guidance
+            if kind in ('comparison','draft-comparison'):
+                prompt=detail_comparison_prompt(question,brief)
             if kind=='palette':
                 # These thumbnails carry color relationships, not reliable small contours.
                 # Construction and all overlapping native tiles have dedicated views.
@@ -897,6 +919,9 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     draw=ImageDraw.Draw(overview)
                     draw.rectangle(tuple(round(v*n/k) for v,n,k in zip(rect,overview.size*2,image.size*2)),outline='#ec407a',width=2)
                     verify=GUIDE+' '+question+' The last image locates the inspected area in the full composition. Use it to identify deliberate softness. Previous claim: '+claim+' Brief: '+inspection_brief
+                    if kind in ('comparison','draft-comparison'):
+                        verify=(detail_comparison_prompt(question,brief)+' Image 3 locates the samples. '
+                                'Verify whether this alleged optical defect is visible in image 2: '+claim)
                 second=judge_view(url,region,verify,overview=overview)
                 record['context_pixels']=list(context)
                 record['corroboration']=second

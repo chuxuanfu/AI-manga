@@ -6,7 +6,7 @@ import re
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 from erase import erase_region, MODEL as INPAINTER
 from evidence import ask, backend, model_identity
@@ -33,14 +33,22 @@ def lettering_polygons(image):
     model.setBinaryThreshold(.3)
     model.setPolygonThreshold(.80)
     model.setUnclipRatio(1.6)
-    views=[(0,0,image.width,image.height)]
+    views=[(0,0,image.width,image.height,1088,1.)]
     if max(image.size)>2304:
-        views.extend((x,y,min(x+SIDE,image.width),min(y+SIDE,image.height))
+        views.extend((x,y,min(x+SIDE,image.width),min(y+SIDE,image.height),1088,1.)
                      for y in axes(image.height) for x in axes(image.width))
+    # Small inscriptions disappear in the full-frame OCR input. A second pass
+    # gives a six-pixel letter roughly twelve detector pixels, independent of canvas size.
+    side=480
+    def starts(length):
+        last=max(0,length-side)
+        return list(range(0,last,side-64))+[last]
+    views.extend((x,y,min(x+side,image.width),min(y+side,image.height),960,2.)
+                 for y in starts(image.height) for x in starts(image.width))
     candidates=[]
-    for left,top,right,bottom in views:
+    for left,top,right,bottom,limit,zoom in views:
         crop=image.crop((left,top,right,bottom))
-        scale=min(1.,1088/max(crop.size))
+        scale=min(zoom,limit/max(crop.size))
         model.setInputSize(tuple(max(32,round(v*scale/32)*32) for v in crop.size))
         quads,scores=model.detect(cv2.cvtColor(np.asarray(crop),cv2.COLOR_RGB2BGR))
         for quad,score in zip(quads,scores):
@@ -50,7 +58,8 @@ def lettering_polygons(image):
     kept=[]
     for _,quad in sorted(candidates,key=lambda item:-item[0]):
         area=cv2.contourArea(quad)
-        if any(cv2.intersectConvexConvex(quad,other)[0]>.85*min(area,cv2.contourArea(other)) for other in kept):continue
+        if any((overlap:=cv2.intersectConvexConvex(quad,other)[0])>
+               .80*(area+cv2.contourArea(other)-overlap) for other in kept):continue
         kept.append(quad)
     return [quad.tolist() for quad in kept]
 
@@ -82,6 +91,13 @@ def glyph_mask(image, proposal):
     if not selected.any():return None
     stroke_pad=min(9,max(3,2*round(min(width,height)/32)+1))
     selected=cv2.dilate(selected,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(stroke_pad,stroke_pad)))
+    # Individual letters may extend a few pixels above the detected word.
+    # A shared bounding box across separate words can also enclose a hand or an
+    # envelope. Keep edits close to the detector's actual polygons.
+    radius=min(9,max(2,round(min(width,height)*.12)))
+    near=cv2.dilate(support[top:bottom,left:right],
+                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(2*radius+1,2*radius+1)))
+    selected=cv2.bitwise_and(selected,near)
     full=Image.new('L',image.size)
     full.paste(Image.fromarray(selected),bounds[:2])
     return full
@@ -91,7 +107,7 @@ def clean_lettering(path, brief, folder, stage):
     if not blank_surfaces_requested(brief) or not DETECTOR.is_file() or not INPAINTER.is_file():
         return path
     source_id = fingerprint(path)
-    key = hashlib.sha256(json.dumps(['lettering-v4', source_id, brief, model_identity(MODEL)],
+    key = hashlib.sha256(json.dumps(['lettering-v5', source_id, brief, model_identity(MODEL)],
                                      ensure_ascii=False).encode()).hexdigest()
     report = folder / (stage + '-lettering.json')
     candidate = folder / (stage + '-plain-surfaces.png')
@@ -138,10 +154,31 @@ def clean_lettering(path, brief, folder, stage):
                         'surface_detail. If the pixels cannot distinguish these, use insufficient_evidence.')
             result = json.loads(ask(url,[view,overview],question,schema,tag=MODEL))
             record['observations'].append(dict(box=list(map(int,(left,top,width,height))),reading=result))
+            # A schema label in the prose field is not visual evidence. Repeat
+            # the close inspection without the overview when the two fields disagree.
+            if result['appearance'].strip() in fields['feature']['enum']:
+                described=json.loads(ask(url,[view],
+                    'Describe the marked surface and its visible strokes in one concrete sentence. '
+                    'Mention the color, layout and whether these marks form tiny writing or object contours.',
+                    {'type':'object','properties':{'description':{'type':'string'}},'required':['description']},tag=MODEL))
+                evidence=described['description'].strip()
+                vote=json.loads(ask(url,[view],'Look at the physical marks and verify this observation: '
+                    +evidence+'. Classify the marks. Use insufficient_evidence for ambiguity.',
+                    {'type':'object','properties':{'feature':fields['feature']},'required':['feature']},tag=MODEL))
+                result={'appearance':evidence,'feature':vote['feature']}
+                record['observations'][-1]['independent_reading']=result
             if result['feature']=='printed_or_handwritten_marks' and result['appearance'].strip():
-                selected = (np.asarray(masks)>0) & (labels==index)
-                strokes=glyph_mask(image,Image.fromarray(selected.astype(np.uint8)*255))
-                if strokes is not None:confirmed.append(strokes)
+                # Mask each word separately. Neighbouring lines can have different ink
+                # polarity or be printed on opposite sides of an object boundary.
+                group_mask=Image.new('L',image.size)
+                for quad in quads:
+                    cx,cy=np.mean(quad,axis=0).astype(int)
+                    if not (0<=cx<image.width and 0<=cy<image.height and labels[cy,cx]==index):continue
+                    word=Image.new('L',image.size)
+                    ImageDraw.Draw(word).polygon([tuple(point) for point in quad],fill=255)
+                    strokes=glyph_mask(image,word)
+                    if strokes is not None:group_mask=ImageChops.lighter(strokes,group_mask)
+                if group_mask.getbbox():confirmed.append(group_mask)
     if confirmed:
         cleaned=image
         for mask in confirmed:
