@@ -307,7 +307,7 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage,
     view.thumbnail((960,960),Image.Resampling.LANCZOS)
     bbox=[round(1000*(v-origin)/length) for v,origin,length in zip((l,t,r,b),(x,y,x,y),(width,height,width,height))]
     locator=edit_locator(image,(x,y,x+width,y+height))
-    key=hashlib.sha256(view.tobytes()+locator.tobytes()+json.dumps([bbox,target,instruction,medium,brief,model]).encode()).hexdigest()
+    key=hashlib.sha256(view.tobytes()+locator.tobytes()+json.dumps(['art-direction-v2',bbox,target,instruction,medium,brief,model]).encode()).hexdigest()
     path=directory/(stage+'-repair-plan.json')
     cached=json.loads(path.read_text()) if path.is_file() else {}
     if cached.get('key')==key:return cached['box'],cached['part'],cached['instruction']
@@ -322,7 +322,12 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage,
             'name the complete part. Image 2 locates image 1 in the whole scene. Trace the part to its parent '
             'there and establish whether it touches the apparent surface or is in front of it. Describe the '
             'actual connection or separation. Translate the request into a physically possible repair. '
-            'Treat guesses by previous readers as hypotheses. Keep the visible contact and material plausible. '
+            'Treat guesses by previous readers as hypotheses. Follow the ORIGINAL REQUEST for named colors, '
+            'materials, style and actions. The broken surface is not authoritative about what the intended '
+            'material looks like. If its repeated shapes are ambiguous, specify an identifiable construction '
+            'appropriate to the request, including the scale, direction and grouping of marks. When the '
+            'construction is unspecified, choose a simple physically credible one. Trace intact lines '
+            'entering and leaving the proposed edit and keep their positions. Preserve deliberate softness. '
             'In corrected_view describe the correct local pose, material, '
             'orientation, color and connection visible in this framing for an illustrator. Use under '
             '45 English words, phrased positively. Target: '+str(target)+'. Repair: '+instruction+
@@ -343,7 +348,8 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage,
     combined=[min(local[0],l),min(local[1],t),max(local[2],r),max(local[3],b)]
     bounds=[max(0,min(1000,round(v*1000/n))) for v,n in zip(combined,image.size*2)]
     name=part.strip()
-    correction=corrected.strip()
+    # Preserve the repair objective as well as the planner's drawable description.
+    correction=corrected.strip()+' Required visible improvement, within the original scene: '+instruction
     data={'key':key,'box':bounds,'part':name,'instruction':correction}
     temp=path.with_suffix('.tmp')
     temp.write_text(json.dumps(data,ensure_ascii=False,indent=2));temp.replace(path)
