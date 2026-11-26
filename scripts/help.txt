@@ -6,7 +6,7 @@ AI Manga Studio
   -p, --prompt TEXT       Describe the scene in Chinese or English
   -o, --output-dir DIR    Copy accepted files to DIR (one subfolder per release)
   --style TEXT            Optional medium or style, e.g. anime-key-visual or "Japanese watercolor"
-  --base-model MODEL      auto (default) or qwen-image-2512 for an original text composition
+  --base-model MODEL      auto (default), qwen-image-2512 (four steps), or qwen-image-2512-full (50 steps)
   --aspect RATIO          auto (default), 2:3, 3:2, 9:16, 16:9, 1:1
   --seed N                Starting seed (default random)
   --candidates N          Drafts per round, 1 to 8 (default 3)

@@ -469,6 +469,10 @@ class LocalRepairTests(unittest.TestCase):
         self.assertEqual(nodes['LoraLoaderModelOnly']['lora_name'], DRAW_LORA)
         self.assertEqual(nodes['KSampler']['steps'], 4)
         self.assertEqual(nodes['KSampler']['seed'], 17)
+        full = text_composition('Two bookends and a fern',17,1664,928,'full',full=True).api
+        native_nodes={n['class_type']:n['inputs'] for n in full.values()}
+        self.assertNotIn('LoraLoaderModelOnly',native_nodes)
+        self.assertEqual((native_nodes['KSampler']['steps'],native_nodes['KSampler']['cfg']),(50,4.))
         self.assertNotIn('LoadImage', nodes)
         self.assertEqual(graph[nodes['KSampler']['latent_image'][0]]['class_type'], 'EmptySD3LatentImage')
 

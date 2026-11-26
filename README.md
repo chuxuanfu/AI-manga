@@ -34,6 +34,7 @@ bash Studio.command
 | `--style TEXT` | 使用提示词中的画风，未指定时采用工作室插画风格。内置的 anime-key-visual 使用有粗细变化的线稿、分明的明暗面和受控高光 |
 | `--aspect auto/2:3/3:2/9:16/16:9/1:1` | 从描述推断，未注明时竖幅 2:3 |
 | `--review-print PNG --reviewed-image DRAFT` | 对已有 4K 修订稿核验同源构图、实际像素和全部终审项。默认从底图精绘 |
+| `--base-model MODEL` | 自动混合底图候选。支持的设备可指定 `qwen-image-2512` 四步起稿或 `qwen-image-2512-full` 五十步起稿 |
 | `--seed N` | 随机选择起始种子 |
 | `--candidates 1…8` | 完整流程每轮 3 张初始候选，快捷底图模式 1 张 |
 | `--max-rounds N` | 0，持续尝试至通过。达到显式上限时保留进度 |
@@ -45,6 +46,8 @@ bash Studio.command
 | `--from-image PNG` | 从提示词生成新构图 |
 
 使用 `--help` 查看日常参数，`--advanced-help` 查看局部返修选项。节点编辑器使用本机地址 127.0.0.1:8193。
+
+Qwen 的完整起稿模式使用基础模型、50 步和 4.0 引导强度，按模型原生画幅从空白画布采样。每张底图的计算量较大。自动模式在前两轮退稿后需要重新构图时，才会为一个独立文字候选启用完整采样。两种模式都经过相同的构图、精绘和原尺寸审查。[Qwen 官方模型说明](https://huggingface.co/Qwen/Qwen-Image-2512)
 
 ## 成品在哪里
 

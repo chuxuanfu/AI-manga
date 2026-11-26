@@ -48,28 +48,30 @@ DRAW_UNET='qwen_image_2512_int8_convrot.safetensors'
 DRAW_LORA='Qwen-Image-2512-Lightning-4steps-V1.0-bf16.safetensors'
 
 
-def has_drawing_model(model_root):
-    files=(('diffusion_models',DRAW_UNET),('loras',DRAW_LORA),('text_encoders',EDIT_CLIP),
-           ('vae','qwen_image_vae.safetensors'))
+def has_drawing_model(model_root, *, full=False):
+    files=[('diffusion_models',DRAW_UNET),('text_encoders',EDIT_CLIP),('vae','qwen_image_vae.safetensors')]
+    if not full:files.append(('loras',DRAW_LORA))
     return all((model_root/folder/name).is_file() for folder,name in files)
 
 
-def text_composition(text,seed,width,height,prefix):
-    """Qwen-Image-2512 draws from text on an empty canvas with its own Lightning weights."""
+def text_composition(text,seed,width,height,prefix,*,full=False):
+    """Use the base model's native 50-step schedule or its distilled four-step adapter."""
     g=Graph('studio-qwen-text-composition')
     unet=g.add('UNETLoader','Drawing model',(0,0),['MODEL'],values={'unet_name':DRAW_UNET,'weight_dtype':'default'})
     clip=g.add('CLIPLoader','Text encoder',(0,205),['CLIP'],values={'clip_name':EDIT_CLIP,'type':'qwen_image','device':'default'})
     vae=g.add('VAELoader','Image codec',(0,410),['VAE'],values={'vae_name':'qwen_image_vae.safetensors'})
-    model=g.add('LoraLoaderModelOnly','Four-step drawing',(340,0),['MODEL'],[('model',(unet,0))],
-                values={'lora_name':DRAW_LORA,'strength_model':1.})
+    model=unet if full else g.add('LoraLoaderModelOnly','Four-step drawing',(340,0),['MODEL'],[('model',(unet,0))],
+                                  values={'lora_name':DRAW_LORA,'strength_model':1.})
     model=g.add('ModelSamplingAuraFlow','Sampling shift',(695,0),['MODEL'],[('model',(model,0))],values={'shift':3.1})
     pos=g.add('CLIPTextEncode','Art direction',(340,190),['CONDITIONING'],[('clip',(clip,0))],{'text':text})
-    neg=g.add('CLIPTextEncode','Unconditional',(340,425),['CONDITIONING'],[('clip',(clip,0))],{'text':''})
+    negative='unintended blur, fused contours, disconnected limbs, double outlines, inconsistent shadows' if full else ''
+    neg=g.add('CLIPTextEncode','Negative conditioning',(340,425),['CONDITIONING'],[('clip',(clip,0))],{'text':negative})
     lat=g.add('EmptySD3LatentImage','Blank canvas',(695,420),['LATENT'],
               values={'width':width,'height':height,'batch_size':1})
-    params=dict(seed=seed,steps=4,cfg=1.,sampler_name='euler',scheduler='simple',denoise=1.)
+    steps,cfg=(50,4.) if full else (4,1.)
+    params=dict(seed=seed,steps=steps,cfg=cfg,sampler_name='euler',scheduler='simple',denoise=1.)
     sample=g.add('KSampler','Draw composition',(1020,125),['LATENT'],[('model',(model,0)),('positive',(pos,0)),
-                 ('negative',(neg,0)),('latent_image',(lat,0))],params,[seed,'fixed',4,1.,'euler','simple',1.])
+                 ('negative',(neg,0)),('latent_image',(lat,0))],params,[seed,'fixed',steps,cfg,'euler','simple',1.])
     decoded=g.add('VAEDecode','Decode',(1340,145),['IMAGE'],[('samples',(sample,0)),('vae',(vae,0))])
     g.save('Local drawing',(1620,145),decoded,prefix)
     return g
