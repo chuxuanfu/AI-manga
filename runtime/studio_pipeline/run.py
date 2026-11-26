@@ -17,7 +17,7 @@ import torch
 
 from gallery import write_gallery, write_focus_proof
 from graphs import UP, draft, finish
-from illustration import installed_editor, instruction_edit, detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
+from illustration import has_drawing_model, text_composition, DRAW_UNET, installed_editor, instruction_edit, detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
 from reference_review import compare
 from structure import inspect_structure
 from construction_review import review as review_construction
@@ -306,6 +306,7 @@ def main():
     parser.add_argument('-p','--prompt',help='中文或英文画面描述')
     parser.add_argument('-o','--output-dir',type=Path,help='将选中的校样或通过终审的成品复制到此目录')
     parser.add_argument('--aspect',choices=('auto','2:3','9:16','16:9','1:1'),default='auto',help='画幅比例，默认从描述判断，未指定时为 2:3')
+    parser.add_argument('--base-model',choices=('auto','qwen-image-2512'),default='auto',help='纯文字底图绘制模型，默认自动搭配候选')
     parser.add_argument('--style',help='可选画材或画风，例如透明水彩')
     parser.add_argument('--accept-final',metavar='SHA256',help='目检后，按当前母版指纹标记定稿')
     parser.add_argument('--skip-focus',nargs='*',type=int,choices=(1,2,3),default=None,help='对照后撤回指定编号的8K局部采样；不带编号可全部恢复。')
@@ -331,6 +332,12 @@ def main():
     parser.add_argument('--object',help='可选，指定需要保护轮廓的对象，如 porcelain teapot')
     parser.add_argument('--repair-text',help='这个区域应当画成什么样')
     args=parser.parse_args()
+    if args.base_model=='qwen-image-2512':
+        native_requested=any(term in (args.prompt or '').lower().replace(' ','') for term in ('原生4k','native4k'))
+        if args.from_image or args.reviewed_image or args.native_4k or native_requested:
+            parser.error('--base-model qwen-image-2512 适用于从文字起稿，请使用模型原生画幅')
+        if not has_drawing_model(RUNTIME/'ComfyUI/models'):
+            parser.error('缺少 Qwen-Image-2512 模型组件，请先运行安装器')
     args.eight_k=args.eight_k or args.full_8k_diffusion or args.keep_native or args.skip_focus is not None
     if args.prompt and not args.style and KEY_VISUAL not in args.prompt:
         if args.prompt.lstrip().startswith(('日系商业插画，','日系商业插画：','日系商业插画,','日系商业插画:')):
@@ -441,6 +448,7 @@ def main():
         rec['输入底图']=[str(p.resolve()) for p in args.from_image]
     else:
         args.from_image=[Path(p) for p in rec.get('输入底图',[])]
+    if args.base_model!='auto':rec['base_model']=args.base_model
     rec['候选数']=args.candidates
     if not args.candidate_image and not args.reviewed_image and not args.repair_box and rec.get('底图人工审定'):
         args.reviewed_image=Path(rec['底图人工审定'])
@@ -469,7 +477,17 @@ def main():
         # both an independent layout and a text-only alternative to select from.
         borrow=any(term in prompt.lower() for term in ('参考图','参考画','像图','reference image','reference illustration'))
         own_first=rec.get('画法自适应') and bool(rec.get('画材')) and not borrow and not rec.get('原生4K') and not args.native_only
-        if (own_first and index==0) or (not own_first and index==2 and rec.get('画法自适应')):
+        text_slot=(index==1 or (args.candidates==1 and args.retry_round and index==0))
+        automatic_text=text_slot and not borrow and not rec.get('原生4K') and not args.native_only and not args.from_image
+        if rec.get('base_model')=='qwen-image-2512' or (automatic_text and has_drawing_model(RUNTIME/'ComfyUI/models')):
+            # The text generator can reconstruct the relationships directly from the
+            # brief, independently of any earlier image or rejected silhouette.
+            native={(832,1248):(1088,1632),(720,1280):(1008,1792),(1280,720):(1792,1008),
+                    (1024,1024):(1328,1328)}[width,height]
+            direction=('Draw the finished illustration in the medium and palette specified by the author. '
+                       'When unspecified, use a Japanese storybook illustration style. ')
+            graph=text_composition(direction+caption,draw_seed,*native,name)
+        elif (own_first and index==0) or (not own_first and index==2 and rec.get('画法自适应')):
             direction=('Follow the medium and palette in the request. When unspecified, draw a finished Japanese storybook illustration. '
                        'Place each principal subject once. At every overlap, keep the nearer contour legible. Show a plausible support or occluding surface for visible figures, tools and animals. Preserve all requested interactions. ')
             graph=text_draft(direction+caption,draw_seed,*size,name)
@@ -485,6 +503,12 @@ def main():
         if KEY_VISUAL not in prompt or not reference_style or args.repair_box or args.from_image:
             return path
         with Image.open(path) as layout:
+            try:
+                workflow=json.loads(layout.info.get('prompt','{}'))
+            except (TypeError,ValueError):
+                workflow={}
+            if isinstance(workflow,dict) and any(isinstance(node,dict) and node.get('inputs',{}).get('unet_name')==DRAW_UNET for node in workflow.values()):
+                return path
             source=local_image(layout.convert('RGB'))
             size=layout.size
         destination=prefix+'/candidates/'+label+'-painted'
@@ -509,7 +533,7 @@ def main():
         args.proof_only=True
     def check(path,stage,focus=None):
         key = hashlib.sha256(path.read_bytes()).hexdigest()
-        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v15' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v4-frame-boundary'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
+        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v15' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v5-grounded-figures'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'

@@ -18,6 +18,7 @@
 !/workflows/
 /workflows/*
 !/workflows/text-to-wallpaper.json
+!/workflows/text-to-image-qwen-2512.json
 !/workflows/reference-to-wallpaper.json
 !/workflows/refine-to-4K.json
 !/workflows/anime-key-visual-color.json

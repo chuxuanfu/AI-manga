@@ -253,5 +253,19 @@
     "sha256": "22226e8d05d354bb356627d428809f5afd7819399b077238a2b70a82883a904f",
     "size": 849608296,
     "profile": "large-edit"
+  },
+  {
+    "path": "runtime/ComfyUI/models/diffusion_models/qwen_image_2512_int8_convrot.safetensors",
+    "url": "https://huggingface.co/Winnougan/Qwen-Image-INT8/resolve/9916188c3b14fb0146b8cc0bd0f1b24116e87b7d/qwen_image_2512_int8_convrot.safetensors",
+    "sha256": "af5ff38ca2b59ade4c13aa046dc39acae78ac0fe8cb85d8f424a30150b954260",
+    "size": 20533609455,
+    "profile": "large-edit"
+  },
+  {
+    "path": "runtime/ComfyUI/models/loras/Qwen-Image-2512-Lightning-4steps-V1.0-bf16.safetensors",
+    "url": "https://huggingface.co/lightx2v/Qwen-Image-2512-Lightning/resolve/4609161e308ce82018a42c2a0c9b107e865bb751/Qwen-Image-2512-Lightning-4steps-V1.0-bf16.safetensors",
+    "sha256": "de0d236e54ecf2c43b32447d13478c6eae0d361b1fed48c69675b084fa240d87",
+    "size": 849608296,
+    "profile": "large-edit"
   }
 ]

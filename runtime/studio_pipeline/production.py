@@ -283,6 +283,7 @@ def run(args,job,entry):
             if args.repair_box:options+=['--repair-box',*map(str,args.repair_box),'--repair-text',args.repair_text]
             if args.object:options+=['--object',args.object]
             if getattr(args,'aspect','auto')!='auto':options+=['--aspect',args.aspect]
+            if args.base_model!='auto':options+=['--base-model',args.base_model]
             if args.candidates:options+=['--candidates',str(args.candidates)]
             state=dict(prompt=args.prompt.strip(),seed=args.seed if args.seed is not None else secrets.randbelow(2**45),
                        delivery_edge=7680 if args.eight_k else 3840,options=options,rounds=[],status='准备离线出片',port=args.port)

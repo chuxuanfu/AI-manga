@@ -228,6 +228,33 @@ def inspect_repaired_region(url, image, history, brief):
     return row,{'inventory':inventory,'current_condition':verdict}
 
 
+def native_review_key(image, rect, size, prompt, model_id):
+    """Bind a local tile observation to exactly what the same reviewer sees."""
+    inputs=[REVISION,model_id,prompt,NATIVE_SCREEN,image.mode,image.size,rect,size]
+    key=hashlib.sha256(json.dumps(inputs,sort_keys=True,ensure_ascii=False).encode())
+    key.update(image.tobytes())
+    return key.hexdigest()
+
+
+def previous_native_readings(root, current_report, brief, model_id):
+    if root.parent.name=='rounds':
+        reports=root.parent.glob('*/print-review/*.json')
+    else:
+        reports=root.glob('print-review/*.json')
+    readings={}
+    for path in reports:
+        if path==current_report:continue
+        report=json.loads(path.read_text())
+        if (report.get('revision'),report.get('model_id'),report.get('brief'))!=(REVISION,model_id,brief):continue
+        for view in report.get('views',[]):
+            key=view.get('native_key')
+            row=view.get('observation',{})
+            if (key and view.get('view')=='native' and 'reused_from' not in view and
+                    row.get('decision')=='clear' and str(row.get('evidence') or '').strip()):
+                readings[key]=(row,report['sha256'])
+    return readings
+
+
 def inspect_native(url,image,prompt):
     """Inspect every pixel window. Generate localization coordinates only for suspected defects."""
     row=json.loads(ask(url,[image],prompt+' Report the decision and a brief concrete observation.',
@@ -696,6 +723,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             windows[position:position]=list(dict.fromkeys(comparisons))
         result.update(size=list(image.size),planned=len(windows),planned_native=sum(k=='native' for k,_ in windows))
         print(f'本机逐块终审 {len(result["views"])}/{len(windows)}，原像素 {result["planned_native"]} 块',flush=True)
+        native_readings=None
         for i,(kind,rect) in enumerate(windows):
             if i<len(result['views']):continue
             started=time.monotonic()
@@ -753,11 +781,20 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                         'and coordinates to zero. For a color concern give a local box in the final '
                         'image, normalized to 0..1000, and a concrete color correction. Brief: '+brief)
             prior_reading=None
-            if kind=='previous_local':
+            reuse=None
+            if kind=='native':
+                if native_readings is None:
+                    native_readings=previous_native_readings(root,report,brief,model_id)
+                native_key=native_review_key(view,rect,image.size,prompt,model_id)
+                reuse=native_readings.get(native_key)
+                row=reuse[0] if reuse else inspect_native(url,view,prompt)
+            elif kind=='previous_local':
                 row,prior_reading=inspect_repaired_region(url,view,known[rect]['symptom'],guidance)
             else:
-                row=inspect_native(url,view,prompt) if kind=='native' else judge_view(url,view,prompt)
+                row=judge_view(url,view,prompt)
             record={'view':kind,'pixels':list(rect),'observation':row}
+            if kind=='native':record['native_key']=native_key
+            if reuse:record['reused_from']=reuse[1]
             if prior_reading:record['current_pixel_check']=prior_reading
             if row['decision']!='clear':
                 # Inspect wider context separately using source pixels.

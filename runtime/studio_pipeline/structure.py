@@ -81,6 +81,32 @@ def inspect_small_figure_support(url, image, box, brief):
     return result
 
 
+def locate_unboxed_figures(url, image, model):
+    """Ask a separate reader to ground its inventory in the unlabelled original."""
+    whole=ImageOps.contain(image,(1400,1400),Image.Resampling.LANCZOS)
+    coords={key:{'type':'integer','minimum':0,'maximum':1000} for key in ('left','top','right','bottom')}
+    fields={**coords,'visible_body':{'type':'string'}}
+    schema={'type':'object','properties':{'figures':{'type':'array','items':{
+        'type':'object','properties':fields,'required':list(fields)}}},'required':['figures']}
+    question=('Locate every separately recognizable human figure in this original illustration, including small '
+              'background workers. For each one, identify a visible head and body, then bound that particular '
+              'figure tightly using coordinates between 0 and 1000 relative to the full picture. '
+              'Do not interpret masts, knots, empty clothing or patches of color as people. '
+              'Report an empty list if no human figure can be localized.')
+    raw=json.loads(ask(url,[whole],question,schema,tag=model))
+    boxes=[]
+    for figure in raw['figures']:
+        box=[figure[key] for key in coords]
+        l,t,r,b=box
+        if not figure['visible_body'].strip() or not (0<=l<r<=1000 and 0<=t<b<=1000):
+            return raw,[]
+        for x,y,u,v in boxes:
+            overlap=max(0,min(r,u)-max(l,x))*max(0,min(b,v)-max(t,y))
+            if overlap>.8*min((r-l)*(b-t),(u-x)*(v-y)):return raw,[]
+        boxes.append(box)
+    return raw,boxes
+
+
 def inspect_structure(im,detected,proof,observed_counts=None,brief=''):
     boxes=context_boxes(im,detected)
     width,height=620,660
@@ -130,6 +156,11 @@ def inspect_structure(im,detected,proof,observed_counts=None,brief=''):
                     result['verdict']='unclear'
                     result['support_or_occlusion']='独立读图见到人物，但检测器未定位到人物，结构审查也未确认人物画幅，需目检。'
         people=[r['box'] for r in detected if r.get('name')=='person' and len(r.get('box',[]))==4]
+        if (result.get('person_evidence_conflict') and initial_verdict=='coherent' and 0<observed_people<=6):
+            from construction_review import LARGE
+            with backend(LARGE) as address:
+                grounded,people=locate_unboxed_figures(address,im,LARGE)
+            result['grounded_figures']=grounded
         if (result['verdict']=='unclear' and model_framing=='no_person' and people and len(people)==observed_people
                 and all(0<r-l<=230 and 0<b-t<=350 for l,t,r,b in people)):
             # At overview scale a faraway person may occupy only a few pixels.

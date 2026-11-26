@@ -42,6 +42,31 @@ class LocalRepairTests(unittest.TestCase):
             changed[index] = alternative
             self.assertNotEqual(baseline, inspection_key(*changed))
 
+    def test_qwen_text_generator_draws_on_an_empty_canvas_with_matching_weights(self):
+        from illustration import DRAW_LORA, DRAW_UNET, text_composition
+        graph = text_composition('Two bookends and a fern', 17, 1792, 1008, 'draft').api
+        nodes = {node['class_type']: node['inputs'] for node in graph.values()}
+        self.assertEqual(nodes['EmptySD3LatentImage'], {'width':1792, 'height':1008, 'batch_size':1})
+        self.assertEqual(nodes['UNETLoader']['unet_name'], DRAW_UNET)
+        self.assertEqual(nodes['LoraLoaderModelOnly']['lora_name'], DRAW_LORA)
+        self.assertEqual(nodes['KSampler']['steps'], 4)
+        self.assertEqual(nodes['KSampler']['seed'], 17)
+        self.assertNotIn('LoadImage', nodes)
+        self.assertEqual(graph[nodes['KSampler']['latent_image'][0]]['class_type'], 'EmptySD3LatentImage')
+
+    def test_unchanged_native_tile_requires_same_pixels_brief_location_and_model(self):
+        from print_judge import native_review_key
+        tile = Image.new('RGB', (8, 8), 'white')
+        arguments = [(0, 0, 8, 8), (12, 12), 'Ink', 'model-A']
+        key = native_review_key(tile, *arguments)
+        self.assertEqual(key, native_review_key(tile.copy(), *arguments))
+        for index, other in enumerate(((1, 0, 9, 8), (16, 12), 'Pastel', 'model-B')):
+            changed = list(arguments)
+            changed[index] = other
+            self.assertNotEqual(key, native_review_key(tile, *changed))
+        tile.putpixel((5, 5), (254, 255, 255))
+        self.assertNotEqual(key, native_review_key(tile, *arguments))
+
     def test_full_scene_repair_sees_the_native_detail_but_uses_the_full_canvas(self):
         graph = instruction_edit('Repair this connection', 77, 'whole.png', 'trial',
                                  masked=True, detail_reference='detail.png').api
