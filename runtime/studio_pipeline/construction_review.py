@@ -401,9 +401,11 @@ def verify_interior_figure(url, image, detected, tag):
     if len(people)!=1:return None
     l,t,r,b=[round(v*n/1000) for v,n in zip(people[0],image.size*2)]
     width,height=r-l,b-t
-    if min(width,height)<30 or max(width/image.width,height/image.height)>.3:return None
-    pad=max(12,round(max(width,height)*.18))
-    bounds=(max(0,l-pad),max(0,t-pad),min(image.width,r+pad),min(image.height,b+pad))
+    if min(width,height)<30:return None
+    xpad=max(12,round(width*.22))
+    ypad=max(12,round(height*.18))
+    bounds=(max(0,l-xpad),max(0,t-ypad),min(image.width,r+xpad),min(image.height,b+ypad))
+    if (bounds[2]-bounds[0])*(bounds[3]-bounds[1])>.75*image.width*image.height:return None
     crop=image.crop(bounds)
     scale=min(3,800/max(crop.size))
     zoom=crop.resize(tuple(max(1,round(v*scale)) for v in crop.size),Image.Resampling.LANCZOS)
@@ -416,7 +418,7 @@ def verify_interior_figure(url, image, detected, tag):
         part['source_point']=[round(x),round(y)]
         # A crop boundary alone cannot explain missing anatomy. An endpoint must
         # also belong to the detected person rather than a second nearby shape.
-        if part['state']=='frame_exit' or not (l-pad/2<=x<=r+pad/2 and t-pad/2<=y<=b+pad/2):
+        if part['state']=='frame_exit' or not (l-xpad/2<=x<=r+xpad/2 and t-ypad/2<=y<=b+ypad/2):
             check['confirmed']=False
     return check
 

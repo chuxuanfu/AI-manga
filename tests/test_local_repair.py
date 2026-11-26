@@ -262,6 +262,16 @@ class LocalRepairTests(unittest.TestCase):
                 result = verify_interior_figure(None, image, person, 'local')
             self.assertEqual(result['confirmed'], expected)
 
+    def test_tall_subject_in_a_wide_frame_can_be_inspected_in_subject_coordinates(self):
+        image = Image.new('RGB', (1920, 1080))
+        person = [{'name': 'person', 'box': [542, 102, 809, 961]}]
+        reading = {'confirmed': True, 'left': {'state':'occlusion', 'x':460, 'y':470},
+                   'right': {'state':'hand', 'x':710, 'y':820}}
+        with patch('construction_review.verify_arm_endpoints', return_value=reading):
+            checked = verify_interior_figure(None, image, person, 'local')
+        self.assertTrue(checked['confirmed'])
+        self.assertLess(checked['source_pixels'][2]-checked['source_pixels'][0], image.width*.5)
+
     def test_ambiguous_geometry_does_not_request_a_resolution_rebuild(self):
         image = Image.new('RGB', (32, 32))
         with patch('print_judge.ask', side_effect=AssertionError('No optical symptom')):
