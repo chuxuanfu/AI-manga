@@ -156,7 +156,7 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
         text=description
         if rebuild_shape:
             # Preserve the surroundings, attachment and light while clearing the faulty drawing.
-            subject=object_mask(crop,crop,target,mask,neighbours)
+            subject=object_mask(crop,crop,target,mask,neighbours,confirmed_shape=True)
             guidance=Image.composite(crop.filter(ImageFilter.GaussianBlur(max(5,span*.11))),crop,subject)
             named=target if target and target.casefold() not in ('local','global','none') else 'subject'
             text=('Replace the soft placeholder with a fully drawn '+named+
@@ -177,7 +177,7 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     with Image.open(output_image(hist[output])) as new:
         patched = im.copy()
         proposed=new.convert('RGB').resize((cw,ch),Image.Resampling.LANCZOS)
-        patched.paste(proposed,(x,y),object_mask(crop,proposed,target,mask,neighbours))
+        patched.paste(proposed,(x,y),object_mask(crop,proposed,target,mask,neighbours,confirmed_shape=rebuild_shape))
     target = directory/(stage+'-composite.png')
     patched.save(target)
     return target
