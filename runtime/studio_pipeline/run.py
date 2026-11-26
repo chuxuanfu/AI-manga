@@ -616,8 +616,9 @@ def main():
         if gaps and args.round_worker:rubric+='-layout2'
         from review import inspection_environment,inspection_key
         context_key=inspection_key(rubric,prompt,rec['parts'],focus,rec.get('画法参考'),inspection_environment())
+        from construction_review import held_pocket_reading
         def match(row):
-            return row.get('hash')==key and row.get('inspection_key')==context_key
+            return row.get('hash')==key and row.get('inspection_key')==context_key and not held_pocket_reading(row['review'])
         prior=next((row for row in rec['reviews'] if match(row) and row['stage']==stage),None)
         if prior:return prior['review']
         if args.round_worker and args.retry_round and (args.retry_round/'review.json').is_file():

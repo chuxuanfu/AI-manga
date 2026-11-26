@@ -58,6 +58,25 @@ class LocalRepairTests(unittest.TestCase):
                 self.assertTrue(second.result(timeout=4))
                 self.assertEqual(calls,[False,True])
 
+    def test_pocket_explanation_requires_corresponding_pixels_and_both_arms(self):
+        from construction_review import verify_pocket_occlusion,held_pocket_reading
+        im=Image.new('RGB',(410,630),'navy')
+        detections=[{'name':'person','box':[0,0,1000,1000]}]
+        prior={'confirmed':False,'left':{'state':'internal_break','evidence':'The cuff enters a pocket.'}}
+        result={'status':'uncertain','局部连接复审':{'verdict':'unclear','arm_endpoint_evidence':prior}}
+        self.assertTrue(held_pocket_reading(result))
+        observation=dict(cells=[8],other_arm='hidden_behind_torso',
+                         arm_paths='The near arm ends at the waist and the far shoulder is behind the body.',
+                         unsupported_end=False)
+        site=dict(sleeve_edge='ribbed cuff',occluding_edge='folded side opening',edge_passes_behind_lip=True,
+                  unexplained_termination=False)
+        for second,detail,passes in [(observation,site,True),(dict(observation,cells=[6]),site,False),
+                                     (observation,dict(site,unexplained_termination=True),False)]:
+            with patch('construction_review.available',return_value=True), patch('construction_review.ask',side_effect=map(json.dumps,[observation,second,detail])):
+                self.assertEqual(verify_pocket_occlusion('local',im,detections,prior)['confirmed'],passes)
+        prior['pocket_review_version']=1
+        self.assertFalse(held_pocket_reading(result))
+
     def test_incorrect_prop_height_requires_two_consistent_whole_scene_locations(self):
         from brief_check import check_body_level
         image=Image.new('RGB',(400,600),'ivory')

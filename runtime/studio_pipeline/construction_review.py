@@ -193,6 +193,12 @@ def review(im,brief,regions,path,detected=(),observed_people=0):
                         if nearer:
                             audit['native_figure']=nearer
                             audit['confirmed']=nearer['confirmed']
+                    if not audit['confirmed']:
+                        audit['pocket_review_version']=1
+                        pockets=verify_pocket_occlusion(address,im,detected,audit)
+                        if pockets:
+                            audit['pocket_occlusion']=pockets
+                            audit['confirmed']=pockets['confirmed']
                 result['arm_endpoint_evidence']=audit
             if not audit or not audit['confirmed']:
                 result.update(verdict='unclear',observation='独立的两侧前臂追踪提示有轮廓突然结束，需核实袖口到手的连接。')
@@ -611,6 +617,82 @@ def verify_interior_figure(url, image, detected, tag):
         if part['state']=='frame_exit' or not (l-xpad/2<=x<=r+xpad/2 and t-ypad/2<=y<=b+ypad/2):
             check['confirmed']=False
     return check
+
+
+def held_pocket_reading(review):
+    detail=review.get('局部连接复审') or {}
+    arms=detail.get('arm_endpoint_evidence') or {}
+    return (review.get('status')=='uncertain' and detail.get('verdict')=='unclear'
+            and arms.get('confirmed') is False and 'pocket_review_version' not in arms
+            and 'pocket' in json.dumps(arms).lower())
+
+
+def verify_pocket_occlusion(url,im,detected,prior):
+    """Corroborate concealed hands at native locations selected from the actual figure."""
+    if 'pocket' not in json.dumps(prior).lower() or not available(LARGE):return None
+    people=[d['box'] for d in detected if d.get('name')=='person']
+    if len(people)!=1:return None
+    l,t,r,b=[round(v*n/1000) for v,n in zip(people[0],im.size*2)]
+    pad=max(8,round((r-l)*.07))
+    bounds=(max(0,l-pad),max(0,t-pad),min(im.width,r+pad),min(im.height,b+pad))
+    figure=im.crop(bounds)
+    if min(figure.size)<48:return None
+    view=ImageOps.contain(figure,(850,850),Image.Resampling.LANCZOS)
+    # Place numbers above separate image sections. Never paint on the inspected pixels.
+    cellw,cellh=max(1,view.width//3),max(1,view.height//3)
+    board=Image.new('RGB',(3*(cellw+4),3*(cellh+22)),(226,226,226))
+    pen=ImageDraw.Draw(board)
+    rects=[]
+    for index in range(9):
+        x=index%3;y=index//3
+        rect=(round(x*figure.width/3),round(y*figure.height/3),
+              round((x+1)*figure.width/3),round((y+1)*figure.height/3))
+        rects.append(rect)
+        left=x*(cellw+4);top=y*(cellh+22)
+        pen.text((left+3,top+2),str(index+1),fill=(10,10,10))
+        board.paste(figure.crop(rect).resize((cellw,cellh),Image.Resampling.LANCZOS),(left,top+20))
+    fields={'cells':{'type':'array','items':{'type':'integer','minimum':1,'maximum':9},'maxItems':2},
+            'other_arm':{'enum':['both_accounted_for_by_pockets','hidden_behind_torso','visible_attached_hand','unresolved_or_broken']},
+            'arm_paths':{'type':'string'},'unsupported_end':{'type':'boolean'}}
+    candidates=[]
+    for tag in ('qwen3.8:27b',LARGE):
+        reading=json.loads(ask(url,[view,board],
+            'First view is the whole detected person. The numbered sections are parts of that same person. '
+            'Trace every visible arm. List the numbered cells containing the actual junction of a sleeve '
+            'with a pocket mouth only when its overlap is visible. Name the fold, seam or pocket lip there. '
+            'Explain what happens to the remaining arm. Hidden behind torso requires the far shoulder to '
+            'be physically covered in this view. A sleeve stump on open space, an absent arm with no '
+            'occluder or an untraceable arm is unresolved or broken. Do not assume either hand is hidden.',
+            {'type':'object','properties':fields,'required':list(fields)},tag=tag))
+        candidates.append(reading)
+        if (not reading['cells'] or reading['other_arm']=='unresolved_or_broken'
+                or reading['unsupported_end'] or not reading['arm_paths'].strip()):break
+    result={'source_pixels':list(bounds),'readings':candidates,'confirmed':False}
+    if len(candidates)!=2:return result
+    a,b=candidates
+    if (sorted(a['cells'])!=sorted(b['cells']) or a['other_arm']!=b['other_arm']
+            or b['unsupported_end'] or not b['arm_paths'].strip()):return result
+    cells=sorted(set(a['cells']))
+    if len(cells)!=(2 if a['other_arm']=='both_accounted_for_by_pockets' else 1):return result
+    fields={'sleeve_edge':{'type':'string'},'occluding_edge':{'type':'string'},
+            'edge_passes_behind_lip':{'type':'boolean'},'unexplained_termination':{'type':'boolean'}}
+    result['native_sites']=[]
+    for cell in cells:
+        if not 1<=cell<=9:return result
+        l,t,r,b=rects[cell-1];dx=(r-l)//3;dy=(b-t)//3
+        region=(max(0,l-dx),max(0,t-dy),min(figure.width,r+dx),min(figure.height,b+dy))
+        detail=figure.crop(region)
+        detail.thumbnail((1024,1024),Image.Resampling.LANCZOS)
+        witness=json.loads(ask(url,[detail],'Identify the actual sleeve edge and the edge occluding it '
+            'in this crop. Do they meet at a visible jacket pocket opening? Inspect both sides of the '
+            'junction. A dark fold, shadow alone, cloth with no actual wrist end, or an unexplained '
+            'gap is insufficient. Report whether any unsupported arm contour is also visible here.',
+            {'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+        result['native_sites'].append({'cell':cell,'pixels':[v+bounds[i%2] for i,v in enumerate(region)],**witness})
+        if (not witness['edge_passes_behind_lip'] or witness['unexplained_termination']
+                or not witness['sleeve_edge'].strip() or not witness['occluding_edge'].strip()):return result
+    result['confirmed']=True
+    return result
 
 
 def verify_arm_endpoints(url, im, tag):
