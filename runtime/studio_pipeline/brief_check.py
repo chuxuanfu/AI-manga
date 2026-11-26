@@ -1,5 +1,6 @@
 """Inspect native evidence for the most specific visible promises in the brief."""
 import json
+import math
 import re
 from pathlib import Path
 
@@ -176,6 +177,44 @@ def identity_reference(quote):
     return guides[0] if len(guides)==1 else None
 
 
+CONTACT_ACTION=re.compile(r'\b(?:turn(?:s|ing)?|press(?:es|ing)?|pinch(?:es|ing)?|'
+                          r'grip(?:s|ping)?|touch(?:es|ing)?|grasps?|holding|holds?|'
+                          r'tying|fasten(?:s|ing)?|plug(?:s|ging)?|steps? on)\b|旋转|拧动|握住|捏住|按下|触碰|踏在',re.I)
+
+
+def confirm_contact_gap(url,crop,overview,quote,tag,independent):
+    """Locate the nearest edges of a requested contact in the same native field."""
+    if not CONTACT_ACTION.search(quote) or tag==independent:return None
+    unit={'type':'integer','minimum':0,'maximum':1000}
+    point={'type':'array','minItems':2,'maxItems':2,'items':unit}
+    fields={'relation':{'enum':['separated','touching','occluded','uncertain']},
+            'actor_edge':point,'target_edge':point,'both_visible':{'type':'boolean'},
+            'nearest_relevant_target':{'type':'boolean'},'intervening_surface':{'type':'string'}}
+    prompt=('First image: inspect this particular area of an illustration. The second image provides '
+            'the surrounding scene. For the action '+repr(quote)+', locate the nearest actual edge of the '
+            'acting part and the nearest actual edge of any appropriate target, in that order. Supply XY '
+            'in coordinates 0..1000 on image 1. When several fingers or controls are available, use the '
+            'closest applicable pair. Report separated only when you see a continuous strip of another '
+            'surface or empty space between BOTH edges. Describe that strip. Touching, foreshortened '
+            'overlap or hidden far fingers do not demonstrate a gap. If another relevant contact could '
+            'be off-crop, or if the action does not require contact, select uncertain.')
+    observations=[]
+    for model in (tag,independent):
+        read=json.loads(ask(url,[crop,overview],prompt,{'type':'object','properties':fields,'required':list(fields)},tag=model))
+        observations.append(read)
+        if (read['relation']!='separated' or not read['both_visible'] or not read['nearest_relevant_target']
+                or not read['intervening_surface'].strip()):break
+        points=[read[key] for key in ('actor_edge','target_edge')]
+        if any(len(pt)!=2 or any(type(v) is not int or not 0<v<1000 for v in pt) for pt in points):break
+        if math.dist(*points)<20:break
+    else:
+        a,b=observations
+        tolerance=min(72,max(18,.55*min(math.dist(v['actor_edge'],v['target_edge']) for v in observations)))
+        if all(math.dist(a[key],b[key])<=tolerance for key in ('actor_edge','target_edge')):
+            return dict(confirmed=True,observations=observations,models=[tag,independent])
+    return dict(confirmed=False,observations=observations,models=[tag,independent][:len(observations)])
+
+
 def subject_witness(url, image, overview, brief, tag):
     position={key:{'type':'integer','minimum':0,'maximum':1000} for key in ('left','top','right','bottom')}
     properties={'quote':{'type':'string'},'inspect':{'type':'string'},**position}
@@ -203,7 +242,7 @@ def subject_witness(url, image, overview, brief, tag):
         box=(max(0,l-mx),max(0,t-my),min(1000,r+mx),min(1000,b+my))
         bounds=tuple(round(v*n/1000) for v,n in zip(box,image.size*2))
         crop=image.crop(bounds);crop.thumbnail((1024,1024),Image.Resampling.LANCZOS)
-        notes.append({'quote':quote,'question':item['inspect'],'box':[l,t,r,b],'crop':crop})
+        notes.append({'quote':quote,'question':item['inspect'],'box':[l,t,r,b],'crop_extent':list(box),'crop':crop})
     if not notes:return check_body_level(url,overview,brief,tag)
     fields={'reading':{'type':'string'},'decision':{'enum':['supported','visible_contradiction','indeterminate']},
             'fix':{'type':'string'}}
@@ -294,6 +333,19 @@ def subject_witness(url, image, overview, brief, tag):
                 elif conflict:
                     n['named_animal_conflict']=conflict
                     fix='Depict the requested '+conflict['requested']+' in this position. '+fix
+                elif (vote['decision']=='visible_contradiction' and reading['relation']=='inconclusive'
+                      and CONTACT_ACTION.search(n['quote'])):
+                    gap=confirm_contact_gap(url,crop,overview,n['quote'],tag,reviewer)
+                    n['contact_gap']=gap
+                    if not gap or not gap['confirmed']:continue
+                    # Include both verified ends in the correction instead of repainting a fingertip alone.
+                    x0,y0,x1,y1=n['crop_extent']
+                    locations=[o[key] for o in gap['observations'] for key in ('actor_edge','target_edge')]
+                    xs=[round(x0+x*(x1-x0)/1000) for x,_ in locations]
+                    ys=[round(y0+y*(y1-y0)/1000) for _,y in locations]
+                    l,t,r,b=n['box']
+                    n['box']=[max(0,min(l,*xs)-5),max(0,min(t,*ys)-5),
+                              min(1000,max(r,*xs)+5),min(1000,max(b,*ys)+5)]
                 else:continue
             issue={'decision':'local','operation':'redraw','target':n['quote'],'fix':fix,
                    'evidence':f"The requested detail {n['quote']!r}: {neutral}",**dict(zip(position,n['box']))}
