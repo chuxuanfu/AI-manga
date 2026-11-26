@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-32'
+REVISION = 'print-inspection-34'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -42,12 +42,11 @@ def requested_handling(phrase,brief):
 
 def crop_brief(brief):
     """A pixel sample can show one object even when the requested scene contains many."""
-    scene, sep, style = brief.partition(' · ')
-    handling = [s.strip() for s in re.split(r'[.;。；!?，,]',scene) if SOFT_HANDLING.search(s)]
-    return ('Evaluate the material and contours actually visible inside this regional crop. '
-            'The composition is inspected separately in full. '
-            + ('Medium and finish: '+style+'. ' if sep else 'Respect the visible artwork medium. ')
-            + ('Local focus instructions: '+'. '.join(handling) if handling else ''))
+    return ('Inspect only features visible inside this crop. The following is the full art direction '
+            'for identifying visible materials, colors, linework and intentional focus. Judge counts, '
+            'missing objects, and whole-scene placement only on the full composition. '
+            'Do not infer which object this crop depicts solely from the prompt. Author brief: '+brief)
+
 
 
 def actionable_edit(text):
@@ -285,7 +284,7 @@ def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
 
 
 HARDWARE_CLAIM=re.compile(r'\b(?:brackets?|hinge[sd]?|sockets?|bolts?|welds?|rivets?|mounting|fasteners?|'
-                          r'locking mechanism|articulat(?:ion|ed) joint|load path|cleats?|mechanical joint|'
+                          r'locking mechanism|articulat(?:ion|ed) joint|load path|cleats?|mechanical joint|mechanical.{0,100}(?:joint|articulation)|'
                           r'order of (?:over/under )?crossings)\b|铰链|螺栓|焊缝|紧固件|承力路径',re.I)
 
 
@@ -760,7 +759,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 if second['decision']!='clear':
                     bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     if second['decision'] in ('uncertain','local') and second.get('operation')=='redraw':
-                        contact=verify_depicted_connection(url,image,bounds,second['evidence'],brief)
+                        contact=verify_depicted_connection(url,image,bounds,row['evidence']+' '+second['evidence'],brief)
                         if contact:
                             record['visible_connection']=contact
                             if contact['disproved']:

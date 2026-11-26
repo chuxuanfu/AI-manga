@@ -14,7 +14,7 @@ sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
 from construction_review import LARGE, assess_local_edit, verify_interior_figure
 from illustration import instruction_edit, reference_draft
 from masks import structural_composite
-from print_judge import actionable_edit, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity
+from print_judge import actionable_edit, crop_brief, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity
 from production import repeated_rejection, same_repair_region
 from review import inspection_key
 from structure import inspect_small_figure_support
@@ -118,6 +118,14 @@ class LocalRepairTests(unittest.TestCase):
             result = verify_part_identity(None, image, [100, 810, 200, 999], finding,
                                           'The required feet are missing from the frame.')
         self.assertIsNone(result)
+
+    def test_native_detail_review_keeps_the_authors_material_and_color_directions(self):
+        for brief in ('A red boat in an indigo woodblock print with crisp carved contours.',
+                      'A plain cotton scarf in warm reflected light. · Japanese anime key visual.',
+                      '青花瓷碗，釉下钴蓝纹样，有微小开片。'):
+            with self.subTest(brief=brief):
+                self.assertIn(brief, crop_brief(brief))
+                self.assertIn('only on the full composition', crop_brief(brief))
 
     def test_negative_edit_instructions_cannot_trigger_a_redraw(self):
         for text in (None, '', 'none', 'No correction needed; the contour is continuous.',
