@@ -1040,13 +1040,16 @@ def main():
                 bound=3840 if rebuilt_source else (2304 if reference_style else 1536)
                 composition.thumbnail((bound,bound),Image.Resampling.LANCZOS)
             source=local_image(composition)
-        if four_only and stage=='refine' and source_edge<3840:
+        if four_only and source_edge<3840:
             from restoration import prefer_source_reconstruction
             # Resume a previously submitted graph with its own files and seed.
-            if not (job/'refine-task.json').is_file() and prefer_source_reconstruction(
+            if not (job/(stage+'-task.json')).is_file() and prefer_source_reconstruction(
                     args.print_method,source_edge,RUNTIME/'ComfyUI/models'):
-                master=reconstruct_print(source_path,'first-source-restoration',seed+28601)
-                rec['初次4K方法']='SeedVR2'
+                restored_stage='first-source-restoration' if stage=='refine' else stage+'-source-restoration'
+                master=reconstruct_print(source_path,restored_stage,seed+28601)
+                if stage=='refine':rec['初次4K方法']='SeedVR2'
+                from print_judge import fingerprint as image_fingerprint
+                rec['当前4K重建底图指纹']=image_fingerprint(source_path)
                 rec['精绘区域报告']={'覆盖':'全幅源图条件扩散重建','长边':[3840]}
                 save(manifest,rec)
                 return master,None
@@ -1191,6 +1194,41 @@ def main():
                 return revised
             instruction=(issue['fix']+' Recompose the faulty local forms and their contact within the same framing. '
                          +str(verdict.get('next_edit') or 'Redraw the silhouette and its point of support.'))
+        return None
+
+    def repaint_finish(master,approved,assessment):
+        from reference_review import final_repaint_direction
+        instruction=final_repaint_direction(assessment.get('参考比较') or {})
+        if (not instruction or not args.round_worker or rec.get('原生4K') or args.keep_native
+                or args.repair_box or args.selection_mask):
+            return None
+        from illustration import finish_repaint_graph, medium_study
+        from print_judge import same_composition
+        editor=installed_editor(RUNTIME/'ComfyUI/models')
+        if not editor:return None
+        stage='finish-repaint'
+        with Image.open(master) as art:
+            drawing=art.convert('RGB')
+        drawing.thumbnail((1536,1536),Image.Resampling.LANCZOS)
+        sample=medium_study(rec.get('画材'))
+        study=None
+        if sample:
+            with Image.open(sample) as image:
+                study=local_image(image.convert('RGB'))
+        prior=args.retry_round/'review.json' if args.retry_round else None
+        full=bool(prior and prior.is_file() and json.loads(prior.read_text()).get('画法整图返工'))
+        graph=finish_repaint_graph(prompt,instruction,seed+882501,local_image(drawing),
+                                  prefix+'/'+stage,editor,study=study,full=full)
+        save(job/(stage+'-workflow.json'),graph.ui())
+        outputs=post_graph(graph.api,args.port,job,stage,graph.ui())
+        candidate=output_image(outputs[str(len(graph.nodes))])
+        aligned=same_composition(approved,candidate,prompt)
+        rec['画法整图返工']={'前一版本':str(master),'前一版本指纹':fingerprint(master),
+                           '重绘':str(candidate),'重绘指纹':fingerprint(candidate),
+                           '保留构图':aligned,'修改要求':instruction,'步数':40 if full else 4}
+        save(manifest,rec)
+        if aligned and usable(check_draft_structure(candidate,check(candidate,stage+'-draft'))):
+            return candidate
         return None
 
     scene_tried=False
@@ -1438,7 +1476,16 @@ def main():
             small=baseline,focus=print_focus,draft=None if four_only else approved,source_comparison=four_only)
         rec.setdefault('终审设备耗时',{})[label]=timings
         if judged is None:
-            rec['终审退回原因']=final['note'];break
+            rec['终审退回原因']=final['note']
+            candidate=repaint_finish(master,approved,final) if attempt==0 else None
+            if candidate:
+                approved=candidate
+                focus=None
+                repair_check=None
+                rec['底图']=str(approved)
+                master,small=render(approved,'finish-repaint-print')
+                continue
+            break
         if four_only:rec['底图']=str(baseline)
         rec['逐块终审']={'sha256':judged['sha256'],'状态':judged['status'],'已看视图':len(judged['views']),
                       '计划视图':judged['planned'],'原像素图块':judged['planned_native'],'报告':judged['report']}
@@ -1506,8 +1553,10 @@ def main():
                     continue
             from restoration import available as restoration_available
             needs_detail=pixels or finding.get('category')=='unresolved_focus'
+            restored_source=rec.get('当前4K重建底图指纹')
+            already_restored=(restored_source==fingerprint(approved) if restored_source else rec.get('初次4K方法')=='SeedVR2')
             if (attempt==0 and needs_detail and not repair_check and not args.candidate_image
-                    and rec.get('初次4K方法')!='SeedVR2' and args.print_method!='tiled'
+                    and not already_restored and args.print_method!='tiled'
                     and native_edge<3840 and restoration_available(RUNTIME/'ComfyUI/models')):
                 # Compare against the actual selected drawing. A final with a later structural
                 # repair must not be replaced by an earlier, uncorrected source.
@@ -1515,6 +1564,7 @@ def main():
                 prior_master=master
                 master=reconstruct_print(approved,stage,seed+28601)
                 small=None
+                rec['当前4K重建底图指纹']=fingerprint(approved)
                 rec['4K源图重建']={'底图':str(approved),'前一版本':str(prior_master),'模型任务':stage+'-task.json'}
                 save(manifest,rec)
                 continue

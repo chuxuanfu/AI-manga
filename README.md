@@ -75,3 +75,5 @@ FLUX.2 klein 和 Anima 负责生成及精绘。具备 Qwen-Image-2512 权重时�
 当两个手腕挨得较近、视觉模型无法确认指尖与袖口的归属时，工具会在 CPU 上用 OpenCV 定位手掌，对照原图和镜像，再把每只手的独立原图裁切交给两个本地视觉模型复查。检测到手掌只提供取景位置。现有安装执行一次 `./Studio.command --install` 可补齐约 3.9 MB 权重。[OpenCV Zoo 手掌检测模型](https://github.com/opencv/opencv_zoo/tree/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/palm_detection_mediapipe)
 
 木版画与分层剪纸的自动构图可以参考本地灰度技法样片，观察刻线、留白和纸层的遮挡。样片取自大都会艺术博物馆开放馆藏。作品、图源和使用许可记录在 `assets/medium-studies/credits.json`。
+
+在已安装指令编辑模型的设备上，若整幅图的主体和结构通过检查、终审确认画法仍低于参考，默认流程会按具体评语在该构图上重新绘制。它先核对身份、动作、画幅和色彩，再对新版重新精绘并逐块复审。

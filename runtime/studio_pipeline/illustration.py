@@ -161,6 +161,18 @@ def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, mask
     return g
 
 
+def finish_repaint_graph(brief, direction, seed, source, prefix, editor, *, study=None, full=False):
+    """Revise the approved scene itself in response to a comparative workmanship finding."""
+    text=('Repaint image 1 as a single continuous, fully colored illustration in its existing medium. '
+          'Keep its subjects, clothing, camera, poses, relationships, palette and time of day. '
+          'Develop marks on existing forms according to the following observation. ')
+    if study:
+        text+=('Image 2 contains grayscale studies of this medium. Apply their treatment of edges, '
+               'overlap and values to the subjects in image 1. Retain the original colors. ')
+    return instruction_edit(text+direction+' Author brief: '+brief,seed,source,prefix,editor,
+                            detail_reference=study,full=full)
+
+
 def reference_draft(text, seed, width, height, prefix, reference=REFERENCE, layout=None, edit=False, masked_source=None, preserve_layout=False):
     g=Graph('studio-reference-conditioned-illustration')
     brief=prompt_field(g,text,(-2600,-60))

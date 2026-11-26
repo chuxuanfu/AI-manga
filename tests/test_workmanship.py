@@ -56,6 +56,26 @@ class WorkmanshipTests(unittest.TestCase):
                     self.assertIn('left_detail',reader.call_args.args[3]['properties']['lighting']['required'])
                 reader.reset_mock()
 
+    def test_finish_repaint_uses_approved_scene_and_only_confirmed_final_feedback(self):
+        from illustration import finish_repaint_graph
+        from reference_review import final_repaint_direction
+        from print_judge import MODEL
+        grade=dict(decision='below',consistent_deficits=['lighting'],assessment_model=MODEL,
+                   separate_material_evidence=True,redraw_direction='Ground the existing figures with cast shadows.')
+        direction=final_repaint_direction(grade)
+        self.assertEqual(direction,grade['redraw_direction'])
+        for override in ({'decision':'review'},{'assessment_model':'draft judge'},{'separate_material_evidence':False}):
+            self.assertFalse(final_repaint_direction({**grade,**override}))
+        graph=finish_repaint_graph('A lamb beside a gate.',direction,42,'actual.png','revised','local.safetensors',
+                                  study='paper.webp',full=True)
+        nodes=list(graph.api.values())
+        self.assertEqual([n['inputs']['image'] for n in nodes if n['class_type']=='LoadImage'],['actual.png','paper.webp'])
+        self.assertEqual(next(n['inputs']['steps'] for n in nodes if n['class_type']=='KSampler'),40)
+        self.assertIn(direction,next(n['inputs']['prompt'] for n in nodes if n['class_type']=='TextEncodeQwenImageEditPlus'))
+        quick=finish_repaint_graph('A cat at dusk.',direction,42,'cat.png','revised','local.safetensors')
+        self.assertEqual([n['inputs']['image'] for n in quick.api.values() if n['class_type']=='LoadImage'],['cat.png'])
+        self.assertEqual(next(n['inputs']['steps'] for n in quick.api.values() if n['class_type']=='KSampler'),4)
+
     def test_repaint_uses_both_candidate_observations_and_excludes_reference_subjects(self):
         from reference_review import redraw_direction,last_finish_direction
         grade=dict(decision='below',consistent_deficits=['material_construction'],

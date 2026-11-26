@@ -173,6 +173,15 @@ def redraw_direction(assessment,brief,*,address=None,tag=TAG,medium=None):
     return answer if 8<=len(answer.split())<=120 else general
 
 
+def final_repaint_direction(assessment):
+    """Only a confirmed deficit on the final master warrants repainting a whole scene."""
+    from print_judge import MODEL
+    if (assessment.get('decision')!='below' or assessment.get('assessment_model')!=MODEL
+            or assessment.get('separate_material_evidence') is not True):
+        return ''
+    return assessment.get('redraw_direction') or redraw_direction(assessment,'')
+
+
 def last_finish_direction(record):
     for row in reversed(record.get('reviews',[])):
         assessment=row.get('review',{}).get('参考比较') or {}
