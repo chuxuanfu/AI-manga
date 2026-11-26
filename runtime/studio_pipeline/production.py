@@ -159,7 +159,7 @@ def same_repair_region(box, other):
 
 def failed_scene_connection(directory, record, finding):
     scene=record.get('高清底图返工',{})
-    if not scene.get('模型') or finding.get('operation')!='redraw':return False
+    if not scene.get('模型') or scene.get('保留原构图') is False or finding.get('operation')!='redraw':return False
     prior=scene.get('目标范围')
     if prior:return same_repair_region(prior,finding.get('box'))
     # Earlier scene-rebuild records kept the disputed box in their signed print report.

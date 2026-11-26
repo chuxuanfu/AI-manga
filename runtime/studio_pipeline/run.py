@@ -877,10 +877,14 @@ def main():
         candidate=output_image(history[str(len(graph.nodes))])
         release_idle_renderer(args.port)
         from print_judge import same_composition
-        if not same_composition(source,candidate,prompt):return None
-        screened=check_draft_structure(candidate,check(candidate,stage,box))
+        aligned=same_composition(source,candidate,prompt)
+        if not aligned and (args.reviewed_image or args.from_image or args.candidate_image):return None
+        # An unconstrained text brief may legitimately change layout. Evaluate it
+        # like a new draft and locate its subjects afresh; old coordinates no longer apply.
+        screened=check_draft_structure(candidate,check(candidate,stage,box if aligned else None))
         if not usable(screened):return None
-        rec['高清底图返工']={'源图':str(source),'重绘':str(candidate),'依据':issue['fix'],'模型':editor,'目标范围':box}
+        rec['高清底图返工']={'源图':str(source),'重绘':str(candidate),'依据':issue['fix'],'模型':editor,
+                         '保留原构图':aligned,'目标范围':box if aligned else None}
         save(manifest,rec)
         return candidate
 
@@ -946,7 +950,8 @@ def main():
                 master,small=render(approved,'continued-scene-print')
             else:
                 master,small=repaired,None
-            repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
+            if scene and rec['高清底图返工'].get('保留原构图') is False:focus=None
+            repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']} if focus else None
             rec['续修来源']=str(last)
         else:
             # None of the new candidates improved the defect. The prior, hash-verified
@@ -1074,6 +1079,9 @@ def main():
                     candidate=redraw_scene(master,issue,focus,stage+'-scene')
                     if candidate is None:break
                     approved=candidate
+                    if rec['高清底图返工'].get('保留原构图') is False:
+                        focus=None
+                        repair_check=None
                     master,small=render(approved,stage+'-scene-print')
                     continue
             else:
