@@ -273,5 +273,11 @@
     "url": "https://huggingface.co/opencv/text_detection_ppocr/resolve/c299e81aedeaf5d4f741fccccea491fb32db005f/text_detection_cn_ppocrv3_2023may.onnx",
     "sha256": "03f550c6b406fda8bf54bd8327815f6c7e2edd98cea02348c93d879254366587",
     "size": 2423490
+  },
+  {
+    "path": "runtime/models/text-detection/text_recognition_CRNN_EN_2022oct_int8.onnx",
+    "url": "https://huggingface.co/opencv/text_recognition_crnn/resolve/6487ac545965a2c277aff293e2fdded8b0e6f9b9/text_recognition_CRNN_EN_2022oct_int8.onnx",
+    "size": 16378030,
+    "sha256": "94117b4c2652337b3f1aef81b2ec15a74e97973b1c58f743e86380b95b95ffa2"
   }
 ]

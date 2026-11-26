@@ -1,6 +1,7 @@
 """Locate explicitly forbidden lettering and propose a locally inpainted draft."""
 import hashlib
 import json
+from contextlib import ExitStack
 from pathlib import Path
 import re
 
@@ -13,6 +14,9 @@ from evidence import ask, backend, model_identity
 from print_judge import MODEL, fingerprint, store
 
 DETECTOR = Path(__file__).resolve().parents[1] / 'models/text-detection/text_detection_cn_ppocrv3_2023may.onnx'
+
+
+RECOGNIZER = DETECTOR.with_name("text_recognition_CRNN_EN_2022oct_int8.onnx")
 
 
 def blank_surfaces_requested(brief):
@@ -64,6 +68,43 @@ def lettering_polygons(image):
     return [quad.tolist() for quad in kept]
 
 
+def decode_word(scores):
+    """Collapse repeated CTC labels, retaining confidence for each emitted glyph."""
+    shifted = scores - scores.max(axis=1, keepdims=True)
+    probs = np.exp(shifted)
+    probs /= probs.sum(axis=1, keepdims=True)
+    ids = scores.argmax(axis=1)
+    emitted = (ids != 0) & (ids != np.r_[0, ids[:-1]])
+    chars = ids[emitted]
+    word = ''.join('0123456789abcdefghijklmnopqrstuvwxyz'[i-1] for i in chars)
+    confidence = probs[emitted, chars]
+    return word, float(confidence.mean()) if len(chars) else 0.
+
+
+def recognized_words(image, quads):
+    if not quads or not RECOGNIZER.is_file():
+        return {}
+    gray = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2GRAY)
+    network = cv2.dnn.readNet(str(RECOGNIZER))
+    target = np.float32(((0,31),(0,0),(99,0),(99,31)))
+    confirmed = {}
+    for index, quad in enumerate(quads):
+        points = np.asarray(quad, np.float32)
+        center = points.mean(axis=0)
+        readings = []
+        for scale in (.96, 1.05):
+            warp = cv2.getPerspectiveTransform(center + (points-center)*scale, target)
+            view = cv2.warpPerspective(gray, warp, (100,32))
+            network.setInput(cv2.dnn.blobFromImage(view, 1/127.5, (100,32), 127.5))
+            readings.append(decode_word(network.forward()[:,0]))
+        word = readings[0][0]
+        if (word == readings[1][0] and len(word) >= 4 and len(set(word)) >= 3
+                and any(c.isalpha() for c in word) and not re.fullmatch('[ivxlcdm]+',word)
+                and min(score for _,score in readings) >= .90):
+            confirmed[index] = {'word':word, 'confidence':[round(v,4) for _,v in readings]}
+    return confirmed
+
+
 def glyph_mask(image, proposal):
     """Lift high-contrast strokes without erasing the substrate or its outer edge."""
     support=np.asarray(proposal)
@@ -107,12 +148,17 @@ def clean_lettering(path, brief, folder, stage):
     if not blank_surfaces_requested(brief) or not DETECTOR.is_file() or not INPAINTER.is_file():
         return path
     source_id = fingerprint(path)
-    key = hashlib.sha256(json.dumps(['lettering-v5', source_id, brief, model_identity(MODEL)],
+    key = hashlib.sha256(json.dumps(['lettering-v6', RECOGNIZER.is_file(), source_id, brief, model_identity(MODEL)],
                                      ensure_ascii=False).encode()).hexdigest()
     report = folder / (stage + '-lettering.json')
     candidate = folder / (stage + '-plain-surfaces.png')
+    prior_readings = {}
     if report.is_file():
         previous = json.loads(report.read_text())
+        old_key = hashlib.sha256(json.dumps(['lettering-v5', source_id, brief, model_identity(MODEL)],
+                                            ensure_ascii=False).encode()).hexdigest()
+        if previous.get('key') == old_key:
+            prior_readings = {tuple(v['box']):v for v in previous['observations'] if 'box' in v}
         if previous.get('key') == key:
             if not previous.get('candidate_sha256'):
                 return path
@@ -125,6 +171,20 @@ def clean_lettering(path, brief, folder, stage):
     if not quads:
         store(report, record)
         return path
+    words = recognized_words(image, quads)
+    confirmed = []
+    remaining = []
+    for index, quad in enumerate(quads):
+        if index in words:
+            # A tightly detected, twice-read word can contain thick or low-contrast
+            # strokes. Inpaint its own quadrilateral to remove interior antialiasing.
+            mask = Image.new('L', image.size)
+            ImageDraw.Draw(mask).polygon([tuple(pt) for pt in quad], fill=255)
+            confirmed.append(mask)
+            record['observations'].append({'polygon':quad, 'ocr':words[index]})
+        else:
+            remaining.append(quad)
+    quads = remaining
     # Join adjacent lines into one region so a multi-line label is seen in context.
     masks = Image.new('L', image.size)
     draw = ImageDraw.Draw(masks)
@@ -133,12 +193,12 @@ def clean_lettering(path, brief, folder, stage):
     threshold = max(5, round(min(image.size)*.008))
     joined = cv2.dilate(np.asarray(masks),np.ones((threshold,threshold),np.uint8))
     _, labels, statistics, _ = cv2.connectedComponentsWithStats(joined)
-    confirmed = []
     fields = {'appearance':{'type':'string'},'feature':{'enum':['printed_or_handwritten_marks','surface_detail','insufficient_evidence']}}
     overview=image.copy()
     overview.thumbnail((750,750),Image.Resampling.LANCZOS)
     schema = {'type':'object','properties':fields,'required':list(fields)}
-    with backend(MODEL) as url:
+    with ExitStack() as stack:
+        url = None
         groups=sorted(enumerate(statistics[1:],start=1),key=lambda item:-item[1][4])
         for index,(left,top,width,height,_) in groups[:12]:
             pad = max(20, round(max(width,height)*.65))
@@ -152,21 +212,28 @@ def clean_lettering(path, brief, folder, stage):
                         'or inscription is printed_or_handwritten_marks even if it is illegible or invented. '
                         'Lines defining object contours, seams, grain, reflections or a pictorial motif are '
                         'surface_detail. If the pixels cannot distinguish these, use insufficient_evidence.')
-            result = json.loads(ask(url,[view,overview],question,schema,tag=MODEL))
-            record['observations'].append(dict(box=list(map(int,(left,top,width,height))),reading=result))
-            # A schema label in the prose field is not visual evidence. Repeat
-            # the close inspection without the overview when the two fields disagree.
-            if result['appearance'].strip() in fields['feature']['enum']:
-                described=json.loads(ask(url,[view],
-                    'Describe the marked surface and its visible strokes in one concrete sentence. '
-                    'Mention the color, layout and whether these marks form tiny writing or object contours.',
-                    {'type':'object','properties':{'description':{'type':'string'}},'required':['description']},tag=MODEL))
-                evidence=described['description'].strip()
-                vote=json.loads(ask(url,[view],'Look at the physical marks and verify this observation: '
-                    +evidence+'. Classify the marks. Use insufficient_evidence for ambiguity.',
-                    {'type':'object','properties':{'feature':fields['feature']},'required':['feature']},tag=MODEL))
-                result={'appearance':evidence,'feature':vote['feature']}
-                record['observations'][-1]['independent_reading']=result
+            cached = prior_readings.get(tuple(map(int,(left,top,width,height))))
+            if cached:
+                record['observations'].append(cached)
+                result = cached.get('independent_reading',cached['reading'])
+            else:
+                if url is None:
+                    url = stack.enter_context(backend(MODEL))
+                result = json.loads(ask(url,[view,overview],question,schema,tag=MODEL))
+                record['observations'].append(dict(box=list(map(int,(left,top,width,height))),reading=result))
+                # A schema label in the prose field is not visual evidence. Repeat
+                # the close inspection without the overview when the two fields disagree.
+                if result['appearance'].strip() in fields['feature']['enum']:
+                    described=json.loads(ask(url,[view],
+                        'Describe the marked surface and its visible strokes in one concrete sentence. '
+                        'Mention the color, layout and whether these marks form tiny writing or object contours.',
+                        {'type':'object','properties':{'description':{'type':'string'}},'required':['description']},tag=MODEL))
+                    evidence=described['description'].strip()
+                    vote=json.loads(ask(url,[view],'Look at the physical marks and verify this observation: '
+                        +evidence+'. Classify the marks. Use insufficient_evidence for ambiguity.',
+                        {'type':'object','properties':{'feature':fields['feature']},'required':['feature']},tag=MODEL))
+                    result={'appearance':evidence,'feature':vote['feature']}
+                    record['observations'][-1]['independent_reading']=result
             if result['feature']=='printed_or_handwritten_marks' and result['appearance'].strip():
                 # Mask each word separately. Neighbouring lines can have different ink
                 # polarity or be printed on opposite sides of an object boundary.

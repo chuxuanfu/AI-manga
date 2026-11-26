@@ -823,8 +823,11 @@ def main():
         medium=rec.get('画材','')
         natural_sr=continuous_tone(medium) and (RUNTIME/'models/upscale_models'/NATURAL_UP).is_file()
         if reference_style or four_only:
+            from focal_edit import print_subjects
+            scales=([3840] if not native_four else [])+([] if four_only or focus_mode else [7680])
+            subjects={edge:print_subjects(composition,edge,job/(stage+'-tile-subjects-'+str(edge)+'.json')) for edge in scales}
             graph,ids=print_graph(source,prefix+'/pending-review/'+stage,seed+320,native_four=native_four,
-                                  medium=medium,four_steps=4,four_only=four_only or focus_mode,upscale_model=NATURAL_UP if natural_sr else UP)
+                                  medium=medium,four_steps=4,four_only=four_only or focus_mode,upscale_model=NATURAL_UP if natural_sr else UP,tile_subjects=subjects)
         else:
             graph,ids=finish(source,prompt,prefix+'/pending-review/'+stage,seed+320)
         save(job/(stage+'workflow.json'),graph.ui())
@@ -864,6 +867,8 @@ def main():
                 surfaces=sampled_surfaces(original,canvas.size,boxes)
                 redraw=[*boxes,*surfaces]
                 names=[local_image(canvas.crop((l,t,l+PATCH,t+PATCH))) for _,l,t in redraw]
+                from focal_edit import describe_tiles
+                descriptions=describe_tiles(canvas,names,redraw,PATCH,INPUT,job/(stage+'-tile-subjects.json'))
             master=small.with_name('8K-focus-refinement.png')
             skipped=set(rec.get('撤回焦点',[])) if reuse else set()
             chosen=[]
@@ -872,7 +877,7 @@ def main():
                 batch_stage=stage+'-detail-'+str(offset)
                 prefix8=prefix+'/pending-review/'+batch_stage
                 detail,nodes=detail_graph(names[offset:offset+6],rec.get('画材',''),seed+12020+offset,
-                                          prefix8,roles=[role for role,_,_ in batch])
+                                          prefix8,roles=[role for role,_,_ in batch],descriptions=descriptions[offset:offset+6])
                 save(job/(batch_stage+'-workflow.json'),detail.ui())
                 patches=post_graph(detail.api,args.port,job,batch_stage,detail.ui())
                 chosen.extend((l,t,output_image(patches[k]),role) for i,((role,l,t),k) in enumerate(zip(batch,nodes),offset+1) if i not in skipped)
@@ -1126,6 +1131,7 @@ def main():
     from print_judge import actionable_edit, fingerprint, inspect as print_inspect, MODEL
     from production import publish
     detail_rebuilt=False
+    tried_focus_fields=set()
     # The model inspects the exact finished files, including every replacement.
     for attempt in range(3):
         label='final-art' if attempt==0 else f'revision-{attempt}-final-art'
@@ -1194,6 +1200,23 @@ def main():
         with Image.open(approved) as original:
             low_resolution=max(original.size)<1024
             rebuild_size=detail_canvas(original.size)
+        if four_only and attempt<2 and not (args.keep_native or args.selection_mask or args.repair_box):
+            from focal_edit import failed_focus, repaint_definition
+            pixels=failed_focus(judged)
+            if pixels and pixels not in tried_focus_fields:
+                tried_focus_fields.add(pixels)
+                stage=f'print-definition-{attempt+1}'
+                revised=repaint_definition(master,pixels,rec.get('画材',''),seed+17041+attempt,job,stage,
+                                           args.port,prefix+'/pending-review/'+stage,local_image=local_image,
+                                           post_graph=post_graph,output_image=output_image,models=RUNTIME/'ComfyUI/models')
+                if revised:
+                    with Image.open(master) as img:
+                        focus=[round(v*1000/n) for v,n in zip(pixels,img.size*2)]
+                    repair_check={'box':focus,'symptom':finding['symptom']}
+                    rec.setdefault('4K焦点重绘',[]).append({'核验':stage+'-definition.json','范围':focus})
+                    master,small=revised,None
+                    save(manifest,rec)
+                    continue
         if (reference_style and not args.keep_native and not detail_rebuilt and attempt<2 and
                 judged.get('issue',{}).get('category')=='unresolved_focus' and (not issue or repeated or low_resolution)
                 and rebuild_size is not None):

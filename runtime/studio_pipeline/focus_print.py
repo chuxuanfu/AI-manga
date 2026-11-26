@@ -56,7 +56,7 @@ def sampled_surfaces(source,size,focus):
     return result
 
 
-def detail_graph(inputs,medium,seed,prefix,roles=None):
+def detail_graph(inputs,medium,seed,prefix,roles=None,descriptions=None):
     graph=Graph('studio-native-focus-print')
     model=graph.add('UNETLoader','局部扩散',(0,0),['MODEL'],values={'unet_name':TURBO,'weight_dtype':'default'})
     clip=graph.add('CLIPLoader','画法编码',(0,220),['CLIP'],values={'clip_name':'qwen_3_06b_base.safetensors','type':'stable_diffusion','device':'default'})
@@ -76,6 +76,8 @@ def detail_graph(inputs,medium,seed,prefix,roles=None):
             'secondary_subject':'Resolve characteristic material marks of the secondary subject already visible in this crop. Preserve its anatomy or construction.',
             'interaction':'Resolve the existing contact between forms with controlled lines, material edges and contact shadows. Preserve the exact posture.'
         }.get(role,'Resolve the visible local material and edge transitions with fine marks appropriate to this medium.')
+        if descriptions:
+            guidance='Visible subject and markings in this specific crop: '+descriptions[i]+'. '+guidance
         conditioned=graph.add('CLIPTextEncode','按局部内容用笔',(640,400+y),['CONDITIONING'],[('clip',(clip,0))],
                               {'text':medium+'. '+guidance+' Preserve this close-up composition, including blank areas and optical blur. Fine marks follow existing forms. No new objects or figures.'})
         steps=5

@@ -22,6 +22,47 @@ from structure import inspect_small_figure_support
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_tile_subjects_align_with_the_actual_sampler_in_portrait_and_landscape(self):
+        from focal_edit import print_subjects
+        from illustration import print_graph
+        from manga_materials import MaterialTiles, starts, TILE
+        import torch
+        def identify(url, images, prompt, schema, tag):
+            return json.dumps({n:'surface '+n for n in schema['required']})
+        with TemporaryDirectory() as temp, patch('focal_edit.model_identity', return_value='fixture'), \
+             patch('focal_edit.backend',return_value=nullcontext('local')),patch('focal_edit.ask',side_effect=identify) as ask:
+            for width,height in ((384,256),(256,384)):
+                source=Image.new('RGB',(width,height))
+                cache=Path(temp)/f'{width}.json'
+                subjects=print_subjects(source,1920,cache)
+                scaled=(width*5,height*5)
+                fields=[(x,y) for y in starts(0,scaled[1],scaled[1],TILE) for x in starts(0,scaled[0],scaled[0],TILE)]
+                self.assertEqual(set(subjects),{f'{x},{y}' for x,y in fields})
+                _,prompts,plan=MaterialTiles().prepare(torch.zeros((1,scaled[1],scaled[0],3)),None,'整幅通用重绘',
+                        'none','Dry ink',json.dumps(subjects))
+                self.assertEqual(prompts,[subjects[f'{x},{y}']+'. Dry ink' for x,y,*_ in plan])
+                calls=ask.call_count
+                self.assertEqual(print_subjects(source,1920,cache),subjects)
+                self.assertEqual(calls,ask.call_count)
+        g,_=print_graph('source.png','case',23,four_only=True,tile_subjects={3840:subjects})
+        sample=next(n for n in g.api.values() if n['class_type']=='KSampler')
+        pos=g.api[sample['inputs']['positive'][0]]['inputs']
+        split,output=pos['text']
+        self.assertEqual((g.api[split]['class_type'],output),('MangaStudioMaterialTiles',1))
+
+    def test_optical_repair_targets_a_verified_site_and_keeps_pixels_outside(self):
+        from focal_edit import failed_focus,framing,selection
+        rect=(3421,99,3840,530)
+        report={'issue':{'category':'unresolved_focus'},'views':[{'view':'comparison','pixels':list(rect)}]}
+        self.assertEqual(failed_focus(report),rect)
+        self.assertIsNone(failed_focus(dict(report,issue={'category':'anatomy'})))
+        self.assertIsNone(failed_focus(dict(report,views=[])))
+        field,target=framing((3840,2160),rect)
+        self.assertLessEqual(field[2],3840)
+        mask=selection((field[2]-field[0],field[3]-field[1]),target)
+        self.assertEqual(mask.getbbox(),target)
+        self.assertEqual(mask.getpixel(((target[0]+target[2])//2,(target[1]+target[3])//2)),255)
+
     def test_interpolated_and_sharpened_prints_require_a_new_render(self):
         from print_judge import inspect, resize_only
         import numpy as np
@@ -43,6 +84,18 @@ class LocalRepairTests(unittest.TestCase):
                     self.assertEqual(result['status'],'global')
                     self.assertEqual(result['issue']['category'],'unresolved_focus')
                     self.assertGreaterEqual(len(result['resampling_check'][0]['fields']),2)
+
+    def test_ctc_word_decoder_preserves_double_letters_separated_by_blanks(self):
+        import numpy as np
+        from lettering import decode_word
+        alphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
+        sequence = [0] + [alphabet.index(c)+1 if c else 0 for c in ('f','f','e','e','','e','t')]
+        logits = np.full((len(sequence),37),-8.,dtype=np.float32)
+        logits[np.arange(len(sequence)),sequence] = 8.
+        result,score = decode_word(logits)
+        self.assertEqual(result,'feet')
+        self.assertGreater(score,.99)
+        self.assertEqual(decode_word(logits[:1]),('',0.))
 
     def test_disjoint_word_polygons_do_not_erase_a_neighbouring_contour(self):
         from lettering import glyph_mask

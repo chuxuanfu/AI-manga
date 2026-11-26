@@ -53,7 +53,7 @@ class MaterialTiles:
             "study": (["none", "crust", "knit", "fiber", "fur", "wood", "stone", "wicker"],),
             "material": ("STRING", {"multiline": True, "default":
                 "fine woven linen, visible individual threads, illustrated in fine ink and watercolor"}),
-        }}
+        }, "optional": {"tile_subjects": ("STRING", {"multiline": True, "default": ""})}}
 
     RETURN_TYPES = ("IMAGE", "STRING", "MANGA_TILE_PLAN")
     RETURN_NAMES = ("tiles", "prompts", "plan")
@@ -61,7 +61,7 @@ class MaterialTiles:
     FUNCTION = "prepare"
     CATEGORY = "MangaStudio/8K"
 
-    def prepare(self, image, source_mask, profile, study, material):
+    def prepare(self, image, source_mask, profile, study, material, tile_subjects=""):
         if image.shape[0] != 1:
             raise ValueError("请每次处理一张底图。")
         h, w = image.shape[1:3]
@@ -80,7 +80,15 @@ class MaterialTiles:
                 raise ValueError("该预设与底图不匹配。请选对应的春日壁纸，或用手绘遮罩标出新图里的材质。")
             regions = ((polygon_mask((w, h), r["polygons"], data["protect"] + r.get("exclude", [])),
                         r["prompt"], r.get("strength", 1.0), r.get("replace_surface", False), r.get("study")) for r in data["regions"])
-        return make_tiles(image, regions)
+        tiles, prompts, plan = make_tiles(image, regions)
+        if tile_subjects:
+            localized = json.loads(tile_subjects)
+            for i, (x, y, *_) in enumerate(plan):
+                observed = localized[f"{x},{y}"]
+                if not isinstance(observed, str) or not observed.strip():
+                    raise ValueError("Missing visual direction for a print tile")
+                prompts[i] = f"{observed}. {material}"
+        return tiles, prompts, plan
 
 
 def make_tiles(image, regions):

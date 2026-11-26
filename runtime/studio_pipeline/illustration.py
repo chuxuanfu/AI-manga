@@ -248,7 +248,7 @@ def continuous_tone_double(reference, prefix):
     return g, str(output)
 
 
-def print_graph(reference,prefix,seed,native_four=False,medium='',four_steps=4,eight_steps=4,four_only=False,upscale_model=UP):
+def print_graph(reference,prefix,seed,native_four=False,medium='',four_steps=4,eight_steps=4,four_only=False,upscale_model=UP,tile_subjects=None):
     g=Graph('studio-illustration-print')
     src=g.add('LoadImage','已选插画',(0,0),['IMAGE','MASK'],values={'image':reference},widgets=[reference,'image'])
     model=g.add('UNETLoader','Anima Turbo',(0,240),['MODEL'],values={'unet_name':TURBO,'weight_dtype':'default'})
@@ -258,12 +258,24 @@ def print_graph(reference,prefix,seed,native_four=False,medium='',four_steps=4,e
     negative=g.add('ConditioningZeroOut','空白条件',(750,550),['CONDITIONING'],[('conditioning',(positive,0))])
     def pass_at(image,edge,steps,strength,x):
         guide=g.scale(f'{edge} 像素画布',(x,0),image,edge)
+        directions=(tile_subjects or {}).get(edge)
+        material=('Preserve the specified medium and palette. Resolve existing fine marks, edges and highlights. '
+                  'Keep quiet areas smooth. Follow the existing light and silhouettes. '+medium) if directions else 'painted illustration'
+        settings=dict(profile='整幅通用重绘',study='none',material=material)
+        if directions:
+            import json
+            settings['tile_subjects']=json.dumps(directions,ensure_ascii=False)
         split=g.add('MangaStudioMaterialTiles','全幅均匀分块',(x+345,0),['IMAGE','STRING','MANGA_TILE_PLAN'],
                     [('image',(guide,0)),('source_mask',(src,1))],
-                    dict(profile='整幅通用重绘',study='none',material='painted illustration'))
+                    settings)
+        local_positive=positive
+        if directions:
+            local_positive=g.add('CLIPTextEncode','Visible subject for each tile',(x+680,440),['CONDITIONING'],
+                                 [('clip',(clip,0)),('text',(split,1))],widget_links=('text',))
+
         lat=g.add('VAEEncode','编码图块',(x+690,0),['LATENT'],[('pixels',(split,0)),('vae',(vae,0))])
         params=dict(seed=seed+edge,steps=steps,cfg=1.0,sampler_name='euler',scheduler='simple',denoise=strength)
-        sample=g.add('KSampler','按新像素重绘',(x+1020,0),['LATENT'],[('model',(model,0)),('positive',(positive,0)),('negative',(negative,0)),('latent_image',(lat,0))],
+        sample=g.add('KSampler','按新像素重绘',(x+1020,0),['LATENT'],[('model',(model,0)),('positive',(local_positive,0)),('negative',(negative,0)),('latent_image',(lat,0))],
                      params,[seed+edge,'fixed',steps,1.0,'euler','simple',strength],size=(310,265))
         decoded=g.add('VAEDecode','解码图块',(x+1380,0),['IMAGE'],[('samples',(sample,0)),('vae',(vae,0))])
         return g.add('MangaStudioMaterialComposite','保留原稿线条与明暗',(x+1710,0),['IMAGE'],
