@@ -107,6 +107,16 @@ def _post_graph(api, port, directory, stage, workflow=None):
             if hist['status']['status_str']!='success':
                 cache.unlink(missing_ok=True)
                 raise RuntimeError(str(hist['status']['messages'][-2:])[:2300])
+            if 'renderer' not in job:
+                # Keep the files referenced by Comfy's executed graph, including
+                # optional local editors actually selected on this device.
+                executed=hist.get('prompt',[])
+                if len(executed)>2 and isinstance(executed[2],dict):
+                    weights={v for node in executed[2].values() for k,v in node['inputs'].items()
+                             if k in ('ckpt_name','unet_name','clip_name','lora_name','vae_name','model_name')
+                             and isinstance(v,str)}
+                    job.update(renderer='ComfyUI',endpoint=url,model_files=sorted(weights))
+                    save(cache,job)
             return hist['outputs']
         time.sleep(4)
 
