@@ -1,5 +1,6 @@
 """Offline print inspection. Stage coordinates are always mapped back to the real master."""
 from contextlib import ExitStack
+import fcntl
 import hashlib
 import json
 import math
@@ -1150,6 +1151,17 @@ def needs_perspective_review(result):
 
 def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None, source_comparison=False, construction_draft=False):
     digest=fingerprint(path)
+    directory=root/'print-review'
+    directory.mkdir(exist_ok=True)
+    # A resume and a gallery recheck can request the very same pixels. Serialize
+    # receipt access before loading it so the second reader resumes from disk.
+    with (directory/('.'+digest+'.lock')).open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        return _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,
+                              source_comparison,construction_draft)
+
+
+def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_comparison,construction_draft):
     model_id=model_identity(MODEL)
     if not model_id:raise RuntimeError('缺少已安装的 Qwen3.8-27B 终审模型')
     regions=preliminary.get('regions',{})

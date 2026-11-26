@@ -31,6 +31,33 @@ class LocalRepairTests(unittest.TestCase):
             dashboard(job,{'prompt':'A coastal scene','rounds':[],'status':'本轮未达标，自动重试'})
             self.assertNotIn('href="4K.png"',(job/'proofs.html').read_text())
 
+    def test_concurrent_inspections_read_the_completed_receipt(self):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from print_judge import inspect
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            path=root/'sample.png'
+            Image.new('RGB',(20,20),'teal').save(path)
+            entered=threading.Event()
+            release=threading.Event()
+            calls=[]
+            def reader(*args):
+                seen=(root/'complete').is_file()
+                calls.append(seen)
+                entered.set()
+                if not release.wait(4):raise RuntimeError('release did not arrive')
+                (root/'complete').touch()
+                return seen
+            with patch('print_judge._inspect_print',side_effect=reader), ThreadPoolExecutor(2) as pool:
+                first=pool.submit(inspect,path,'landscape',root,{})
+                self.assertTrue(entered.wait(3))
+                second=pool.submit(inspect,path,'landscape',root,{})
+                release.set()
+                self.assertFalse(first.result(timeout=4))
+                self.assertTrue(second.result(timeout=4))
+                self.assertEqual(calls,[False,True])
+
     def test_viewpoint_uses_a_camera_relative_description_of_the_same_subject(self):
         from brief_check import camera_conflict
         request='small ginger cat sits upright in strict side profile facing out to the sea'
