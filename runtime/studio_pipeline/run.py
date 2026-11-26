@@ -563,13 +563,13 @@ def main():
     retry_origin=None
     if args.round_worker and four_only:
         from production import local_retry_source
-        retry_source=local_retry_source(job,prompt,interrupted=True)
+        retry_source=local_retry_source(job,prompt,interrupted=True,review_upgrade=True)
         if retry_source:
             retry_origin=job
         elif args.retry_round:
             retry_origin=args.retry_round
-            retry_source=local_retry_source(retry_origin,prompt)
-        if retry_source and retry_origin!=job and not (args.reviewed_image or args.from_image or args.candidate_image or args.repair_box):
+            retry_source=local_retry_source(retry_origin,prompt,review_upgrade=True)
+        if retry_source and retry_source[2]['operation']!='reinspect' and retry_origin!=job and not (args.reviewed_image or args.from_image or args.candidate_image or args.repair_box):
             # When a text-only job consumes a whole new round yet keeps exactly
             # the previous rejected master, let new seeds try a fresh composition.
             # User-supplied source images always keep their original composition.
@@ -805,7 +805,15 @@ def main():
         focus=region(issue,{})
         # Check a reported border problem on the retained pixels before redrawing
         # a body or object that intentionally continues beyond the canvas.
-        from print_judge import FRAME_CLAIM, verify_frame_exit, MODEL as PRINT_MODEL
+        from print_judge import FRAME_CLAIM, verify_frame_exit, excluded_by_brief, exclusion_repair, MODEL as PRINT_MODEL
+        if focus and issue.get('unresolved_exclusion'):
+            from evidence import backend
+            with Image.open(last) as source,backend(PRINT_MODEL) as address:
+                plan=exclusion_repair(address,source,focus,prompt,excluded_by_brief(prompt),issue.get('symptom',''))
+            if plan:
+                save(job/'continued-exclusion-plan.json',plan)
+                issue=dict(issue,operation='redraw' if plan['action']=='clear_surface' else 'remove_forbidden',
+                           target=plan['part'],fix=plan['edit'])
         claim=issue.get('symptom','')+' '+issue['fix']
         framing=None
         if focus and FRAME_CLAIM.search(claim) and (min(focus[:2])<=12 or max(focus[2:])>=988):
@@ -814,14 +822,18 @@ def main():
                 overview=source.copy();overview.thumbnail((1152,1152),Image.Resampling.LANCZOS)
                 framing=verify_frame_exit(address,source,overview,focus,claim,prompt)
             if framing:save(job/'continued-framing-review.json',framing)
-        if framing and framing['explained']:
+        if issue.get('operation')=='reinspect' or (framing and framing['explained']):
             repaired=last
         else:
             stage='continued-repair'
             if retry_origin==job:
                 with last.open('rb') as stream:
                     stage='resume-'+hashlib.file_digest(stream,'sha256').hexdigest()[:16]+'-repair'
-            repaired=correct_shape(last,issue,focus,stage,seed+820,retry_origin) if focus else None
+            if focus and issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
+                repaired=job/(stage+'-removed-unrequested-object.png')
+                with Image.open(last) as retained:masked_candidate(retained.convert('RGB'),focus).save(repaired)
+            else:
+                repaired=correct_shape(last,issue,focus,stage,seed+820,retry_origin) if focus else None
         if repaired:
             master,small=repaired,None
             repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
@@ -882,7 +894,7 @@ def main():
         # A localized, actionable suspicion can produce a *candidate*; it still has
         # to beat the source on the native crop and pass the full review to be released.
         finding=judged.get('issue',{})
-        if judged['status']=='local' or (judged['status']=='uncertain' and finding.get('operation')=='redraw'):
+        if judged['status']=='local' or (judged['status']=='uncertain' and finding.get('operation') in ('redraw','remove_forbidden')):
             candidates=[finding]
         elif final['status']=='local' and judged['status']=='pass':
             candidates=final['issues']

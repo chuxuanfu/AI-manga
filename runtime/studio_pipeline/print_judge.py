@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-26'
+REVISION = 'print-inspection-27'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -48,6 +48,34 @@ def crop_brief(brief):
             'The composition is inspected separately in full. '
             + ('Medium and finish: '+style+'. ' if sep else 'Respect the visible artwork medium. ')
             + ('Local focus instructions: '+'. '.join(handling) if handling else ''))
+
+
+def excluded_by_brief(brief):
+    return re.findall(r'(?:没有|不要|不含|不出现|禁止|无(?=[人物动字])|\bwithout\b|\bno\b|\bexclude\b)[^。；.!?;]{1,110}',brief,flags=re.I)
+
+
+def exclusion_repair(url, image, box, brief, clauses, claim):
+    """Propose a reversible local repair when an explicit exclusion is unresolved."""
+    if not clauses or not box or not 0<(box[2]-box[0])*(box[3]-box[1])<60000:return None
+    location=tuple(round(v*n/1000) for v,n in zip(box,image.size*2))
+    region=image.crop(expanded(location,image.size))
+    region.thumbnail((850,850),Image.Resampling.LANCZOS)
+    fields={'phrase':{'type':'string'},'action':{'enum':['clear_surface','remove_accessory','hold']},
+            'part':{'type':'string'},'edit':{'type':'string'}}
+    question=('The image contains a small disputed feature. An editor suspects it may violate an '
+              'explicit exclusion. Select a local edit that unambiguously satisfies the brief while '
+              'preserving every requested subject, action, pose and color. If the marks are on a '
+              'required object, clear_surface means repaint only its surface while preserving the '
+              'object. remove_accessory is allowed only for a separate, optional decoration whose '
+              'complete removal preserves the scene. Use hold for uncertain location, unrelated '
+              'defects or no applicable explicit exclusion. In phrase quote the exact applicable '
+              'exclusion; describe a concrete visual edit in English. Concern: '+claim+' Brief: '+brief)
+    result=json.loads(ask(url,[region],question,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    phrase=result['phrase'].strip().rstrip('。.!！').casefold()
+    if not phrase or not any(phrase==c.strip().casefold() for c in clauses):return None
+    if not result['part'].strip() or not result['edit'].strip():return None
+    if result['action'] not in ('clear_surface','remove_accessory'):return None
+    return result
 
 
 def fingerprint(path):
@@ -347,7 +375,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
     if not model_id:raise RuntimeError('缺少已安装的 Qwen3.8-27B 终审模型')
     regions=preliminary.get('regions',{})
     forbidden=[name for name,count in preliminary.get('expected_counts',{}).items() if count==0]
-    exclusion_clauses=re.findall(r'(?:没有|不要|不含|不出现|禁止|无(?=[人物动字])|\bwithout\b|\bno\b|\bexclude\b)[^。；.!?;]{1,110}',brief,flags=re.I)
+    exclusion_clauses=excluded_by_brief(brief)
     constraints='Forbidden by the author: '+', '.join(forbidden+exclusion_clauses) if forbidden or exclusion_clauses else 'No explicit exclusions supplied.'
     dispute='' if preliminary.get('status')=='pass' else preliminary.get('note','')
     focals=(focus or {}).get('8K局部',[])
@@ -582,7 +610,14 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     if verdict not in ('local','global','uncertain'):raise ValueError('无效的复审结果')
                     result.update(status=verdict,issue={'box':box,'operation':second.get('operation','redraw'),'fix':second['fix'],'target':second['target'],
                                                         'symptom':second['evidence']})
-                    if small and second.get('operation')!='remove_forbidden':
+                    if (verdict=='uncertain' and row.get('operation')=='remove_forbidden'
+                            and second.get('operation')=='none' and box and 0<(box[2]-box[0])*(box[3]-box[1])<60000):
+                        plan=exclusion_repair(url,image,box,brief,exclusion_clauses,second['evidence'])
+                        if plan:
+                            record['exclusion_repair']=plan
+                            operation='redraw' if plan['action']=='clear_surface' else 'remove_forbidden'
+                            result['issue'].update(operation=operation,target=plan['part'],fix=plan['edit'],category='other')
+                    if small and result['issue']['operation']!='remove_forbidden' and 'category' not in result['issue']:
                         result['issue']['category']=record.get('issue_category') or issue_category(url,region,second['evidence'],inspection_brief)
             record['elapsed_seconds']=round(time.monotonic()-started,2)
             result['views'].append(record)

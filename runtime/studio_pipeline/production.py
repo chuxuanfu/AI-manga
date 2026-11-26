@@ -100,7 +100,7 @@ def save(job,state):
         except OSError as exc:print('图片库刷新失败',exc,flush=True)
 
 
-def local_retry_source(previous, brief, *, interrupted=False):
+def local_retry_source(previous, brief, *, interrupted=False, review_upgrade=False):
     """Resume only a localized 4K rejection whose image and baseline still match the review."""
     record_file=previous/'review.json'
     if not record_file.is_file():return None
@@ -118,7 +118,16 @@ def local_retry_source(previous, brief, *, interrupted=False):
     image=previous/record['4K']
     candidates=[record['底图'],record.get('高清底图返工',{}).get('重绘')]
     issue=report.get('issue',{})
-    if (report.get('brief')!=brief or report.get('status')!=entry['状态'] or issue.get('operation')!='redraw'
+    from print_judge import REVISION
+    recheck=(review_upgrade and report.get('revision') and report['revision']!=REVISION
+             and entry['状态']=='uncertain' and issue.get('operation') not in ('redraw','remove_forbidden'))
+    if recheck:
+        issue=dict(issue,operation='reinspect',fix=issue.get('fix') or 'Inspect this previously held region.')
+        views=report.get('views',[])
+        if views and views[-1].get('observation',{}).get('operation')=='remove_forbidden':
+            issue['unresolved_exclusion']=True
+    if (report.get('brief')!=brief or report.get('status')!=entry['状态']
+            or (not recheck and issue.get('operation') not in ('redraw','remove_forbidden'))
             or not issue.get('fix') or not issue.get('box') or not image.is_file()
             or fingerprint(image)!=report.get('sha256')):
         return None
