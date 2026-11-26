@@ -880,6 +880,15 @@ class LocalRepairTests(unittest.TestCase):
         self.assertIsNone(changed_clipped_field(proposal,proposal.copy()))
         self.assertEqual(changed_clipped_field(ImageOps.invert(source),ImageOps.invert(proposal))['tone'],'white')
 
+    def test_head_and_seated_profile_guides_follow_the_requested_subject(self):
+        from illustration import construction_guide
+        self.assertEqual(construction_guide("Turn the woman's face to three-quarter view.")[0].name,
+                         'three-quarter-face-geometry.png')
+        self.assertIsNone(construction_guide('Turn the cat head to a three-quarter view.'))
+        self.assertEqual(construction_guide('Draw the cat seated in side profile.')[0].name,
+                         'seated-cat-side-profile.jpg')
+        self.assertIsNone(construction_guide('Repaint the deck. Preserve the cat seated in side profile.'))
+
     def test_flat_color_spill_must_cross_the_target_and_destroy_existing_lines(self):
         from construction_review import overpainted_rectangle
         src=Image.new('RGB',(240,160),'#235742')

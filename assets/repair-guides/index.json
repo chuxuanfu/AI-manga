@@ -143,5 +143,46 @@
     "license": "CC BY-SA 4.0",
     "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
     "changes": "Cropped to the seated animal and its point of support, resized and JPEG-encoded."
+  },
+  {
+    "file": "three-quarter-face-geometry.png",
+    "requires": [
+      [
+        "face",
+        "head",
+        "portrait",
+        "脸",
+        "面部",
+        "头部"
+      ],
+      [
+        "three-quarter",
+        "three quarter",
+        "three-quarters",
+        "四分之三侧面",
+        "四分之三视角"
+      ],
+      [
+        "woman",
+        "girl",
+        "human",
+        "boy",
+        "man",
+        "child",
+        "person",
+        "人物",
+        "女孩",
+        "少女",
+        "少年",
+        "女性",
+        "男性"
+      ]
+    ],
+    "construction": "Three-quarter head rotation exposes the near cheek and eye and a narrower far cheek and eye. Orient the nose bridge and chin together. Use this sample only for relative positions. Orient to the requested direction and preserve the identity, expression, hair, outfit and drawn features of the source.",
+    "source": "https://github.com/google-ai-edge/mediapipe/blob/master/mediapipe/modules/face_geometry/data/canonical_face_model.obj",
+    "author": "Google MediaPipe authors",
+    "license": "Apache License 2.0",
+    "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+    "changes": "Locally rotated the canonical face surface, rendered a grayscale orthographic view and projected the eyelid landmarks. See mediapipe-license.txt."
   }
 ]
