@@ -1,25 +1,36 @@
 """Inspect native evidence for the most specific visible promises in the brief."""
 import json
+import re
 
 from evidence import ask, model_identity
 from PIL import Image
 
 
+VIEWPOINT=re.compile(r'\b(?:in (?:strict |full |side )?profile|side[- ](?:on|profile|view)|'
+                     r'(?:front|back|rear)[- ]view|(?:front|head)[- ]on|seen from (?:behind|the side)|'
+                     r'three[- ]quarter(?:s)? (?:view|silhouette|profile))\b|'
+                     r'正侧面|侧面(?:视角|轮廓)|背对镜头|正对镜头|正面视角|四分之三侧面',re.I)
+
+
 def subject_witness(url, image, overview, brief, tag):
     position={key:{'type':'integer','minimum':0,'maximum':1000} for key in ('left','top','right','bottom')}
     properties={'quote':{'type':'string'},'inspect':{'type':'string'},**position}
-    schema={'type':'object','properties':{'checks':{'type':'array','maxItems':3,'items':{
+    count=4 if VIEWPOINT.search(brief) else 3
+    pose=(' Include the explicitly requested camera-relative view as one check. Quote the subject and viewpoint '
+          'together and locate its entire head and body. The direction of its gaze and the angle visible '
+          'to the viewer are separate facts.' if count==4 else '')
+    schema={'type':'object','properties':{'checks':{'type':'array','maxItems':count,'items':{
         'type':'object','properties':properties,'required':list(properties)}}},'required':['checks']}
     plan=json.loads(ask(url,[overview],
-        'Select at most three explicit, visible promises that are easy to draw incorrectly while still '
+        f'Select at most {count} explicit, visible promises that are easy to draw incorrectly while still '
         'showing the right generic subject. Prioritize a specified physical action or contact, a named '
         'species, breed or identifying pattern, then distinctive anatomy or equipment. Omit generic '
         'beauty/style. Select a SHORT VERBATIM phrase naming a single feature; separate clauses about the same object. For each give a neutral observable question '
         'and locate the evidence in the supplied whole picture using 0..1000 coordinates. Include both '
-        'endpoints of an interaction. Do not assume the depicted action or identity is correct. Brief: '
+        'endpoints of an interaction. Do not assume the depicted action or identity is correct.'+pose+' Brief: '
         +brief,schema,tag=tag))['checks']
     notes=[]
-    for item in plan[:3]:
+    for item in plan[:count]:
         quote=item['quote'].strip()
         if len(quote)<2 or quote.casefold() not in brief.casefold():continue
         l,t,r,b=(item[k] for k in position)
@@ -49,7 +60,8 @@ def subject_witness(url, image, overview, brief, tag):
     for n,k,crop in zip(notes,names,crops):
         n['reading']=readings[k]
         vote=n['reading']
-        if issue or vote['decision']=='supported':
+        viewpoint=bool(VIEWPOINT.search(n['quote']))
+        if issue or (vote['decision']=='supported' and not viewpoint):
             continue
         # The overview reader can reverse an instrument's direction or mistake a rail
         # for its supporting post. Independently trace the same requirement in context.
@@ -61,6 +73,8 @@ def subject_witness(url, image, overview, brief, tag):
             'The first image is a complete illustration and the second is an enlargement from it. '
             'First trace the actual shape, alignment, position and connection using at least two '
             'identifiable visible landmarks. Then compare with this requirement: '+repr(n['quote'])+
+            ('. For a viewpoint, determine the side, front or back visible to the viewer from the silhouette '
+             'and overlapping features. Distinguish gaze from body orientation.' if viewpoint else '')+
             '. Compare only landmarks you can see. Where a named species or variety is required, '
             'look for its distinctive physical markings. When a specific action is required, '
             'trace the visible endpoints of that action. A generic animal or the presence of a '
@@ -77,7 +91,8 @@ def subject_witness(url, image, overview, brief, tag):
                 'Describe only what this crop visibly depicts. Identify the visible part, silhouette, '
                 'species or variety when distinguishable, facial outline and markings, material or '
                 'pattern when relevant. If objects approach one another, identify exactly where one '
-                'endpoint falls relative to the neighboring feature. Mention any visible gap or '
+                'endpoint falls relative to the neighboring feature. State which surfaces face the viewer and '
+                'which silhouette landmarks establish the view. Mention any visible gap or '
                 'overlap. Do not grade the picture, infer intent or recommend changes. Be specific '
                 'and use fewer than 65 words.',tag=reviewer).strip()
             n['blind_crop_reading']=neutral

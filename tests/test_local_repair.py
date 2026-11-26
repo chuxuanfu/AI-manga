@@ -837,6 +837,16 @@ class LocalRepairTests(unittest.TestCase):
                                         ('restoration',800,True),('tiled',1536,False)]:
                     self.assertEqual(prefer_source_reconstruction(method,edge,None),use and available)
 
+    def test_blind_optical_panels_retain_every_pixel_in_both_orders(self):
+        from print_judge import native_comparison_panel
+        first=Image.new('RGB',(57,63),'lightblue')
+        second=first.copy()
+        ImageDraw.Draw(second).line((0,0,56,62),fill='gold')
+        for a,b in ((first,second),(second,first)):
+            panel=native_comparison_panel(a,b)
+            self.assertEqual(panel.crop((0,26,57,89)).tobytes(),a.tobytes())
+            self.assertEqual(panel.crop((65,26,122,89)).tobytes(),b.tobytes())
+
     def test_native_line_pairs_require_repeated_members_across_a_stroke(self):
         from print_artifacts import resolved_line_pair
         from print_judge import resize_only

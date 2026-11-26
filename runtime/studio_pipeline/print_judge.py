@@ -904,6 +904,18 @@ def issue_category(url, region, evidence, brief):
     return 'other'
 
 
+def native_comparison_panel(first, second):
+    """Place equal-scale untouched crops inside one image so position and sample stay together."""
+    if first.size!=second.size:raise ValueError('Unmatched optical samples')
+    width,height=first.size
+    panel=Image.new('RGB',(2*width+8,height+26),'#252525')
+    draw=ImageDraw.Draw(panel)
+    for x,label,patch in ((0,'A',first),(width+8,'B',second)):
+        draw.text((x+7,5),label,fill='white')
+        panel.paste(patch,(x,26))
+    return panel
+
+
 def independent_detail_check(url, images, overview, brief):
     """Resolve a disputed comparison only when measured detail and two blind readings agree."""
     import cv2
@@ -945,9 +957,27 @@ def independent_detail_check(url, images, overview, brief):
                 'when no concrete additional legible structure can be located. Name the feature and its exact '
                 'location in one short sentence. Brief: '+brief)
     if resolved:
-        reverse = read([high,low,overview],question+' The last image locates the feature.',fields)
-        report['reverse'] = reverse
-        report['confirmed'] = reverse['finer_version']=='first' and bool(reverse['location'].strip() and reverse['evidence'].strip())
+        # A separate scene locator can be mistaken for a third candidate. Bind neutral
+        # labels to untouched pixels and require the same result after switching sides.
+        props={'finer':{'enum':['A','B','equivalent','ambiguous']},'location':{'type':'string'},
+               'evidence':{'type':'string'},'new_artifact':{'type':'boolean'}}
+        task=('One image contains two anonymous same-scale crops, A on the left and B on the right. '
+              'Only these two rectangles are being compared. Locate this specific contour or material: '+
+              finding['trace']+'. Trace that feature in A and in B; say which resolves its shape '
+              'more clearly. If the feature is absent or only grain, contrast or halos differ, '
+              'select equivalent or ambiguous. Flag any new damage in the version you choose. '
+              'Use only features visible inside these two rectangles.')
+        controls=[]
+        for first,second,expected in ((high,low,'A'),(low,high,'B')):
+            vote=read([native_comparison_panel(first,second)],task,props)
+            controls.append(vote)
+            if (vote['finer']!=expected or vote['new_artifact'] is not False
+                    or not vote['location'].strip() or not vote['evidence'].strip()):
+                break
+        report['paired_panels']=controls
+        report['confirmed']=(len(controls)==2 and all(
+            v['finer']==wanted and v['new_artifact'] is False and v['location'].strip() and v['evidence'].strip()
+            for v,wanted in zip(controls,('A','B'))))
         return report
     # Sometimes the feature already exists in both versions. Resolve the ink
     # edge, stitch or vein itself at optical zoom before concluding equivalence.
@@ -1160,6 +1190,14 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
         if (last.get('view') in ('comparison','draft-comparison') and not last.get('context_at_two_scales')
                 and result.get('issue',{}).get('operation')=='none'):
             report=report.with_name(report.stem+'-field-context.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
+                result.pop('issue',None)
+    if result.get('status')=='uncertain' and result.get('views'):
+        prior=result['views'][-1].get('blind_detail_check',{})
+        if prior.get('reverse') and not prior.get('confirmed') and 'paired_panels' not in prior:
+            report=report.with_name(report.stem+'-blind-panels.json')
             if report.is_file():result=json.loads(report.read_text())
             else:
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')

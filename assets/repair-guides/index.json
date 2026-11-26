@@ -110,5 +110,38 @@
     "license": "Public domain in the United States, US federal government work",
     "license_url": "https://commons.wikimedia.org/wiki/Template:PD-USGov-FWS",
     "changes": "Cropped around the head and shoulder, converted to grayscale and resized to 750 pixels."
+  },
+  {
+    "file": "seated-cat-side-profile.jpg",
+    "requires": [
+      [
+        "cat",
+        "kitten",
+        "feline",
+        "猫"
+      ],
+      [
+        "side profile",
+        "in profile",
+        "side-on",
+        "side view",
+        "正侧面",
+        "侧面轮廓"
+      ],
+      [
+        "sit",
+        "seated",
+        "sitting",
+        "haunch",
+        "坐姿",
+        "蹲坐"
+      ]
+    ],
+    "construction": "In a lateral view of a seated cat, one eye and the muzzle extend in profile, forepaws support the forequarters, and the haunch sits behind the forelegs. The curled tail rests on the same surface. Match the requested coat, direction, perspective and medium of the illustration.",
+    "source": "https://commons.wikimedia.org/wiki/File:AlmostTiger.JPG",
+    "author": "Hortensja Bukietowa",
+    "license": "CC BY-SA 4.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+    "changes": "Cropped to the seated animal and its point of support, resized and JPEG-encoded."
   }
 ]
