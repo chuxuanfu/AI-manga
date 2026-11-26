@@ -917,7 +917,25 @@ def main():
         # Check a reported border problem on the retained pixels before redrawing
         # a body or object that intentionally continues beyond the canvas.
         from print_judge import FRAME_CLAIM, verify_frame_exit, excluded_by_brief, exclusion_repair, MODEL as PRINT_MODEL
-        if focus and issue.get('verify_part_identity'):
+        # Earlier generated edits can introduce a seam that becomes part of the
+        # next editor's conditioning. Test a previous version against current pixels
+        # only when every pixel outside the damaged region is exactly the same.
+        reverted=None
+        if focus and issue.get('operation')=='redraw':
+            from production import earlier_local_version, repeated_rejection
+            from print_judge import REVISION
+            if repeated_rejection(retry_origin,focus):
+                alternative=earlier_local_version(job,last,retry_source[1],focus,prompt,REVISION)
+                if alternative:
+                    earlier,history=alternative
+                    from construction_review import assess_local_edit
+                    with Image.open(last) as current_art, Image.open(earlier) as older_art:
+                        verdict=assess_local_edit(current_art,older_art,focus,issue['fix'],issue.get('symptom'),prompt)
+                    save(job/('prior-version-'+history['current'][:12]+'-'+history['earlier'][:12]+'-review.json'),
+                         {**history,'verdict':verdict})
+                    if verdict.get('verdict')=='resolved':
+                        reverted=earlier
+        if not reverted and focus and issue.get('verify_part_identity'):
             from print_judge import verify_depicted_connection, verify_part_identity
             from evidence import backend
             with Image.open(last) as source,backend(PRINT_MODEL) as address:
@@ -950,7 +968,9 @@ def main():
                 framing=verify_frame_exit(address,source,overview,focus,claim,prompt)
             if framing:save(job/'continued-framing-review.json',framing)
         scene=None
-        if issue.get('operation')=='reinspect' or (framing and framing['explained']):
+        if reverted:
+            repaired=reverted
+        elif issue.get('operation')=='reinspect' or (framing and framing['explained']):
             repaired=last
         else:
             stage='continued-repair'

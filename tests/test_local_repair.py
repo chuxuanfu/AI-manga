@@ -14,9 +14,9 @@ sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
 from construction_review import LARGE, assess_local_edit, verify_interior_figure
 from illustration import instruction_edit, reference_draft
 from masks import structural_composite
-from print_judge import actionable_edit, crop_brief, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity
+from print_judge import actionable_edit, crop_brief, disputed_action_resolved, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity
 from page_layout import retry_direction
-from production import repeated_rejection, same_repair_region
+from production import earlier_local_version, repeated_rejection, same_repair_region
 from review import inspection_key
 from structure import inspect_small_figure_support
 
@@ -133,6 +133,14 @@ class LocalRepairTests(unittest.TestCase):
                                           'The required feet are missing from the frame.')
         self.assertIsNone(result)
 
+    def test_overturning_a_structural_finding_needs_an_independent_whole_part_reading(self):
+        reading = {'visible_shapes':'A branch continues into its trunk.',
+                   'depicted_action':'The branch supports the leaf cluster.'}
+        for condition in ('insufficient', 'visible_fault', 'physically_plausible'):
+            self.assertEqual(disputed_action_resolved(dict(reading, condition=condition)),
+                             condition == 'physically_plausible')
+        self.assertFalse(disputed_action_resolved({'condition':'physically_plausible'}))
+
     def test_retry_brief_cannot_copy_objects_from_a_discarded_composition(self):
         for note, unexpected in [('The strands around the unrequested cleat have tangled crossings.', 'cleat'),
                                  ('An extra red suitcase appears.', 'suitcase'),
@@ -174,6 +182,36 @@ class LocalRepairTests(unittest.TestCase):
         self.assertTrue(same_repair_region([588, 684, 693, 907], [647, 650, 750, 850]))
         self.assertFalse(same_repair_region([588, 684, 693, 907], [300, 160, 400, 220]))
         self.assertFalse(same_repair_region(None, [647, 650, 750, 850]))
+
+    def test_reverting_a_patch_cannot_revert_a_distant_fix_or_an_unverified_image(self):
+        from print_judge import fingerprint
+        with TemporaryDirectory() as tmp:
+            rounds = Path(tmp) / 'rounds'
+            first, next_round = rounds/'0001', rounds/'0002'
+            reports = first/'print-review'
+            reports.mkdir(parents=True)
+            next_round.mkdir()
+            earlier, current = first/'before.png', first/'after.png'
+            old = Image.new('RGB', (512, 512), 'white')
+            old.save(earlier)
+            new = old.copy()
+            ImageDraw.Draw(new).line((220, 230, 250, 235), fill='black', width=3)
+            new.save(current)
+            box = [400, 400, 510, 510]
+            report = dict(sha256=fingerprint(earlier), brief='A drawing', size=[512, 512],
+                          comparison_sha256=fingerprint(earlier), source=str(earlier), status='local',
+                          issue={'box':box})
+            receipt = reports/'read.json'
+            receipt.write_text(json.dumps(report))
+            def find_version():
+                return earlier_local_version(next_round, current, earlier, box, 'A drawing', 'v')
+            self.assertEqual(find_version()[0], earlier.resolve())
+            receipt.write_text(json.dumps(dict(report, sha256='wrong')))
+            self.assertIsNone(find_version())
+            receipt.write_text(json.dumps(report))
+            new.putpixel((1, 511), (0, 0, 0))
+            new.save(current)
+            self.assertIsNone(find_version())
 
     def test_unrelated_or_accepted_edits_do_not_trigger_escalation(self):
         with TemporaryDirectory() as tmp:

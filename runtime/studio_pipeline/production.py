@@ -174,6 +174,47 @@ def failed_scene_connection(directory, record, finding):
                for _,item in report.get('previous_regions',[]))
 
 
+def earlier_local_version(folder, current, baseline, box, brief, revision):
+    """Find a checked earlier master differing only in this damaged neighborhood."""
+    from PIL import Image, ImageChops
+    if folder.parent.name!='rounds' or not box:
+        return None
+    rounds=folder.parent.resolve()
+    current_sha=fingerprint(current)
+    baseline_sha=fingerprint(baseline)
+    seen={current_sha}
+    for receipt in rounds.glob('*/prior-version-*-review.json'):
+        verdict=json.loads(receipt.read_text())
+        if verdict.get('current')==current_sha and verdict.get('revision')==revision:
+            seen.add(verdict.get('earlier'))
+    # Prefer the earliest drawing, before repeated edits of one part accumulated.
+    reports=sorted(rounds.glob('*/print-review/*.json'),key=lambda p:p.stat().st_mtime)
+    with Image.open(current) as src:
+        original=src.convert('RGB')
+        left,top,right,bottom=(round(v*n/1000) for v,n in zip(box,original.size*2))
+        pad=max(100,right-left,bottom-top)
+        for report in reports:
+            record=json.loads(report.read_text())
+            digest=record.get('sha256')
+            if (not digest or digest in seen or record.get('brief')!=brief or record.get('size')!=list(original.size)
+                    or record.get('comparison_sha256')!=baseline_sha or record.get('status') not in ('local','uncertain')
+                    or not same_repair_region(box,record.get('issue',{}).get('box'))):
+                continue
+            earlier=Path(record['source']).resolve()
+            if not earlier.is_relative_to(rounds) or not earlier.is_file() or fingerprint(earlier)!=digest:
+                continue
+            seen.add(digest)
+            with Image.open(earlier) as other:
+                if other.size!=original.size:continue
+                region=ImageChops.difference(original,other.convert('RGB')).getbbox()
+            if not region:continue
+            x,y,u,v=region
+            if (x>=left-pad and y>=top-pad and u<=right+pad and v<=bottom+pad
+                    and max(left,x)<min(right,u) and max(top,y)<min(bottom,v)):
+                return earlier,dict(current=current_sha,earlier=digest,revision=revision,changed_pixels=list(region))
+    return None
+
+
 def repeated_rejection(directory, box, *, minimum=2):
     """Choose a different editor first when multiple nearby repairs actually failed."""
     left,top,right,bottom=box

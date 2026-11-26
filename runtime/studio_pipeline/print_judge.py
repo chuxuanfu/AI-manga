@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-34'
+REVISION = 'print-inspection-35'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -281,6 +281,35 @@ def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
         outcome='global' if original['decision']=='global' else 'local'
     return dict(corroboration,decision=outcome,target=read['part'],evidence=read['evidence'])
 
+
+
+def inspect_disputed_action(url, image, box, brief):
+    """An intact contour can belong to an implausible action or malformed whole part."""
+    from construction_review import LARGE
+    if not box or not model_identity(LARGE):
+        return {'condition':'insufficient','problem':'No independent reading of the disputed part.'}
+    pixels=tuple(round(v*n/1000) for v,n in zip(box,image.size*2))
+    whole=image.copy()
+    whole.thumbnail((1100,1100),Image.Resampling.LANCZOS)
+    detail=image.crop(expanded(pixels,image.size))
+    detail.thumbnail((1024,1024),Image.Resampling.LANCZOS)
+    fields={'visible_shapes':{'type':'string'},'depicted_action':{'type':'string'},'problem':{'type':'string'},
+            'condition':{'enum':['physically_plausible','visible_fault','insufficient']}}
+    cue=('Image 1 is the original composition. Image 2 shows the disputed area in context. Read independently. '
+         'Describe the actual action at this location. Trace the functional structure of the WHOLE visible part, '
+         'including its base, neighboring forms, articulations, expected visible ends, occlusion and the contact '
+         'carrying its weight. A recognizable tip or individually convincing outline cannot by itself establish '
+         'that the entire part and its action make physical sense. Does this arrangement work in three dimensions? '
+         'If there is a visible deformity or an incompatible action, locate it relative to the visible parts. '
+         'Respect stylized anatomy and illustration conventions, including believable occlusion or hidden '
+         'hardware. Set visible_fault only for a concrete shape contradiction, and insufficient only when the '
+         'part cannot be traced. Requested image: '+brief)
+    return json.loads(ask(url,[whole,detail],cue,{'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+
+
+def disputed_action_resolved(reading):
+    return (reading.get('condition')=='physically_plausible' and
+            all(str(reading.get(key) or '').strip() for key in ('visible_shapes','depicted_action')))
 
 
 HARDWARE_CLAIM=re.compile(r'\b(?:brackets?|hinge[sd]?|sockets?|bolts?|welds?|rivets?|mounting|fasteners?|'
@@ -705,6 +734,14 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     draw.rectangle(tuple(round(v*n/k) for v,n,k in zip(context,overview.size*2,image.size*2)),outline='#f04b73',width=2)
                     zoom=image.crop(context);zoom.thumbnail((720,660),Image.Resampling.LANCZOS)
                     third=arbitrate_finding(url,zoom,overview,row,second,observation)
+                    if (third['decision']=='clear' and kind in ('whole','construction','contacts')
+                            and second.get('operation')=='redraw' and actionable_edit(second.get('fix'))):
+                        functional=inspect_disputed_action(url,image,tentative,brief)
+                        record['independent_action_check']=functional
+                        if not disputed_action_resolved(functional):
+                            third=dict(second,decision='uncertain')
+                            if functional.get('condition')=='visible_fault':
+                                third['evidence']+=' Independent whole-part reading: '+functional['problem']
                     record['independent_context']=third
                     second=third
                 if second['decision']=='uncertain' and kind in ('comparison','draft-comparison'):
