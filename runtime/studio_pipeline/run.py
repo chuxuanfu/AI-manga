@@ -1135,7 +1135,7 @@ def main():
         deliver_file(source_path,master)
         temp=dest/(uuid.uuid4().hex+'.png');scaled.save(temp);temp.replace(small)
         return master,small
-    def correct_shape(source,issue,box,stage,edit_seed,previous=None):
+    def correct_shape(source,issue,box,stage,edit_seed,previous=None,*,placement_only=False):
         from construction_review import assess_local_edit
         instruction=issue['fix']
         with Image.open(source) as original:
@@ -1153,6 +1153,7 @@ def main():
                     checked.update(source_sha256=print_fingerprint(source),candidate_sha256=print_fingerprint(path),box=both_sites)
                     save(job/(stage+'-layout-review.json'),checked)
                     if checked['verdict']=='resolved':return path
+        if placement_only:return None
         from production import repeated_rejection
         recurring=bool(previous and repeated_rejection(previous,box))
         strategies=[2,0,1] if recurring else [0,1,2]
@@ -1335,6 +1336,7 @@ def main():
                 framing=verify_frame_exit(address,source,overview,focus,claim,prompt)
             if framing:save(job/'continued-framing-review.json',framing)
         scene=None
+        moved_source=None
         if reverted:
             repaired=reverted
         elif issue.get('operation')=='reinspect' or (framing and framing['explained']):
@@ -1349,12 +1351,19 @@ def main():
                 with Image.open(last) as retained:remove_reviewed_feature(retained.convert('RGB'),focus,issue).save(repaired)
             else:
                 from production import repeated_rejection
-                if focus and repeated_rejection(retry_origin,focus,minimum=3):
+                from placement import placement_requested
+                if focus and not args.keep_native and placement_requested(issue['fix']):
+                    moved_source=correct_shape(approved,issue,focus,stage+'-composition',seed+820,retry_origin,placement_only=True)
+                if not moved_source and focus and repeated_rejection(retry_origin,focus,minimum=3):
                     scene=redraw_scene(last,issue,focus,'continued-scene')
-                repaired=correct_shape(last,issue,focus,stage,seed+820,retry_origin) if focus and not scene else None
-        if not repaired and not scene:scene=redraw_scene(last,issue,focus,'continued-scene')
-        if repaired or scene:
-            if scene:
+                repaired=(correct_shape(last,issue,focus,stage,seed+820,retry_origin)
+                          if focus and not scene and not moved_source else None)
+        if not repaired and not scene and not moved_source:scene=redraw_scene(last,issue,focus,'continued-scene')
+        if repaired or scene or moved_source:
+            if moved_source:
+                approved=moved_source
+                master,small=render(approved,'continued-placement-print')
+            elif scene:
                 approved=scene
                 master,small=render(approved,'continued-scene-print')
             else:
@@ -1547,6 +1556,11 @@ def main():
         repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
         with Image.open(master) as final_image:
             native=args.keep_native or max((focus[2]-focus[0])*final_image.width,(focus[3]-focus[1])*final_image.height)/1000<=1300
+        from placement import placement_requested
+        if not args.keep_native and issue.get('operation')=='redraw' and placement_requested(issue['fix']):
+            # A change of position changes the composition. Compare the new print to a drawing
+            # that depicts the subject in its actual position, including the newly exposed surface.
+            native=False
         source=master if native else approved
         stage=f'print-repair-{attempt+1}'
         with Image.open(source) as original:
