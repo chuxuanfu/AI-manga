@@ -1352,6 +1352,15 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],
                             status='running',optical_reinspection=True)
                 result.pop('issue',None)
+    if result.get('status')=='uncertain' and result.get('views'):
+        blind=result['views'][-1].get('blind_detail_check') or {}
+        labels=blind.get('paired_panels') or []
+        if labels and not blind.get('confirmed') and 'contour_magnification' not in blind and all(not vote.get('new_artifact',True) for vote in labels):
+            report=report.with_name(report.stem+'-paired-optics.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
+                result.pop('issue',None)
     if result.get('status')=='local' and result.get('views'):
         held=result['views'][-1]
         arbitration=held.get('part_verification') or {}
