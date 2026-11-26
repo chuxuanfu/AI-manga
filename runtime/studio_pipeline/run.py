@@ -659,6 +659,7 @@ def main():
     from print_judge import fingerprint, inspect as print_inspect, MODEL
     from production import publish
     detail_rebuilt=False
+    repair_check=None
     # The model inspects the exact finished files, including every replacement.
     for attempt in range(3):
         label='final-art' if attempt==0 else f'revision-{attempt}-final-art'
@@ -669,7 +670,9 @@ def main():
         # A decisive failed structural review must not be released on a second model's vote.
         if final['status']=='global':
             rec['终审退回原因']=final['note'];break
-        judged=print_inspect(master,prompt,job,final,small=small,focus=rec.get('精绘区域报告',{}),draft=approved)
+        print_focus=dict(rec.get('精绘区域报告') or {})
+        if repair_check:print_focus['repair_check']=repair_check
+        judged=print_inspect(master,prompt,job,final,small=small,focus=print_focus,draft=approved)
         rec['逐块终审']={'sha256':judged['sha256'],'状态':judged['status'],'已看视图':len(judged['views']),
                       '计划视图':judged['planned'],'原像素图块':judged['planned_native'],'报告':judged['report']}
         save(manifest,rec)
@@ -693,6 +696,7 @@ def main():
             # A verified focus failure across the picture, or one that survived a local repair,
             # needs a higher-resolution drawing of the scene before another print pass.
             detail_rebuilt=True
+            repair_check=None
             stage=f'detail-source-{attempt+1}'
             with Image.open(approved) as original:
                 size=detail_canvas(original.size)
@@ -714,6 +718,7 @@ def main():
             continue
         if not issue or attempt==2:break
         focus=region(issue,final)
+        repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
         with Image.open(master) as final_image:
             native=args.keep_native or max((focus[2]-focus[0])*final_image.width,(focus[3]-focus[1])*final_image.height)/1000<=1300
         source=master if native else approved

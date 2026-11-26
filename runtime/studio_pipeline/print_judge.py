@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-17'
+REVISION = 'print-inspection-18'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -247,7 +247,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
     focals=(focus or {}).get('8K局部',[])
     prior_id=fingerprint(small) if small else None
     draft_id=fingerprint(draft) if draft and small else None
-    key=hashlib.sha256(json.dumps([REVISION,model_id,brief,regions,dispute,prior_id,draft_id,focals,constraints],sort_keys=True,
+    repair=(focus or {}).get('repair_check')
+    key=hashlib.sha256(json.dumps([REVISION,model_id,brief,regions,dispute,prior_id,draft_id,focals,constraints,repair],sort_keys=True,
                                  ensure_ascii=False).encode()).hexdigest()[:16]
     directory=root/'print-review'
     directory.mkdir(exist_ok=True)
@@ -261,7 +262,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
         overview_image=image.copy()
         overview_image.thumbnail((1152,1152),Image.Resampling.LANCZOS)
         windows=list(print_windows(image.size,regions))
-        prior_rects=set()
+        prior_rects={}
         for saved in sorted(directory.glob(digest+'-*.json')):
             if saved == report:continue
             old=json.loads(saved.read_text())
@@ -272,11 +273,15 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             original_box=map_box(last['observation'],last['pixels'],image.size)
             found=repair_extent(found,[original_box])
             candidate=tuple(round(v*k/1000) for v,k in zip(found,image.size*2))
-            prior_rects.add(expanded(candidate,image.size))
+            prior_rects[expanded(candidate,image.size)]=old['issue'].get('symptom','')
+        if repair:
+            candidate=tuple(round(v*k/1000) for v,k in zip(repair['box'],image.size*2))
+            prior_rects[expanded(candidate,image.size)]=repair['symptom']
         if 'previous_regions' not in result:
-            result['previous_regions']=sorted(prior_rects)
-        for area in reversed(result['previous_regions']):
-            windows.insert(1,('previous_local',tuple(area)))
+            result['previous_regions']=[[list(area),prior_rects[area]] for area in sorted(prior_rects)]
+        known={tuple(area):symptom for area,symptom in result['previous_regions']}
+        for area in reversed(known):
+            windows.insert(1,('previous_local',area))
         if small:
             with Image.open(small) as fp:before=fp.convert('RGB')
             w,h=image.size
@@ -321,6 +326,11 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                           'For each visible hand trace it to a specific wrist, elbow and shoulder; for each animal trace separate paws to its torso. '
                           'Look behind held objects for stray hands. Account for hidden limbs, reflections, bipeds and overlapping people. '
                           'When there are no figures, trace object edges and supports through overlaps. Judge the physical construction you actually see.')
+            elif kind=='previous_local':
+                question=('Inspect the actual part in this enlargement. A previous pass identified this concrete '
+                          'problem here: '+known[rect]+'. Trace the part independently. Clear a corrected or '
+                          'visibly disproved finding. If the defect is still visible, describe and locate the '
+                          'whole affected part including its attachment. Use the surrounding edge as context.')
             elif kind=='contacts':
                 question=('Inventory all distinct palm-and-finger clusters actually visible in this interaction. Scan from left to right, including loose fingers behind and between objects. '
                           'For each cluster trace where its wrist physically continues. Flag a stray third cluster with no attached arm, an impossible grip or a fused tool only when visible. '
