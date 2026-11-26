@@ -662,20 +662,30 @@ def main():
         from review import inspection_environment,inspection_key
         context_key=inspection_key(rubric,prompt,rec['parts'],focus,rec.get('画法参考'),inspection_environment())
         from construction_review import held_pocket_reading
-        def match(row):
-            if reference_style and stage.endswith('final-art') and row['review'].get('status')=='pass':
-                from reference_review import confirmed_final_comparison
-                if not confirmed_final_comparison(row['review'].get('参考比较') or {}):return False
+        def inspection_matches(row):
             detail=row['review'].get('局部连接复审') or {}
             if detail.get('verdict')=='unclear' and 'palm_attachment_review' not in detail:
                 from palm_review import WEIGHTS,hand_attachment
                 disputed=(detail.get('proposed_finding') or {}).get('observation','')
                 if WEIGHTS.is_file() and hand_attachment(disputed):return False
             return row.get('hash')==key and row.get('inspection_key')==context_key and not held_pocket_reading(row['review'])
+        def match(row):
+            if not inspection_matches(row):return False
+            if reference_style and stage.endswith('final-art') and row['review'].get('status')=='pass':
+                from reference_review import confirmed_final_comparison
+                return confirmed_final_comparison(row['review'].get('参考比较') or {})
+            return True
+        def eligible_structure(row):
+            return (reference_style and stage.endswith('final-art') and row['stage'].endswith('final-art')
+                    and row['review'].get('status')=='pass' and row['review'].get('结构审查',{}).get('verdict')=='coherent'
+                    and inspection_matches(row))
+        prior_structure=next((row for row in reversed(rec['reviews']) if eligible_structure(row)),None)
         prior=next((row for row in rec['reviews'] if match(row) and row['stage']==stage),None)
         if prior:return prior['review']
         if args.round_worker and args.retry_round and (args.retry_round/'review.json').is_file():
             previous=json.loads((args.retry_round/'review.json').read_text())
+            if prior_structure is None:
+                prior_structure=next((row for row in reversed(previous.get('reviews',[])) if eligible_structure(row)),None)
             prior=next((row for row in previous.get('reviews',[]) if match(row) and row['review']['status']=='pass'),None)
             if prior:
                 for suffix in ('-inspection.jpg','-inspection-1x.png','-structure-and-support.jpg',
@@ -697,8 +707,15 @@ def main():
         from evidence import review_session
         with Image.open(path) as image, review_session() as timings:
             rgb=image.convert('RGB')
-            result=audit(rgb,prompt,rec['parts'],job/(stage+'-inspection.jpg'),focus=focus)
-            if reference_style:
+            if prior_structure is None:
+                result=audit(rgb,prompt,rec['parts'],job/(stage+'-inspection.jpg'),focus=focus)
+            else:
+                # The pixels, brief, focus, model manifests and construction checks
+                # match. Only the superseded independent workmanship reading is due.
+                result=dict(prior_structure['review'])
+                result.pop('参考比较',None)
+                timings['reused_structure_stage']=prior_structure['stage']
+            if reference_style and prior_structure is None:
                 geometry=inspect_structure(rgb,result.get('detector',[]),job/(stage+'-structure-and-support.jpg'),result.get('observed_counts'),prompt)
                 result['结构审查']=geometry
                 verdict=geometry.get('verdict','unclear')
@@ -736,19 +753,18 @@ def main():
                             result.update(status='global' if gap>145 else 'local',note=symptom)
                             if gap>145:
                                 result['局部连接复审']=dict(result.get('局部连接复审') or {},fix=fix)
-                # A rejected composition must be re-rendered and assessed again.
-                # Assess workmanship on the actual version eligible to advance.
-                if result['status']=='pass' or not args.round_worker:
-                    comparison=compare(rgb,result.get('regions',{}),job/(stage+'-reference-comparison.jpg'),
-                                       brief=prompt if rec.get('画法自适应') else '',final=stage.endswith('final-art'))
-                    result['参考比较']=comparison
-                    if result['status']=='pass' and comparison['decision']=='below':
-                        result['status']='global'
-                        result['note']+=' · 交换左右后仍发现画法差距'
-                    elif comparison['decision']=='review':
-                        if args.round_worker and result['status']=='pass':
-                            result['status']='uncertain'
-                        result['note']+=' · 放大对照仍未确定作品达到了参考图的完成度'
+            # Assess workmanship on the actual version eligible to advance.
+            if reference_style and (result['status']=='pass' or not args.round_worker):
+                comparison=compare(rgb,result.get('regions',{}),job/(stage+'-reference-comparison.jpg'),
+                                   brief=prompt if rec.get('画法自适应') else '',final=stage.endswith('final-art'))
+                result['参考比较']=comparison
+                if result['status']=='pass' and comparison['decision']=='below':
+                    result['status']='global'
+                    result['note']+=' · 交换左右后仍发现画法差距'
+                elif comparison['decision']=='review':
+                    if args.round_worker and result['status']=='pass':
+                        result['status']='uncertain'
+                    result['note']+=' · 放大对照仍未确定作品达到了参考图的完成度'
         rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,inspection_key=context_key,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),device=timings,review=result))
         save(manifest,rec)
         print(stage,result['status'],result['note'],flush=True)
