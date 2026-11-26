@@ -1,4 +1,5 @@
 """Offline print inspection. Stage coordinates are always mapped back to the real master."""
+from contextlib import ExitStack
 import hashlib
 import json
 import math
@@ -10,7 +11,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-42'
+REVISION = 'print-inspection-43'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -291,6 +292,45 @@ def centered_crop(size,point,span):
     l=max(0,min(w-cw,round(point[0]*w-cw/2)))
     t=max(0,min(h-ch,round(point[1]*h-ch/2)))
     return l,t,l+cw,t+ch
+
+def resize_only(pair):
+    """Compare against simple resampling and sharpening on held-out edge pixels."""
+    import cv2
+    import numpy as np
+    low, high = (np.asarray(im.convert('RGB'),dtype=np.float32) for im in pair)
+    # Sample genuine contours on either side. Added marks on a uniform source
+    # are included in the error. Large clean flat tones must not dominate.
+    samples = [cv2.cvtColor(a,cv2.COLOR_RGB2GRAY) for a in (low,high)]
+    edges=np.maximum.reduce([cv2.magnitude(cv2.Sobel(a,-1,1,0),cv2.Sobel(a,-1,0,1)) for a in samples])
+    # Filtering the entire canvas sees real neighbours beyond an interior crop.
+    # Exclude only that narrow border when fitting the local reconstruction.
+    edges[:8]=0;edges[-8:]=0;edges[:,:8]=0;edges[:,-8:]=0
+    points=np.flatnonzero(edges.reshape(-1)>24)
+    if len(points)<96:return {'condition':'smooth'}
+    rng=np.random.default_rng(73)
+    points=rng.choice(points,min(10000,len(points)),replace=False)
+    old=low.reshape(-1,3)[points]
+    target=high.reshape(-1,3)[points]
+    features=[old-cv2.GaussianBlur(low,(0,0),r).reshape(-1,3)[points] for r in (.7,1.4,2.8)]
+    from PIL import ImageFilter
+    for radius in (.7,1.4,2.8):
+        blurred=np.asarray(pair[0].convert('RGB').filter(ImageFilter.GaussianBlur(radius)),dtype=np.float32)
+        features.append(old-blurred.reshape(-1,3)[points])
+    design=np.stack(features,axis=-1)
+    split=len(points)//2
+    # One shared sharpening kernel for all color channels; no per-pixel fit.
+    matrix=design[:split].reshape(-1,len(features))
+    delta=(target[:split]-old[:split]).reshape(-1)
+    unclipped=((target[:split]>1)&(target[:split]<254)).reshape(-1)
+    if np.count_nonzero(unclipped)>=96:
+        matrix,delta=matrix[unclipped],delta[unclipped]
+    weights=np.linalg.lstsq(matrix,delta,rcond=1e-4)[0]
+    prediction=np.clip(old[split:]+design[split:]@weights,0,255)
+    err=np.max(np.abs(target[split:]-prediction),axis=1)
+    p90,p99=map(float,np.percentile(err,[90,99]))
+    return {'condition':'resize_or_sharpen' if p90<=2 and p99<=4 else 'distinct_signal',
+            'error_90':round(p90,2),'error_99':round(p99,2),'samples':len(points)}
+
 
 def compare_pixels(low,high,rect,master_size):
     """Display the new crop at 1:1; enlarge the matching old field to the same size."""
@@ -761,8 +801,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
         model=MODEL,model_id=model_id,revision=REVISION,sha256=digest,source=str(path),
         brief=brief,views=[],status='running',report=str(report.relative_to(root)),comparison_sha256=prior_id,draft_sha256=draft_id)
     if result['status'] in ('pass','local','global','uncertain'):return result
-    with Image.open(path) as source, backend(MODEL) as url:
-        image=source.convert('RGB')
+    with ExitStack() as resources:
+        with Image.open(path) as source:image=source.convert('RGB')
         overview_image=image.copy()
         overview_image.thumbnail((1152,1152),Image.Resampling.LANCZOS)
         windows=list(print_windows(image.size,regions))
@@ -798,6 +838,15 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 center=((left+span/2)/w,(top+span/2)/h)
                 if all(abs(x-center[0])*w>448 or abs(y-center[1])*h>448 for x,y in sites):
                     sites.append(center)
+            for part in regions.values():
+                box=part.get('box') if isinstance(part,dict) else None
+                if not isinstance(box,(list,tuple)) or len(box)!=4:continue
+                if not all(isinstance(v,(float,int)) and 0<=v<=1000 for v in box):continue
+                if box[2]<=box[0] or box[3]<=box[1]:continue
+                center=((box[0]+box[2])/2000,(box[1]+box[3])/2000)
+                if all(abs(x-center[0])*w>448 or abs(y-center[1])*h>448 for x,y in sites):
+                    sites.append(center)
+                if len(sites)>=8:break
             if not sites:sites=[(.5,.5)]
             comparisons=[('comparison',centered_crop(image.size,site,448)) for site in sites]
             if source_comparison:
@@ -811,6 +860,34 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             position=1+len(result['previous_regions'])
             windows[position:position]=list(dict.fromkeys(comparisons))
         result.update(size=list(image.size),planned=len(windows),planned_native=sum(k=='native' for k,_ in windows))
+        # An ordinary enlargement and a sharpened version can both look crisp in a
+        # thumbnail. Only reject here when every independently sampled structured
+        # field is reproduced by the source and a fixed sharpening filter.
+        if small and not construction_draft and 'resampling_check' not in result:
+            checks=[]
+            for comparison,lower,upper in [('comparison',before,image)]+(
+                    [('draft-comparison',draft_image,before)] if draft_id else []):
+                if max(lower.size)>=max(upper.size):continue
+                stage=[]
+                for kind,rect in windows:
+                    if kind!=comparison:continue
+                    pair=compare_pixels(lower,upper,rect,image.size)
+                    stage.append(dict(pixels=list(rect),**resize_only(pair)))
+                checks.append({'stage':comparison,'fields':stage})
+                structured=[r for r in stage if r['condition']!='smooth']
+                if len(structured)>=2 and all(r['condition']=='resize_or_sharpen' for r in structured):
+                    result.update(resampling_check=checks,status='global',issue={
+                        'category':'unresolved_focus','operation':'redraw','box':[0,0,1000,1000],
+                        'target':'print definition','symptom':'Every sampled structured area matches a resized or sharpened source.',
+                        'fix':'Return to the source drawing and render distinct coherent focal contours and material marks at print scale.'})
+                    store(report,result)
+                    return result
+            result['resampling_check']=checks
+        url=resources.enter_context(backend(MODEL))
+        if report.is_file():
+            checkpoint=json.loads(report.read_text())
+            if checkpoint['status'] in ('pass','local','global','uncertain'):return checkpoint
+            if len(checkpoint['views'])>len(result['views']):result=checkpoint
         print(f'本机逐块终审 {len(result["views"])}/{len(windows)}，原像素 {result["planned_native"]} 块',flush=True)
         native_readings=None
         for i,(kind,rect) in enumerate(windows):
@@ -872,6 +949,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                         'and coordinates to zero. For a color concern give a local box in the final '
                         'image, normalized to 0..1000, and a concrete color correction. Brief: '+brief)
             prior_reading=None
+            detail_reading=None
             reuse=None
             if kind=='native':
                 if native_readings is None:
@@ -883,10 +961,17 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 row,prior_reading=inspect_repaired_region(url,view,known[rect]['symptom'],guidance)
             else:
                 row=judge_view(url,view,prompt)
+            if kind in ('comparison','draft-comparison') and row['decision']=='uncertain':
+                detail_reading=independent_detail_check(url,view,overview_image,inspection_brief)
+                if detail_reading['confirmed']:
+                    prior_reading=row
+                    row=dict(decision='clear',operation='none',fix='',target='',left=0,top=0,right=0,bottom=0,
+                             evidence=detail_reading['trace']['improvement'])
             record={'view':kind,'pixels':list(rect),'observation':row}
+            if detail_reading is not None:record['blind_detail_check']=detail_reading
             if kind=='native':record['native_key']=native_key
             if reuse:record['reused_from']=reuse[1]
-            if prior_reading:record['current_pixel_check']=prior_reading
+            if prior_reading:record['initial_comparison' if detail_reading else 'current_pixel_check']=prior_reading
             if row['decision']!='clear':
                 # Inspect wider context separately using source pixels.
                 tentative=map_box(row,rect,image.size)
@@ -958,7 +1043,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 if second['decision']=='uncertain' and kind in ('comparison','draft-comparison'):
                     record['issue_category']=issue_category(url,region,second['evidence'],inspection_brief)
                     if record['issue_category']=='unresolved_focus':
-                        check=independent_detail_check(url,view,overview,inspection_brief)
+                        check=detail_reading if detail_reading is not None else independent_detail_check(url,view,overview,inspection_brief)
                         record['blind_detail_check']=check
                         if check['confirmed']:
                             second=dict(second,decision='clear',evidence=check['trace']['improvement'],operation='none',fix='',target='')

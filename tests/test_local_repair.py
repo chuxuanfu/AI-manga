@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
@@ -22,6 +22,28 @@ from structure import inspect_small_figure_support
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_interpolated_and_sharpened_prints_require_a_new_render(self):
+        from print_judge import inspect, resize_only
+        import numpy as np
+        rng=np.random.default_rng(2541)
+        source=Image.fromarray(rng.integers(20,235,(124,180,3),dtype=np.uint8))
+        enlarged=source.resize((1440,992),Image.Resampling.LANCZOS)
+        sharp=enlarged.filter(ImageFilter.UnsharpMask(radius=1.4,percent=115,threshold=0))
+        self.assertEqual(resize_only((enlarged,sharp))['condition'],'resize_or_sharpen')
+        self.assertEqual(resize_only((enlarged,ImageOps.mirror(sharp)))['condition'],'distinct_signal')
+        with TemporaryDirectory() as temp, patch('print_judge.model_identity',return_value='test'), \
+             patch('print_judge.backend',return_value=nullcontext('offline')), \
+             patch('print_judge.ask',side_effect=AssertionError('A pure enlargement is detectable before model inference')):
+            folder=Path(temp)
+            small=folder/'source.png'; source.save(small)
+            for name,image in [('enlarged',enlarged),('sharpened',sharp)]:
+                with self.subTest(variant=name):
+                    path=folder/(name+'.png');image.save(path)
+                    result=inspect(path,'A finely patterned illustrated fabric',folder,{},small=small,source_comparison=True)
+                    self.assertEqual(result['status'],'global')
+                    self.assertEqual(result['issue']['category'],'unresolved_focus')
+                    self.assertGreaterEqual(len(result['resampling_check'][0]['fields']),2)
+
     def test_disjoint_word_polygons_do_not_erase_a_neighbouring_contour(self):
         from lettering import glyph_mask
         image=Image.new('RGB',(160,80),'white')
