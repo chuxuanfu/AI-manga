@@ -768,6 +768,24 @@ class LocalRepairTests(unittest.TestCase):
         mask = next(n for n in graph.values() if n['class_type'] == 'SetLatentNoiseMask')
         self.assertEqual(mask['inputs']['mask'], [full, 1])
 
+    def test_repeat_crop_uses_scene_context_with_or_without_a_geometry_reference(self):
+        for guide, expected in ((None, ['crop.png', 'scene.png']),
+                                ('guide.png', ['crop.png', 'guide.png', 'scene.png'])):
+            with self.subTest(guide=guide):
+                graph = instruction_edit('Repair the joint', 17, 'crop.png', 'trial',
+                                         masked=True, detail_reference=guide,
+                                         scene_reference='scene.png').api
+                for node in graph.values():
+                    if node['class_type'] == 'TextEncodeQwenImageEditPlus':
+                        images = [graph[node['inputs'][f'image{i}'][0]]['inputs']['image']
+                                  for i in range(1, len(expected) + 1)]
+                        self.assertEqual(images, expected)
+                    if node['class_type'] == 'VAEEncode':
+                        self.assertEqual(graph[node['inputs']['pixels'][0]]['inputs']['image'], 'crop.png')
+                    if node['class_type'] == 'SetLatentNoiseMask':
+                        source, channel = node['inputs']['mask']
+                        self.assertEqual((graph[source]['inputs']['image'], channel), ('crop.png', 1))
+
     def test_structural_edit_sampling_is_anchored_to_the_source_and_mask(self):
         editors = (reference_draft('Fix a seam', 77, 960, 960, 'trial', reference='guide.png',
                                    edit=True, masked_source='original-mask.png', preserve_layout=True),

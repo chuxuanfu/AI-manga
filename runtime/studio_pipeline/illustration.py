@@ -111,8 +111,8 @@ def pigment_edit(instruction):
                           r'重新上色|改成.{0,6}色|更改.{0,8}(?:颜色|花纹)|重绘.{0,6}(?:毛色|花纹)',instruction,re.I))
 
 
-def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, masked=False, detail_reference=None, full=False):
-    """Qwen-Image-Edit-2511 with a masked local crop and optional second visual reference."""
+def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, masked=False, detail_reference=None, full=False, scene_reference=None):
+    """Qwen-Image-Edit-2511 with a source crop, an optional detail guide, and whole-scene context."""
     g=Graph('studio-instruction-edit')
     source=g.add('LoadImage','Source crop',(0,0),['IMAGE','MASK'],values={'image':reference})
     unet=g.add('UNETLoader','Edit model',(0,300),['MODEL'],values={'unet_name':unet_name,'weight_dtype':'default'})
@@ -125,6 +125,9 @@ def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, mask
     if detail_reference:
         detail=g.add('LoadImage','Detail of the existing drawing',(0,760),['IMAGE','MASK'],values={'image':detail_reference})
         inputs.append(('image2',(detail,0)))
+    if scene_reference:
+        scene=g.add('LoadImage','Full composition for continuity',(0,970),['IMAGE','MASK'],values={'image':scene_reference})
+        inputs.append(('image3' if detail_reference else 'image2',(scene,0)))
     pos=g.add('TextEncodeQwenImageEditPlus','Edit instruction',(350,0),['CONDITIONING'],inputs,values={'prompt':text})
     neg=g.add('TextEncodeQwenImageEditPlus','Unconditional',(350,170),['CONDITIONING'],inputs,values={'prompt':''})
     latent=g.add('VAEEncode','Crop latent',(680,0),['LATENT'],[('pixels',(source,0)),('vae',(vae,0))])

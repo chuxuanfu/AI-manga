@@ -264,25 +264,33 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
                    'and linework. Make the requested colors and pattern clearly visible over the intended surface. '
                    if recolor else 'Reconstruct the specified part and its visible connections. ')
         reference=None
+        scene_reference=None
+        reference_record={}
         if guide:
             file,credit=guide
             with Image.open(file) as photo:reference=local_image(photo.convert('RGB'))
-            save(directory/(stage+'-reference.json'),{**credit,'input':reference})
+            reference_record={**credit,'input':reference}
             construction=credit['construction']
             direction+=('Image 2 shows only a physical relationship: '+construction+
                         ' Orient that relationship to the perspective and physical contact in image 1. '
                         'Keep the surrounding surfaces, scale, graphic style, and palette in image 1. ')
-        elif scene_depth:
+        if scene_depth or (not recolor and reconstruction_attempt>=2 and cw*ch<.85*w*h):
             overview=im.copy()
-            overview.thumbnail((1024,1024),Image.Resampling.LANCZOS)
-            reference=local_image(overview)
-            save(directory/(stage+'-reference.json'),{'role':'whole composition and depth','input':reference,'target':box})
-            direction+=('Image 2 is the entire same drawing. Locate the part in image 2 before revising '
-                        'image 1. Keep the pose and distinguish a distant background from an actual support. ')
+            overview.thumbnail((880,880),Image.Resampling.LANCZOS)
+            scene_reference=local_image(overview)
+            slot=3 if reference else 2
+            reference_record.update(whole_scene=scene_reference,scene_input=slot,source_box=box)
+            direction+=(f'Image {slot} shows this same drawing in full. The edited area of image 1 '
+                        f'corresponds to {box} in whole-scene coordinates 0..1000. Find the existing '
+                        'subject and trace each continuous body, instrument, rope or support beyond '
+                        'the crop. Join the corrected end to that same object at its existing angle. '
+                        'Keep the total number of subjects and implements required by the scene. '
+                        'Use image 1 for scale, color and texture. ')
+        if reference_record:save(directory/(stage+'-reference.json'),reference_record)
         edit=instruction_edit('Edit this same illustration close-up. '+direction+
                               'Preserve the surrounding objects, light and medium. Target: '+
                               str(target or 'the selected area')+'. '+description,seed,source,prefix,specialist,masked=True,
-                              detail_reference=reference,full=reconstruction_attempt>=4)
+                              detail_reference=reference,scene_reference=scene_reference,full=reconstruction_attempt>=4)
         graph=edit.api
         output=str(len(edit.nodes))
     elif reference_style:
