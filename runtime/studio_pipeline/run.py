@@ -383,7 +383,7 @@ def main():
         args.proof_only=True
     def check(path,stage,focus=None):
         key = hashlib.sha256(path.read_bytes()).hexdigest()
-        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v12' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v4-frame-boundary'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
+        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v13' if rec.get('画法自适应') else '')+'-independent-inventory-v4'+('body-support-v4-frame-boundary'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'

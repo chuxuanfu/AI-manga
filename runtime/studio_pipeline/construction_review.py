@@ -233,6 +233,16 @@ def verify_arm_endpoints(url, im, tag):
                min(im.width, round(px+pad)), min(im.height, round(py+pad)))
         crop = im.crop(box)
         crop.thumbnail((720,720), Image.Resampling.LANCZOS)
+        if state == 'frame_exit':
+            # This claim has a measurable boundary. Check the sleeve at the identified
+            # original edge, without asking the model to translate prose into five labels.
+            distances = {'left':x, 'right':1000-x, 'top':y, 'bottom':1000-y}
+            edge = min(distances, key=distances.get)
+            detail = verify_frame_exit(url, original, crop, side, edge, tag)
+            point['crop_check'] = detail
+            if detail['sleeve_or_arm_reaches_edge'] is not True or detail['visible_unsupported_end'] is not False:
+                return audit
+            continue
         check = ('The first image is the entire illustration. The second is the actual region at '
                  'the reported endpoint. Independently inspect where the '+side+'-side arm goes at '
                  'this specific location. Do you see a physically continuous attached hand, an '
@@ -247,6 +257,20 @@ def verify_arm_endpoints(url, im, tag):
             return audit
     audit['confirmed'] = True
     return audit
+
+
+def verify_frame_exit(url, original, crop, side, edge, tag):
+    fields = {'evidence': {'type':'string'}, 'sleeve_or_arm_reaches_edge': {'type':'boolean'},
+              'visible_unsupported_end': {'type':'boolean'}}
+    question = (f'The second image enlarges a region adjoining the true {edge} boundary of the first, '
+                f'complete illustration. Follow the {side}-side arm of its principal figure. In that '
+                f'region do pixels depicting the same sleeve or arm reach the {edge} edge of the '
+                'complete picture? Answer false if the boundary shows only the torso, a different '
+                'object, or background, or if the limb cannot be traced. Separately, is there a '
+                'visible unsupported limb ending inside this region? Cite the specific material and '
+                'the boundary or internal endpoint in one short sentence.')
+    schema = {'type':'object', 'properties':fields, 'required':list(fields)}
+    return json.loads(ask(url, [original,crop], question, schema, tag=tag))
 
 
 HAND_INVENTORY={'type':'object','properties':{'people':{'type':'integer'},'hands':{'type':'array','items':{
