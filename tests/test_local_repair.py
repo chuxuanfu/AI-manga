@@ -312,6 +312,9 @@ class LocalRepairTests(unittest.TestCase):
         self.assertIsNone(construction_guide('Remove the mooring rope and its ring.'))
         envelope=construction_guide('Draw a single rectangular envelope with its flap folded flat.')
         self.assertEqual(envelope[0].name,'closed-envelope-flap.png')
+        cello=construction_guide('Redraw the bridge as a thin, arched maple piece with distinct notches for each string.')
+        self.assertEqual(cello[0].name,'cello-bridge-and-strings.jpg')
+        self.assertIsNone(construction_guide('Rebuild the arch of the highway bridge. Preserve the cello and its strings.'))
         self.assertIsNone(construction_guide('Redraw her wrist. Keep the envelope and its flap.'))
 
     def test_pigment_corrections_do_not_pin_the_previous_target_color(self):
@@ -335,6 +338,26 @@ class LocalRepairTests(unittest.TestCase):
         self.assertEqual(suspect['verdict'],'coherent')
         self.assertEqual(len(suspect['location_verification'][0]['independent_traces']),2)
         for call in query.call_args_list:self.assertNotIn('[400,210,600,480]',call.args[2])
+
+    def test_relocated_part_needs_independent_inventory_before_tracing(self):
+        from construction_review import verify_repair_location
+        image=Image.new('RGB',(300,320))
+        absent=dict(state='target_absent_or_unclear',target_visible=False,evidence='The field is unclear.')
+        located=dict(left=330,top=400,right=520,bottom=640)
+        trace=dict(part_visible=True,landmark_one='cuff',landmark_two='thumb',
+                   trace='The cuff opens around the thumb base.',finding='visible_and_coherent')
+        for visible in (False,True):
+            result=dict(verdict='local',target='wrist',observation='Possible disconnected wrist.',
+                        box=[0,0,100,110],fix='Reconnect the outline.')
+            inventory=dict(located=visible,first_boundary='left cuff edge',second_boundary='thumb knuckle')
+            observations=[absent,located,absent,inventory]+([trace,trace] if visible else [])
+            with patch('construction_review.available',return_value=True),patch('construction_review.ask',
+                    side_effect=list(map(json.dumps,observations))) as ask:
+                verify_repair_location('local',image,result,'first-model')
+            self.assertEqual(result['verdict'],'coherent' if visible else 'unclear')
+            self.assertEqual(ask.call_count,len(observations))
+            self.assertNotEqual(ask.call_args_list[3].kwargs['tag'],'first-model')
+            if visible:self.assertEqual(result['observation'],trace['trace'])
 
     def test_existing_print_requires_a_smaller_matching_baseline(self):
         from focus_print import validate_print_pair

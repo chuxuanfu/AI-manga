@@ -45,7 +45,7 @@ def verify_repair_location(url,im,result,tag,indicated=None):
             'target_visible':{'type':'boolean'},'evidence':{'type':'string'}}
     schema={'type':'object','properties':fields,'required':list(fields)}
     evidence=[]
-    def local(box):
+    def local(box, *, relocated=False):
         if len(box)!=4 or not (0<=box[0]<box[2]<=1000 and 0<=box[1]<box[3]<=1000):return None
         area=im.crop(tuple(round(v*k/1000) for v,k in zip(box,im.size*2)))
         if min(area.size)<8:return None
@@ -57,9 +57,22 @@ def verify_repair_location(url,im,result,tag,indicated=None):
         direct=json.loads(ask(url,[area],question,schema,tag=tag))
         finding={'box':box,'direct':direct};evidence.append(finding)
         if direct['state']=='target_absent_or_unclear':
-            if not direct['target_visible']:return None
             from print_judge import MODEL
             alternate=MODEL if tag!=MODEL and available(MODEL) else tag
+            if not direct['target_visible']:
+                if not relocated or alternate==tag:return None
+                # Only a box freshly localized on the whole picture is eligible. A different
+                # model must identify the part and two of its actual boundaries in this crop.
+                name=re.sub(r'\[\s*\d+(?:\s*,\s*\d+){3}\s*\]','',result.get('target','')).strip()
+                if not name:return None
+                fields={'located':{'type':'boolean'},'first_boundary':{'type':'string'},'second_boundary':{'type':'string'}}
+                inventory=json.loads(ask(url,[area],
+                    'Can you locate the named subject in this crop? Identify two different visible boundaries '
+                    'of that subject. If the actual subject cannot be identified, set located to false. Subject: '+name,
+                    {'type':'object','properties':fields,'required':list(fields)},tag=alternate))
+                finding['independent_inventory']=inventory
+                boundaries=[str(inventory[k]).strip().casefold() for k in ('first_boundary','second_boundary')]
+                if not inventory['located'] or not all(boundaries) or boundaries[0]==boundaries[1]:return None
             trace_fields={'part_visible':{'type':'boolean'},'landmark_one':{'type':'string'},
                           'landmark_two':{'type':'string'},'trace':{'type':'string'},
                           'finding':{'enum':['incompatible_shape','visible_and_coherent','unreadable']}}
@@ -88,13 +101,15 @@ def verify_repair_location(url,im,result,tag,indicated=None):
         request=('Locate the named physical part in this complete unmarked image. Return a tight box including the part and immediate contact surface, normalized 0..1000 from the top left. '
                  'Return exactly four integer fields, all zero if absent. Do not assume the claimed defect is true. Part or connection: '+target)
         try:
-            found=json.loads(ask(url,[view],request,locate,tag=tag));box=[found[k] for k in keys];state=local(box)
+            found=json.loads(ask(url,[view],request,locate,tag=tag));box=[found[k] for k in keys];state=local(box,relocated=True)
         except (KeyError,ValueError):
             state=None
     result['location_verification']=evidence
     if state=='defect_visible':result['box']=box
     elif state=='target_is_coherent':
-        result.update(verdict='coherent',box=[0,0,0,0],observation=evidence[-1]['direct']['evidence'],fix='',target='')
+        last=evidence[-1]
+        description=last['independent_traces'][0]['trace'] if last.get('independent_traces') else last['direct']['evidence']
+        result.update(verdict='coherent',box=[0,0,0,0],observation=description,fix='',target='')
     else:
         result.update(verdict='unclear',box=[0,0,0,0],observation='独立查看实际选区后，无法确认所指缺陷及其位置。',fix='')
 

@@ -57,5 +57,34 @@
     "license": "CC BY-SA 4.0",
     "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
     "changes": "Rasterized at 660 pixels on the long side and placed on a neutral gray surround."
+  },
+  {
+    "file": "cello-bridge-and-strings.jpg",
+    "requires": [
+      [
+        "bridge",
+        "琴码"
+      ],
+      [
+        "string",
+        "groove",
+        "notch",
+        "弦槽",
+        "琴弦"
+      ],
+      [
+        "cello",
+        "violoncello",
+        "maple",
+        "大提琴",
+        "枫木"
+      ]
+    ],
+    "construction": "A thin cello bridge stands on two feet. Four distinct strings rest in shallow notches across its curved upper edge. Preserve its orientation relative to the strings and the front of the instrument.",
+    "source": "https://commons.wikimedia.org/wiki/File:Cello_bridge.jpg",
+    "author": "Turidoth",
+    "license": "CC BY-SA 2.5",
+    "license_url": "https://creativecommons.org/licenses/by-sa/2.5/",
+    "changes": "Cropped to the bridge and string path, converted to grayscale and resized to 840 pixels."
   }
 ]
