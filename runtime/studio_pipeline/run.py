@@ -362,6 +362,32 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     return target
 
 
+def repair_placement(before,plan,brief,seed,port,directory,stage):
+    """Restore exposed surfaces and retain the registered subject at its new site."""
+    from placement import reposition
+    placed=reposition(before,plan)
+    if not placed:return None
+    candidate,regions=placed
+    path=directory/(stage+'-placement.png')
+    candidate.save(path)
+    save(directory/(stage+'-placement.json'),dict(plan=plan,regions=regions))
+    instruction=('Restore the now unoccupied background at this site. '+plan['revealed_surface']+
+                 ' Continue the visible materials and each ink contour from the surrounding picture. '
+                 'Match their native width, edges, tone and texture. Keep the existing subject at its new location.')
+    revised=repaint(candidate,regions['vacated'],instruction,brief,seed,port,directory,stage+'-surface',
+                    'exposed background and support surface',reference_style=True,rebuild_shape=True,
+                    reconstruction_attempt=2)
+    with Image.open(revised) as rendered:
+        final=rendered.convert('RGB')
+    # The editor's context can extend outside the vacated site. Preserve the
+    # relocated actor exactly while the independent reviewer examines the contact.
+    destination=tuple(round(v*n/1000) for v,n in zip(regions['destination'],before.size*2))
+    final.paste(candidate.crop(destination),destination[:2])
+    output=directory/(stage+'-registered.png')
+    final.save(output)
+    return output,regions['inspection']
+
+
 def dimensions(prompt):
     if '3:2' in prompt.replace('：',':'):return (1248,832)
     if any(s in prompt.lower() for s in ('16:9','16：9','横屏','横幅','landscape format','landscape orientation','widescreen')):
@@ -1016,6 +1042,19 @@ def main():
         instruction=issue['fix']
         with Image.open(source) as original:
             before=original.convert('RGB')
+        if reference_style:
+            from placement import placement_plan
+            plan=placement_plan(before,instruction,prompt)
+            if plan:
+                trial=repair_placement(before,plan,rec['positive'],edit_seed,args.port,job,stage+'-layout')
+                if trial:
+                    path,both_sites=trial
+                    with Image.open(path) as proposed:
+                        checked=assess_local_edit(before,proposed,both_sites,instruction,issue.get('symptom'),prompt)
+                    from print_judge import fingerprint as print_fingerprint
+                    checked.update(source_sha256=print_fingerprint(source),candidate_sha256=print_fingerprint(path),box=both_sites)
+                    save(job/(stage+'-layout-review.json'),checked)
+                    if checked['verdict']=='resolved':return path
         from production import repeated_rejection
         recurring=bool(previous and repeated_rejection(previous,box))
         strategies=[2,0,1] if recurring else [0,1,2]
