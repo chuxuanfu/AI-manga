@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-13'
+REVISION = 'print-inspection-14'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -150,6 +150,51 @@ def compare_pixels(low,high,rect,master_size):
     return left,right
 
 
+def independent_detail_check(url, images, overview, brief):
+    """Resolve a disputed comparison only when measured detail and two blind readings agree."""
+    import cv2
+    import numpy as np
+    low, high = images
+    def bands(image):
+        gray = np.asarray(image.convert('L'), dtype=np.float32)
+        edge = cv2.magnitude(cv2.Sobel(gray,-1,1,0), cv2.Sobel(gray,-1,0,1)) / 8
+        return float(np.percentile(edge,97)), float(np.percentile(abs(cv2.Laplacian(gray,-1)),97))
+    old_edge,old_fine = bands(low)
+    new_edge,new_fine = bands(high)
+    report = {'edge_97':[old_edge,new_edge], 'fine_97':[old_fine,new_fine], 'confirmed':False}
+    if new_edge < max(3,old_edge*.88) or new_fine < max(3,old_fine*1.08):
+        return report
+    fields = {'trace':{'type':'string'}, 'improvement':{'type':'string'},
+              'resolvability':{'enum':['resolved','unresolved','uncertain']},
+              'defined_finer_forms':{'type':'boolean'}, 'new_artifact':{'type':'boolean'}}
+    question = ('First inspect separately supplied images 1 and 2 at equal display scale; image 3 locates the detail. '
+                'As a print editor, follow one actual contour through a fork, turn, contact or material transition. '
+                'Describe what it belongs to. Report exactly what you can resolve in image 2 that is less clear in image 1. '
+                'Judge whether the focal marks in image 2 are materially resolved for this medium. True fine structure '
+                'must follow a recognizable form; noise, halos and interpolation count against it. If both are soft, '
+                'unchanged or implausible, do not claim finer forms. Separate optical focus from deliberate ink bleed '
+                'and paper texture. Cite a position in the crop and concrete evidence. Brief: '+brief)
+    def read(views,prompt,properties,reason=False):
+        schema={'type':'object','properties':properties,'required':list(properties)}
+        return json.loads(ask(url, views, prompt, schema, tag=MODEL, reason=reason))
+    finding = read([low,high,overview],question,fields,True)
+    report['trace'] = finding
+    if (finding['resolvability']!='resolved' or finding['defined_finer_forms'] is not True or
+            finding['new_artifact'] is not False or not finding['trace'].strip() or not finding['improvement'].strip()):
+        return report
+    fields = {'finer_version':{'enum':['first','second','equivalent','ambiguous']},
+              'location':{'type':'string'},'evidence':{'type':'string'}}
+    question = ('Treat these as two anonymous print proofs of the same region. The last image shows the scene. '
+                'Which of the first two contains a more clearly resolved plausible material feature or contour? '
+                'A sharper halo, noise, added random strokes or a contrast change is insufficient. Choose equivalent '
+                'when no concrete additional legible structure can be located. Name the feature and its exact '
+                'location in one short sentence. Brief: '+brief)
+    reverse = read([high,low,overview],question,fields)
+    report['reverse'] = reverse
+    report['confirmed'] = reverse['finer_version']=='first' and bool(reverse['location'].strip() and reverse['evidence'].strip())
+    return report
+
+
 def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None):
     digest=fingerprint(path)
     model_id=model_identity(MODEL)
@@ -281,6 +326,19 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     third=judge_view(url,board,GUIDE+' On the left is the whole image with a locator; on the right are the marked pixels. Independently judge the right detail in the context of the scene and intended depth of field. Identify only a concrete visible defect, or clear this view if appropriate. Coordinates refer only to the right panel. A prior strictly visual inventory of these pixels reads: '+json.dumps(observation)+'. A concrete excluded person or animal must have identifiable body parts. Optical resemblance alone does not demonstrate a violation. Brief: '+brief,reason=True)
                     record['independent_context']=third
                     second=third
+                if second['decision']=='uncertain' and kind in ('comparison','draft-comparison'):
+                    fields={'concern':{'enum':['resolution_only','other']}}
+                    schema={'type':'object','properties':fields,'required':list(fields)}
+                    classify=('Does the following finding exclusively concern legibility, missing fine resolution or '
+                              'optical softness? Use other for defects of subject, construction, texture artifacts, '
+                              'palette, halos, or an ambiguous type of finding. Finding: '+second['evidence'])
+                    concern=json.loads(ask(url,[],classify,schema,tag=MODEL))['concern']
+                    if concern=='resolution_only':
+                        check=independent_detail_check(url,view,overview,brief)
+                        record['blind_detail_check']=check
+                        if check['confirmed']:
+                            second=dict(second,decision='clear',evidence=check['trace']['improvement'],operation='none',fix='',target='')
+                            record['independent_context']=second
                 if second['decision']=='uncertain' and SOFT_HANDLING.search(brief):
                     overview=overview_image.copy()
                     overview.thumbnail((800,800),Image.Resampling.LANCZOS)
