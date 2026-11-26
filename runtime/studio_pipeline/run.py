@@ -716,7 +716,10 @@ def main():
         paths=list(args.from_image) or [job/name for name in rec.get('原生底图',[]) if (job/name).is_file()]
         assessed=[]
         passing=[]
-        for i in range(max(args.candidates,len(paths))):
+        # A selection belongs to the supplied picture. New unrelated layouts
+        # cannot establish whether a patch improves that selected area.
+        count=len(paths) if args.repair_box else max(args.candidates,len(paths))
+        for i in range(count):
             label=f'draft-{i+1}'
             if i<len(paths):
                 path=paths[i].resolve()
@@ -729,10 +732,14 @@ def main():
                 if local not in native:native.append(local)
                 save(manifest,rec)
                 print('原生底图',path,flush=True)
-            path=color_candidate(path,label,seed+373+i)
-            path,result=check_composition(path,label)
             if args.repair_box and i==0:
-                result={'status':'local','score':100,'issues':[{'box':args.repair_box,'fix':args.repair_text,'target':args.object}]}
+                # The caller identified this source defect. Inspect the edited pixels
+                # against the original, then apply every ordinary draft and print gate.
+                result={'status':'local','score':100,'issues':[{'box':args.repair_box,'fix':args.repair_text,
+                                                               'operation':'redraw','target':args.object}]}
+            else:
+                path=color_candidate(path,label,seed+373+i)
+                path,result=check_composition(path,label)
             if usable(result) and not args.repair_box:
                 passing.append((result,path,i))
             if draft_repair_issue(result):
