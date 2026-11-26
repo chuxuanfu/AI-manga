@@ -848,6 +848,19 @@ class LocalRepairTests(unittest.TestCase):
         self.assertIsNone(resolved_line_pair(small,small))
         self.assertEqual(resize_only((small,small.filter(ImageFilter.UnsharpMask(2,200,0))))['condition'],'resize_or_sharpen')
 
+    def test_clipped_edit_locates_a_new_opaque_matte_but_ignores_existing_ink_and_fine_strokes(self):
+        from print_artifacts import changed_clipped_field
+        source=Image.new('RGB',(256,192),'steelblue')
+        proposal=source.copy()
+        ImageDraw.Draw(proposal).line((8,65,245,72),fill='black',width=2)
+        self.assertIsNone(changed_clipped_field(source,proposal))
+        ImageDraw.Draw(proposal).ellipse((80,85,130,119),fill='black')
+        spot=changed_clipped_field(source,proposal)
+        self.assertEqual(spot['tone'],'black')
+        self.assertEqual(spot['pixels'],[80,85,131,120])
+        self.assertIsNone(changed_clipped_field(proposal,proposal.copy()))
+        self.assertEqual(changed_clipped_field(ImageOps.invert(source),ImageOps.invert(proposal))['tone'],'white')
+
     def test_flat_color_spill_must_cross_the_target_and_destroy_existing_lines(self):
         from construction_review import overpainted_rectangle
         src=Image.new('RGB',(240,160),'#235742')

@@ -418,6 +418,28 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
         if (source['construction']=='defective' and candidate['construction']=='coherent'
                 and candidate['unrelated_damage'] is False and all(v['trace'].strip() for v in traces.values())):
             result.update(verdict='resolved',next_edit='')
+    if result.get('verdict')=='resolved':
+        from print_artifacts import changed_clipped_field
+        suspect=changed_clipped_field(old,new)
+        if suspect:
+            # Locate the field without marking the candidate pixels themselves. Black
+            # ink, an opaque garment and white paper can all be intentional.
+            locator=edit_locator(new,tuple(suspect['pixels']))
+            fields={'condition':{'enum':['depicted_surface','unsupported_fill','ambiguous']},
+                    'trace':{'type':'string'},'repair':{'type':'string'}}
+            prompt=('Compare source (1) and edited crop (2). Image 3 marks a newly solid area. '
+                    'Identify what physically occupies that area. Trace its edge into the surrounding '
+                    'drawing. Does it depict a coherent object, shadow, highlight or ink shape in this '
+                    'medium, or does a flat matte cut through unrelated surfaces? Describe a specific '
+                    'boundary. If its purpose is unclear choose ambiguous. Requested edit: '+correction+
+                    ('. Art direction: '+brief if brief else ''))
+            with backend(MODEL) as addr:
+                check=json.loads(ask(addr,[old,new,locator],prompt,
+                    {'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+            result['clipped_field']={**suspect,**check}
+            if check['condition']!='depicted_surface' or not check['trace'].strip():
+                result.update(verdict='new_defect' if check['condition']=='unsupported_fill' else 'uncertain',
+                              next_edit=check['repair'] or 'Reconstruct the existing surface across the filled area.')
     if result.get('verdict')=='resolved' and bounds!=(0,0,width,height):
         boundary=assess_edit_boundary(before,after,box,correction)
         result['boundary_comparison']=boundary

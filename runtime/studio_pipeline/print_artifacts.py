@@ -3,6 +3,37 @@ import cv2
 import numpy as np
 from PIL import Image
 
+def changed_clipped_field(source, candidate):
+    """Locate a broad new near-black or white fill for visual review at the edit seam."""
+    if source.size != candidate.size:
+        raise ValueError('Unmatched crop dimensions')
+    small=source.copy()
+    small.thumbnail((512,512),Image.Resampling.BOX)
+    a=np.asarray(small.convert('RGB'),dtype=np.int16)
+    b=np.asarray(candidate.convert('RGB').resize(small.size,Image.Resampling.BOX),dtype=np.int16)
+    changed=np.abs(a-b).max(axis=2)>36
+    if min(small.size)<32 or not changed.any():
+        return None
+    minimum=max(70,round(a.shape[0]*a.shape[1]*.009))
+    candidates=[]
+    for tone,darkness,original in [('black',b.max(axis=2),a.max(axis=2)),
+                                    ('white',255-b.min(axis=2),255-a.min(axis=2))]:
+        extreme=((darkness<=8)&changed).astype(np.uint8)
+        if extreme.sum()<minimum or np.mean(original<=8)>.035:
+            continue
+        n,labels,stats,_=cv2.connectedComponentsWithStats(extreme,connectivity=8)
+        for label in range(1,n):
+            x,y,w,h,area=map(int,stats[label])
+            if area<minimum or min(w,h)<8:
+                continue
+            core=(labels[y:y+h,x:x+w]==label).astype(np.uint8)
+            radius=cv2.distanceTransform(np.pad(core,1),cv2.DIST_L2,3).max()
+            if radius>=max(3,min(small.size)*.023):
+                bounds=[round(v*n/d) for v,n,d in zip((x,y,x+w,y+h),source.size*2,small.size*2)]
+                candidates.append((area,{'tone':tone,'pixels':bounds}))
+    return max(candidates,key=lambda item:item[0])[1] if candidates else None
+
+
 def unsupported_lines(source, candidate):
     """Find long newly drawn strokes crossing formerly quiet, unrelated image areas."""
     if source.size != candidate.size:
