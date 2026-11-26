@@ -25,6 +25,7 @@ from review import audit, reviewer, RUNTIME, CHECKS
 from manga_materials.planner import plan_scene, requested_medium
 from focus_print import PATCH, centers, sampled_surfaces, combine_source, detail_graph, finish_neural, neural_double, repair_print_pair, preserve_source_marks
 from masks import object_mask, structural_composite
+from lettering import remove_reviewed_feature
 from erase import duplicate_box, erase_region, masked_candidate, MODEL as ERASE_MODEL
 
 STUDIO = RUNTIME.parent
@@ -250,6 +251,14 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     specialist=(installed_editor(model_root) if allow_specialist and reference_style and rebuild_shape
                 and (guide or scene_depth or recolor or reconstruction_attempt>=2) else None)
     if specialist:
+        if reconstruction_attempt>=3 and not recolor and ERASE_MODEL.is_file():
+            # A masked editor can still copy a malformed silhouette from its visual
+            # conditioning. Give it the same surroundings on a locally cleared plate.
+            clear=mask.point(lambda value:255 if value>=160 else 0)
+            if clear.getbbox():
+                plate=erase_region(crop,clear).resize(size,Image.Resampling.LANCZOS)
+                plate.putalpha(prepared.getchannel('A'))
+                prepared=plate
         source=local_image(prepared)
         direction=('Repaint the pigment and pattern of the specified surface. Keep its silhouette, pose, contact shadows '
                    'and linework. Make the requested colors and pattern clearly visible over the intended surface. '
@@ -261,8 +270,8 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
             save(directory/(stage+'-reference.json'),{**credit,'input':reference})
             construction=credit['construction']
             direction+=('Image 2 shows only a physical relationship: '+construction+
-                        ' Orient that relationship to the existing approach direction in image 1. '
-                        'Keep the mounting surface, scale, graphic style, and palette in image 1. ')
+                        ' Orient that relationship to the perspective and physical contact in image 1. '
+                        'Keep the surrounding surfaces, scale, graphic style, and palette in image 1. ')
         elif scene_depth:
             overview=im.copy()
             overview.thumbnail((1024,1024),Image.Resampling.LANCZOS)
@@ -789,7 +798,7 @@ def main():
                     with Image.open(base_path) as original:
                         if issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
                             patched=job/(label+'-removed.png')
-                            masked_candidate(original.convert('RGB'),region(issue,result)).save(patched)
+                            remove_reviewed_feature(original.convert('RGB'),region(issue,result),issue).save(patched)
                         else:
                             structural=reference_style and issue.get('operation')=='redraw'
                             patched=repaint(original.convert('RGB'),region(issue,result),issue['fix'],rec['positive'],
@@ -980,7 +989,7 @@ def main():
         with Image.open(source) as original:
             before=original.convert('RGB')
         from production import repeated_rejection
-        strategies=(2,0,1) if previous and repeated_rejection(previous,box) else (0,1,2)
+        strategies=[2,0,1] if previous and repeated_rejection(previous,box) else [0,1,2]
         for variant,strategy in enumerate(strategies):
             name=stage if variant==0 else f'{stage}-variant-{variant+1}'
             revised=repaint(before,box,instruction,rec['positive'],edit_seed+variant*1753,args.port,
@@ -994,6 +1003,10 @@ def main():
                                candidate_sha256=hashlib.file_digest(edited_file,'sha256').hexdigest(),
                                source_file=os.path.relpath(source,job),candidate_file=os.path.relpath(revised,job))
             verdict.update(target_box=box,reconstruction_attempt=strategy)
+            if strategy==2 and verdict.get('verdict') in ('unchanged','still_present') and not pigment_edit(instruction):
+                # The specialist reproduced a known geometric error. The next attempt
+                # rebuilds the interior using a cleared visual reference.
+                if 3 not in strategies:strategies.append(3)
             save(job/(name+'-patch-review.json'),verdict)
             if verdict['verdict']=='resolved':
                 return revised
@@ -1162,7 +1175,7 @@ def main():
                     stage='resume-'+hashlib.file_digest(stream,'sha256').hexdigest()[:16]+'-repair'
             if focus and issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
                 repaired=job/(stage+'-removed-unrequested-object.png')
-                with Image.open(last) as retained:masked_candidate(retained.convert('RGB'),focus).save(repaired)
+                with Image.open(last) as retained:remove_reviewed_feature(retained.convert('RGB'),focus,issue).save(repaired)
             else:
                 from production import repeated_rejection
                 if focus and repeated_rejection(retry_origin,focus,minimum=3):
@@ -1355,7 +1368,7 @@ def main():
         with Image.open(source) as original:
             if issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
                 revised=job/(stage+'-removed-unrequested-object.png')
-                corrected=masked_candidate(original.convert('RGB'),focus)
+                corrected=remove_reviewed_feature(original.convert('RGB'),focus,issue)
                 temp=revised.with_suffix('.partial.png')
                 corrected.save(temp);temp.replace(revised)
             elif reference_style and issue.get('operation')=='redraw':

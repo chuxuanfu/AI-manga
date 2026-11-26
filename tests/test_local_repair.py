@@ -22,6 +22,34 @@ from structure import inspect_small_figure_support
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_unrelated_repair_does_not_erase_prior_local_evidence(self):
+        from print_judge import same_defect_field
+        initial=Image.new('RGB',(200,100),'white')
+        changed=initial.copy()
+        changed.putpixel((5,5),(0,0,0))
+        self.assertTrue(same_defect_field(initial,changed,[500,300,900,900]))
+        self.assertFalse(same_defect_field(initial,changed,[0,0,100,100]))
+        self.assertFalse(same_defect_field(initial,changed.resize((400,200)),[500,300,900,900]))
+        self.assertFalse(same_defect_field(initial,changed,[0,0,0,100]))
+
+    def test_plain_secondary_material_requires_intact_native_and_source_boundaries(self):
+        from print_judge import check_plateau_material,plateau_candidate
+        sample=Image.new('RGB',(96,96))
+        base={'material':'enamel','boundary_trace':'The blue cell turns at the vertical raised seam.',
+              'role':'secondary_surface','contour':'resolved','source_detail':'preserved','abnormal_blur_or_artifact':False}
+        for delta in ({},{'role':'focal_feature'},{'contour':'degraded'},{'source_detail':'missing'},
+                      {'abnormal_blur_or_artifact':True},{'boundary_trace':''}):
+            with patch('print_judge.model_identity',return_value='fixture'),patch('print_judge.ask',
+                    return_value=json.dumps({**base,**delta})) as judge:
+                result=check_plateau_material('local',(sample,sample),sample,'an enamel portrait')
+                self.assertEqual(result['confirmed'],not delta)
+                self.assertEqual(len(judge.call_args.args[1]),3)
+        record={'view':'comparison','issue_category':'unresolved_focus','part_verification':{'decision':'clear'},
+                'blind_detail_check':{'trace':{'new_artifact':False}}}
+        self.assertTrue(plateau_candidate(record))
+        self.assertFalse(plateau_candidate({**record,'blind_detail_check':{'trace':{'new_artifact':True}}}))
+        self.assertFalse(plateau_candidate({**record,'part_verification':{'decision':'uncertain'}}))
+
     def test_agreement_with_an_intact_contour_is_not_a_visible_fault(self):
         from print_judge import arbitrate_finding
         sample=Image.new('RGB',(64,64))
@@ -262,6 +290,9 @@ class LocalRepairTests(unittest.TestCase):
         self.assertIsNone(construction_guide('Draw a ring on her finger beside the moored boat.'))
         self.assertIsNone(construction_guide('Redraw the fish. Preserve the mooring rope and iron ring.'))
         self.assertIsNone(construction_guide('Remove the mooring rope and its ring.'))
+        envelope=construction_guide('Draw a single rectangular envelope with its flap folded flat.')
+        self.assertEqual(envelope[0].name,'closed-envelope-flap.png')
+        self.assertIsNone(construction_guide('Redraw her wrist. Keep the envelope and its flap.'))
 
     def test_pigment_corrections_do_not_pin_the_previous_target_color(self):
         from illustration import pigment_edit
@@ -420,6 +451,27 @@ class LocalRepairTests(unittest.TestCase):
                      'No lettering except the station name.', 'A page with no text bubbles.',
                      '手绘海报，不要文字气泡。', 'A sign with legible text.'):
             self.assertFalse(blank_surfaces_requested(text), text)
+
+    def test_verified_words_edit_only_detected_ink_inside_the_located_label(self):
+        import lettering
+        im=Image.new('RGB',(320,200),'ivory')
+        ink=ImageDraw.Draw(im)
+        for x in range(102,148,8):
+            ink.rectangle((x,80,x+3,89),fill='black')
+        ink.line((76,57,76,122),fill='black',width=2)
+        with TemporaryDirectory() as temp:
+            model=Path(temp)/'detector'
+            model.touch()
+            # The crop starts at x=80, y=54. The second polygon marks an unrelated line.
+            words=[[[19,23],[70,23],[70,38],[19,38]], [[0,2],[3,2],[3,64],[0,64]]]
+            with patch.object(lettering,'DETECTOR',model),patch.object(lettering,'lettering_polygons',return_value=words),patch.object(
+                    lettering,'erase_region',side_effect=lambda image,mask:Image.composite(Image.new('RGB',image.size,'ivory'),image,mask)):
+                result=lettering.erase_verified_words(im,[300,350,480,500])
+            self.assertIsNotNone(result)
+            change=ImageChops.difference(im,result).getbbox()
+            self.assertGreater(change[0],80)
+            self.assertEqual(result.getpixel((76,80)),im.getpixel((76,80)))
+            self.assertNotEqual(result.getpixel((104,84)),im.getpixel((104,84)))
 
     def test_blank_surface_restoration_requires_a_single_verified_material(self):
         from lettering import finish_blank_surface

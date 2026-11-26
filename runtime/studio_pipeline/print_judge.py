@@ -199,6 +199,18 @@ def judge_view(url, image, prompt, *, reason=False, overview=None):
     return row
 
 
+def same_defect_field(previous, current, box):
+    """Two same-size masters retain the same visible fault if the actual field is identical."""
+    from PIL import ImageChops
+    if previous.size!=current.size or not isinstance(box,(list,tuple)) or len(box)!=4:
+        return False
+    if not all(type(v) is int for v in box) or not (0<=box[0]<box[2]<=1000 and 0<=box[1]<box[3]<=1000):
+        return False
+    bounds=tuple(round(v*n/1000) for v,n in zip(box,current.size*2))
+    if bounds[0]>=bounds[2] or bounds[1]>=bounds[3]:return False
+    return ImageChops.difference(previous.crop(bounds).convert('RGB'),current.crop(bounds).convert('RGB')).getbbox() is None
+
+
 def inspect_repaired_region(url, image, history, brief):
     """Record the present appearance before exposing the reader to a past diagnosis."""
     observed={'type':'object','properties':{'visible':{'type':'string'},'condition':{'type':'string'}},
@@ -984,6 +996,44 @@ def inspect_focal_definition(url, master, baseline, brief):
     return {**proof,'location':aim,'pixels':list(rect)}
 
 
+def check_plateau_material(url, pair, overview, brief):
+    """Separate a smooth secondary fill with a resolved edge from loss of detail at the focus."""
+    from construction_review import LARGE
+    if not model_identity(LARGE):
+        return {'confirmed':False}
+    fields={'boundary_trace':{'type':'string'},'material':{'type':'string'},
+            'role':{'enum':['secondary_surface','focal_feature','unidentified']},
+            'contour':{'enum':['resolved','degraded','unreadable']},
+            'source_detail':{'enum':['preserved','missing','unreadable']},
+            'abnormal_blur_or_artifact':{'type':'boolean'}}
+    schema={'type':'object','properties':fields,'required':list(fields)}
+    prompt=('Image 1 is the whole illustration; its box locates the detail. Image 2 is the final '
+            'native patch. Image 3 is the registered source enlarged equally. Locate the patch in '
+            'the actual composition and name its material. Trace at least one real material boundary '
+            'through a change of direction, an intersection or a transition to another surface. '
+            'If the source has fine structure that disappeared, record missing. An expected smooth '
+            'interior may coexist with sharp boundaries. Where a focal eye, animal marking, anatomy '
+            'or other feature is itself unresolved, record focal_feature or degraded. Check for '
+            'ringing, damage to a line, invented texture and abnormally blurred edges. '
+            'If the crop has no traceable boundary or you cannot identify it, record unreadable. '
+            'Judge the final image 2. Brief: '+brief)
+    read=json.loads(ask(url,[overview,pair[1],pair[0]],prompt,schema,tag=LARGE))
+    ok=(read['role']=='secondary_surface' and read['contour']=='resolved'
+        and read['source_detail']=='preserved' and read['abnormal_blur_or_artifact'] is False
+        and len(read['boundary_trace'].split())>=6 and bool(read['material'].strip()))
+    return {'confirmed':ok,'model':LARGE,**read}
+
+
+def plateau_candidate(record):
+    other=record.get('part_verification') or {}
+    check=record.get('blind_detail_check') or {}
+    return (record.get('view') in ('comparison','draft-comparison')
+            and record.get('issue_category')=='unresolved_focus'
+            and other.get('decision')=='clear'
+            and check.get('trace',{}).get('new_artifact') is False
+            and not record.get('style_intent',{}).get('other_defect',False))
+
+
 def needs_perspective_review(result):
     if result.get('status') not in ('uncertain','local') or not result.get('views'):
         return False
@@ -1075,6 +1125,14 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             else:
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
                 result.pop('issue',None)
+    if result.get('status')=='uncertain' and result.get('views'):
+        last=result['views'][-1]
+        if plateau_candidate(last) and 'secondary_material' not in last:
+            report=report.with_name(report.stem+'-material-boundary.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
+                result.pop('issue',None)
     if result['status'] in ('pass','local','global','uncertain'):return result
     with ExitStack() as resources:
         with Image.open(path) as source:image=source.convert('RGB')
@@ -1095,6 +1153,26 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             found=repair_extent(found,[original_box])
             candidate=tuple(round(v*k/1000) for v,k in zip(found,image.size*2))
             prior_rects[expanded(candidate,image.size)]={'symptom':old['issue'].get('symptom',''),'box':found}
+        if prior_id and not construction_draft and 'previous_regions' not in result:
+            # A separate local repair can change the file hash while leaving a known fault intact.
+            # Bind the old diagnosis to its actual source, baseline, prompt and current pixels.
+            previous_reports=(root.parent.glob('*/print-review/*.json') if root.parent.name=='rounds'
+                              else directory.glob('*.json'))
+            for saved in previous_reports:
+                old=json.loads(saved.read_text())
+                finding=old.get('issue',{})
+                if (old.get('sha256')==digest or old.get('status')!='local' or old.get('model_id')!=model_id
+                        or old.get('brief')!=brief or old.get('comparison_sha256')!=prior_id
+                        or finding.get('operation') not in ('redraw','remove_forbidden')
+                        or not actionable_edit(finding.get('fix')) or not finding.get('symptom')):
+                    continue
+                original=Path(old.get('source',''))
+                if not original.is_file() or fingerprint(original)!=old['sha256']:continue
+                box=finding.get('box')
+                with Image.open(original) as previous:
+                    if not same_defect_field(previous,image,box):continue
+                bounds=tuple(round(v*n/1000) for v,n in zip(box,image.size*2))
+                prior_rects[expanded(bounds,image.size)]={'symptom':finding['symptom'],'box':box,'prior_sha256':old['sha256']}
         if repair:
             candidate=tuple(round(v*k/1000) for v,k in zip(repair['box'],image.size*2))
             prior_rects[expanded(candidate,image.size)]=repair
@@ -1417,6 +1495,23 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                             second=dict(second,decision='uncertain',operation='none',fix='',target='focal detail',
                                         evidence='The requested distant handling is visible. The matched native '
                                         'samples do not establish improved definition of '+focal_proof['location']['feature']+'.')
+                            record['independent_context']=second
+                if second['decision']=='uncertain' and plateau_candidate(record):
+                    from construction_review import edit_locator
+                    boundary=check_plateau_material(url,view,edit_locator(image,rect),brief)
+                    record['secondary_material']=boundary
+                    if boundary['confirmed']:
+                        # A sharp frame edge cannot compensate for a blurred main subject.
+                        # Establish improvement on the actual focal subject at its own location.
+                        baseline=draft_image if kind=='draft-comparison' else before
+                        key=draft_id if kind=='draft-comparison' else prior_id
+                        checked=result.setdefault('focal_definition',{})
+                        if key not in checked:
+                            checked[key]=inspect_focal_definition(url,image,baseline,brief)
+                        proof=checked[key]
+                        if proof.get('confirmed') and tuple(proof.get('pixels',()))!=tuple(rect):
+                            second=dict(second,decision='clear',operation='none',fix='',target='',
+                                        evidence=boundary['boundary_trace'])
                             record['independent_context']=second
                 anchor=known[rect]['box'] if kind=='previous_local' else tentative
                 if (anchor and second['decision'] in ('local','uncertain') and

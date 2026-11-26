@@ -32,5 +32,30 @@
     "license": "CC BY-SA 4.0",
     "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
     "changes": "Cropped around the working mooring eye, converted to grayscale, and reduced to 900 pixels."
+  },
+  {
+    "file": "closed-envelope-flap.png",
+    "requires": [
+      [
+        "envelope",
+        "信封"
+      ],
+      [
+        "flap",
+        "creased",
+        "rectangle",
+        "rectangular",
+        "single sheet",
+        "single flat",
+        "封口",
+        "长方形"
+      ]
+    ],
+    "construction": "A single folded envelope has four exterior edges on one plane and one triangular flap contained inside that perimeter. Interpret both in the perspective of the envelope in the scene.",
+    "source": "https://commons.wikimedia.org/wiki/File:Envelope.svg",
+    "author": "Ice-Dolphin",
+    "license": "CC BY-SA 4.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+    "changes": "Rasterized at 660 pixels on the long side and placed on a neutral gray surround."
   }
 ]

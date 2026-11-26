@@ -197,6 +197,54 @@ def finish_blank_surface(original, inferred, mask):
     out=inferred.copy();out.paste(proposal,rect[:2],mask.crop(rect));return out
 
 
+def erase_verified_words(image, box, *, polygons=None):
+    """Restrict a graded inscription repair to OCR polygons at that physical location."""
+    if not DETECTOR.is_file():
+        return None
+    bounds=tuple(round(v*n/1000) for v,n in zip(box,image.size*2))
+    left,top,right,bottom=bounds
+    if right<=left or bottom<=top:
+        return None
+    pad=max(16,round(max(right-left,bottom-top)*.18))
+    field=(max(0,left-pad),max(0,top-pad),min(image.width,right+pad),min(image.height,bottom+pad))
+    crop=image.crop(field)
+    mask=Image.new('L',image.size)
+    # A tight crop improves small glyph scale but can hide the label's surrounding
+    # surface. Preserve the full-frame detector's words in the same coordinate space.
+    detected=[np.asarray(points,dtype=np.int32)+np.asarray(field[:2],dtype=np.int32)
+              for points in lettering_polygons(crop)]
+    full=lettering_polygons(image) if polygons is None else polygons
+    detected.extend(np.asarray(points,dtype=np.int32) for points in full)
+    for quad in detected:
+        x,y,w,h=cv2.boundingRect(quad)
+        if not (left<=x+w/2<=right and top<=y+h/2<=bottom):
+            continue
+        overlap=max(0,min(right,x+w)-max(left,x))*max(0,min(bottom,y+h)-max(top,y))
+        if overlap < .65*w*h:
+            continue
+        word=Image.new('L',image.size)
+        ImageDraw.Draw(word).polygon([tuple(pt) for pt in quad],fill=255)
+        strokes=glyph_mask(image,word)
+        if strokes is not None:
+            # The print judge has independently confirmed the inscription here.
+            # Remove the interior of its detected word too. Keeping its antialiased
+            # fringe as conditioning can recreate the glyphs as embossed marks.
+            mask=ImageChops.lighter(mask,ImageChops.lighter(strokes,word))
+    if mask.getbbox():
+        return finish_blank_surface(image,erase_region(image,mask),mask)
+    return None
+
+
+def remove_reviewed_feature(image, box, issue):
+    from erase import masked_candidate
+    target=str(issue.get('target',''))+' '+str(issue.get('symptom',''))
+    if re.search(r'lettering|inscription|printed (?:text|word)|glyph|pseudo.text|文字|字迹|题字',target,re.I):
+        clean=erase_verified_words(image,box)
+        if clean is not None:
+            return clean
+    return masked_candidate(image,box)
+
+
 def clean_lettering(path, brief, folder, stage):
     if not blank_surfaces_requested(brief) or not DETECTOR.is_file() or not INPAINTER.is_file():
         return path

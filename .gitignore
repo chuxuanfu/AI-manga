@@ -9,6 +9,7 @@
 /assets/repair-guides/*
 !/assets/repair-guides/index.json
 !/assets/repair-guides/rope-through-mooring-ring.jpg
+!/assets/repair-guides/closed-envelope-flap.png
 !/scripts/
 !/tests/
 /tests/*
