@@ -668,6 +668,9 @@ def main():
         context_key=inspection_key(rubric,prompt,rec['parts'],focus,rec.get('画法参考'),inspection_environment())
         from construction_review import held_pocket_reading
         def match(row):
+            if reference_style and stage.endswith('final-art') and row['review'].get('status')=='pass':
+                from reference_review import confirmed_final_comparison
+                if not confirmed_final_comparison(row['review'].get('参考比较') or {}):return False
             detail=row['review'].get('局部连接复审') or {}
             if detail.get('verdict')=='unclear' and 'palm_attachment_review' not in detail:
                 from palm_review import WEIGHTS,hand_attachment

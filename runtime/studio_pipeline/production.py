@@ -29,7 +29,8 @@ def workmanship_confirmed(record, digest):
     for row in reversed(record.get('reviews',[])):
         if row.get('hash')==digest and row.get('stage','').endswith('final-art'):
             review=row.get('review',{})
-            return review.get('status')=='pass' and review.get('参考比较',{}).get('decision')=='candidate'
+            from reference_review import confirmed_final_comparison
+            return review.get('status')=='pass' and confirmed_final_comparison(review.get('参考比较') or {})
     return False
 
 

@@ -107,6 +107,23 @@ def order_verdict(forward,backward,axes,*,sided=False):
                 consistent_deficits=deficits,unresolved_axes=ambiguous)
 
 
+def confirmed_final_comparison(review):
+    from construction_review import LARGE
+    from print_judge import MODEL
+    if (review.get('decision')!='candidate' or review.get('assessment_model')!=MODEL
+            or review.get('separate_material_evidence') is not True):
+        return False
+    try:
+        first=order_verdict(review['reference_on_left'],review['reference_on_right'],AXES,sided=True)
+        if first['decision']=='candidate':return True
+        if first['decision']=='below':return False
+        second=review.get('independent_review') or {}
+        if second.get('model')!=LARGE or len(second.get('orders',[]))!=2:return False
+        return order_verdict(*second['orders'],first['unresolved_axes'],sided=True)['decision']=='candidate'
+    except (KeyError,TypeError,ValueError,AttributeError):
+        return False
+
+
 def compare(im,regions,path,brief='',*,final=False):
     from print_judge import MODEL
     tag=MODEL if final else TAG

@@ -70,4 +70,13 @@ class WorkmanshipTests(unittest.TestCase):
         record={'工作流':'reference-illustration-v1','reviews':[row('old','candidate'),row('new','review')]}
         self.assertFalse(workmanship_confirmed(record,'new'))
         record['reviews'].append(row('new','candidate'))
+        self.assertFalse(workmanship_confirmed(record,'new'))
+        from reference_review import AXES
+        from print_judge import MODEL
+        readings={axis:dict(level='tie',evidence='Different materials retain distinct edge structures.',
+                     left_detail='Knit stitches along the lifted wrist.',right_detail='Cut edges around the sheep fleece.') for axis in AXES}
+        grade=record['reviews'][-1]['review']['参考比较']
+        grade.update(assessment_model=MODEL,separate_material_evidence=True,reference_on_left=readings,reference_on_right=readings)
         self.assertTrue(workmanship_confirmed(record,'new'))
+        grade['reference_on_right']={}
+        self.assertFalse(workmanship_confirmed(record,'new'))
