@@ -1427,15 +1427,41 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
         from palm_review import WEIGHTS as palm_weights,hand_attachment
         missing_wrist_crop=(disputed.get('condition')=='insufficient' and 'palm_attachment_review' not in disputed
                             and palm_weights.is_file() and hand_attachment(result.get('issue',{}).get('symptom','')))
-        from paired_contours import needs_pair_trace
-        missing_pair=needs_pair_trace(disputed) and 'registered_pair' not in disputed
-        if ((disavowed_action_fault(disputed) and not trace) or missing_wrist_crop or missing_pair
+        if ((disavowed_action_fault(disputed) and not trace) or missing_wrist_crop
                 or (trace.get('verdict')=='cannot_trace' and not trace.get('tested_claim'))):
-            report=report.with_name(report.stem+('-registered-pair.json' if missing_pair else '-wrist-crops.json' if missing_wrist_crop else '-action-trace-targeted.json'))
+            report=report.with_name(report.stem+('-wrist-crops.json' if missing_wrist_crop else '-action-trace-targeted.json'))
             if report.is_file():result=json.loads(report.read_text())
             else:
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
                 result.pop('issue',None)
+    if result.get('status')=='uncertain' and result.get('views'):
+        from construction_review import LARGE
+        from paired_contours import needs_pair_trace,inspect_pair
+        held=result['views'][-1]
+        disputed=held.get('independent_action_check') or {}
+        if (held.get('view') in ('whole','construction','contacts') and needs_pair_trace(disputed)
+                and 'registered_pair' not in disputed):
+            report=report.with_name(report.stem+'-registered-pair.json')
+            if report.is_file():
+                result=json.loads(report.read_text())
+            else:
+                # The two original readers already traced this exact signed image. Resume at
+                # the missing mirrored test, including after reopening a previous targeted trace.
+                box=result['issue']['box']
+                with Image.open(path) as fp, backend(LARGE) as address:
+                    pair=inspect_pair(address,fp.convert('RGB'),box,disputed['consistency_check']['tested_claim'],(LARGE,MODEL))
+                disputed['registered_pair']=pair
+                result['report']=str(report.relative_to(root))
+                if pair['confirmed']:
+                    points=pair['orders'][0]
+                    disputed.update(condition='physically_plausible',problem='',visible_shapes=points['first_trace']+' '+points['second_trace'],
+                                    depicted_action=points['between'])
+                    original=held.get('independent_context') or held['corroboration']
+                    held['independent_context']=dict(original,decision='clear',operation='none',target='',fix='',
+                                                     evidence=disputed['visible_shapes']+' '+disputed['depicted_action'])
+                    result.update(status='running')
+                    result.pop('issue',None)
+                store(report,result)
     if result['status'] in ('pass','running'):
         whole = next((v for v in result['views'] if needs_brief_after_clearance(v)), None)
         if whole:
