@@ -599,13 +599,22 @@ def main():
         elif args.retry_round:
             retry_origin=args.retry_round
             retry_source=local_retry_source(retry_origin,prompt,review_upgrade=True)
+        if retry_source and retry_origin==job and not (args.reviewed_image or args.from_image or args.candidate_image or args.repair_box):
+            from production import failed_scene_connection
+            if failed_scene_connection(job,rec,retry_source[2]):
+                rec.update({'整图重绘后仍需换构图':True,'终审退回原因':retry_source[2]['symptom'],
+                            'status':'未达标 · 整图重绘后仍需换构图'})
+                save(manifest,rec)
+                return 2
         if retry_source and retry_source[2]['operation']!='reinspect' and retry_origin!=job and not (args.reviewed_image or args.from_image or args.candidate_image or args.repair_box):
             # When a text-only job consumes a whole new round yet keeps exactly
             # the previous rejected master, let new seeds try a fresh composition.
             # User-supplied source images always keep their original composition.
             retained=retry_source[0].resolve()
-            if (not retained.is_relative_to(args.retry_round.resolve()) or
-                    json.loads((args.retry_round/'review.json').read_text()).get('整图重绘后仍需换构图')):
+            from production import failed_scene_connection
+            previous=json.loads((args.retry_round/'review.json').read_text())
+            if (not retained.is_relative_to(args.retry_round.resolve()) or previous.get('整图重绘后仍需换构图')
+                    or failed_scene_connection(args.retry_round,previous,retry_source[2])):
                 rec['重选构图原因']='上一轮局部重画未能改变被退回的母版'
                 retry_source=None
     if retry_source:

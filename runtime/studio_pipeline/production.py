@@ -157,6 +157,23 @@ def same_repair_region(box, other):
     return area>0 and max(0,min(r,u)-max(l,x))*max(0,min(b,v)-max(t,y))>=.25*area
 
 
+def failed_scene_connection(directory, record, finding):
+    scene=record.get('高清底图返工',{})
+    if not scene.get('模型') or finding.get('operation')!='redraw':return False
+    prior=scene.get('目标范围')
+    if prior:return same_repair_region(prior,finding.get('box'))
+    # Earlier scene-rebuild records kept the disputed box in their signed print report.
+    entry=record.get('逐块终审',{})
+    if not entry.get('报告'):return False
+    path=directory/entry['报告']
+    if not path.is_file():return False
+    report=json.loads(path.read_text())
+    if (entry.get('sha256')!=report.get('sha256') or report.get('brief')!=record.get('prompt')
+            or report.get('status') not in ('local','uncertain')):return False
+    return any(same_repair_region(item.get('box'),finding.get('box'))
+               for _,item in report.get('previous_regions',[]))
+
+
 def repeated_rejection(directory, box, *, minimum=2):
     """Choose a different editor first when multiple nearby repairs actually failed."""
     left,top,right,bottom=box
