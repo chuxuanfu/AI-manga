@@ -10,10 +10,17 @@ from print_judge import fingerprint, resize_only, store
 
 
 def failed_focus(report):
-    if report.get('issue',{}).get('category')!='unresolved_focus' or not report.get('views'):
+    if not report.get('views'):
         return None
     last=report['views'][-1]
-    if last['view'] in ('comparison','native','subject','previous_local'):
+    issue=report.get('issue',{})
+    if issue.get('category')=='unresolved_focus' and last['view'] in ('comparison','native','subject','previous_local'):
+        return tuple(last['pixels'])
+    # When a matched crop is ambiguous without any identified physical defect,
+    # try to demonstrate actual added detail. An unsuccessful edit still fails.
+    readings=[last[k] for k in ('observation','corroboration','independent_context') if last.get(k)]
+    if (report.get('status')=='uncertain' and last['view']=='comparison' and issue.get('operation')=='none'
+            and not issue.get('box') and readings and all(r.get('operation')=='none' for r in readings)):
         return tuple(last['pixels'])
     return None
 

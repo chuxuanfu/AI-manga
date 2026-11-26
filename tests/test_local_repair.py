@@ -57,6 +57,11 @@ class LocalRepairTests(unittest.TestCase):
         self.assertEqual(failed_focus(report),rect)
         self.assertIsNone(failed_focus(dict(report,issue={'category':'anatomy'})))
         self.assertIsNone(failed_focus(dict(report,views=[])))
+        ambiguous={'status':'uncertain','issue':{'category':'other','operation':'none','box':None},
+                   'views':[{'view':'comparison','pixels':list(rect),'observation':{'operation':'none'}}]}
+        self.assertEqual(failed_focus(ambiguous),rect)
+        ambiguous['views'][0]['corroboration']={'operation':'redraw'}
+        self.assertIsNone(failed_focus(ambiguous))
         field,target=framing((3840,2160),rect)
         self.assertLessEqual(field[2],3840)
         mask=selection((field[2]-field[0],field[3]-field[1]),target)
