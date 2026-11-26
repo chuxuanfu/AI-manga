@@ -123,7 +123,9 @@ def refresh():
         for name in [*LABELS,*extras]:
             folder=IMAGES/name
             if not folder.is_dir():continue
-            if (folder/'current-review/index.html').is_file():
+            if (folder/'approved-4k/index.html').is_file():
+                entry,cover=folder/'approved-4k/index.html',None
+            elif (folder/'current-review/index.html').is_file():
                 entry,cover=folder/'current-review/index.html',None
             elif name=='new-jobs':entry,cover=jobs(folder)
             elif name=='fifty-scenes':
