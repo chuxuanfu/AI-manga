@@ -19,6 +19,33 @@ boundaries=set('at in beside across from on of and or behind holding with under 
 animals=set('cat dog rabbit fox bird horse bear sheep cow elephant zebra giraffe deer squirrel otter panda wolf tiger lion turtle'.split())
 
 
+def inventory_counts(items):
+    """Compare counts at the same taxonomic level while retaining breed in the visual evidence."""
+    counts={}
+    species=set()
+    varieties=defaultdict(dict)
+    for item in items:
+        label=item['category'].strip().lower()
+        n=item['count']
+        if not label or type(n) is not int or not 0<=n<=100:
+            continue
+        if item['kind']=='person':
+            counts['person']=max(n,counts.get('person',0))
+        elif item['kind']=='animal':
+            reported=item.get('counting_species','').strip().lower()
+            name=reported if reported not in ('','unknown','animal','animals') else label
+            name=english.get(name,name)
+            if name not in ('animal','animals','unknown'):
+                species.add(name)
+            varieties[name][label]=max(n,varieties[name].get(label,0))
+        else:
+            counts[english.get(label,label)]=n
+    for name,labels in varieties.items():
+        # A total such as "dog: 2" can accompany independently named breeds.
+        counts[name]=max(labels.get(name,0),sum(n for label,n in labels.items() if label!=name))
+    return counts,species
+
+
 def explicit_counts(text):
     values=defaultdict(list)
     words=re.findall(r"[a-z]+|[0-9]+|[^\w\s]",text.lower())

@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-44'
+REVISION = 'print-inspection-45'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -400,7 +400,31 @@ def inspect_disputed_action(url, image, box, brief):
          'Respect stylized anatomy and illustration conventions, including believable occlusion or hidden '
          'hardware. Set visible_fault only for a concrete shape contradiction, and insufficient only when the '
          'part cannot be traced. Requested image: '+brief)
-    return json.loads(ask(url,[whole,detail],cue,{'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+    reading=json.loads(ask(url,[whole,detail],cue,{'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+    if reading['condition']=='visible_fault' and re.search(
+            r'\bno (?:visible |physical |anatomical |structural )*(?:faults?|defects?|deformit(?:y|ies)|contradictions?|errors?|issues?)\b',
+            reading['problem'],re.I):
+        # A disputed shape cannot acquire a repair instruction just because the
+        # verdict field contradicts the reader's actual description of its pixels.
+        fields={'first_landmark':{'type':'string'},'second_landmark':{'type':'string'},
+                'connection':{'type':'string'},'repair':{'type':'string'},
+                'verdict':{'enum':['continuous_and_plausible','specific_visible_error','cannot_trace']}}
+        check=json.loads(ask(url,[detail,whole],
+            'Inspect the disputed part in image one. Image two gives its place in the scene. '
+            'Follow its contour from one visible landmark to a second. Does that particular '
+            'contour and action make physical sense? Name both landmarks, their connection, '
+            'and one concrete correction if broken. Say cannot_trace if the crop omits the part. '
+            'Consider the drawing style and this brief: '+brief,
+            {'type':'object','properties':fields,'required':list(fields)},tag=MODEL,reason=True))
+        reading['consistency_check']=check
+        traced=all(str(check[k]).strip() for k in ('first_landmark','second_landmark','connection'))
+        if check['verdict']=='continuous_and_plausible' and traced and not actionable_edit(check['repair']):
+            reading.update(condition='physically_plausible',problem='')
+        elif check['verdict']=='specific_visible_error' and traced and actionable_edit(check['repair']):
+            reading['problem']=check['connection']+' '+check['repair']
+        else:
+            reading['condition']='insufficient'
+    return reading
 
 
 def verified_wrist_at(preliminary, image, box, claim):
@@ -958,6 +982,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                         'palette. For clear, describe a matching hue relationship, set operation to none '
                         'and coordinates to zero. For a color concern give a local box in the final '
                         'image, normalized to 0..1000, and a concrete color correction. Brief: '+brief)
+            witnesses=[]
             prior_reading=None
             detail_reading=None
             reuse=None
@@ -971,6 +996,10 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 row,prior_reading=inspect_repaired_region(url,view,known[rect]['symptom'],guidance)
             else:
                 row=judge_view(url,view,prompt)
+            if kind=='whole' and row['decision']=='clear':
+                from brief_check import subject_witness
+                witnesses,contradiction=subject_witness(url,image,overview_image,brief,MODEL)
+                if contradiction:row=contradiction
             if kind in ('comparison','draft-comparison') and row['decision']=='uncertain':
                 detail_reading=independent_detail_check(url,view,overview_image,inspection_brief)
                 if detail_reading['confirmed']:
@@ -978,6 +1007,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     row=dict(decision='clear',operation='none',fix='',target='',left=0,top=0,right=0,bottom=0,
                              evidence=detail_reading['trace']['improvement'])
             record={'view':kind,'pixels':list(rect),'observation':row}
+            if witnesses:record['brief_witnesses']=witnesses
             if detail_reading is not None:record['blind_detail_check']=detail_reading
             if kind=='native':record['native_key']=native_key
             if reuse:record['reused_from']=reuse[1]

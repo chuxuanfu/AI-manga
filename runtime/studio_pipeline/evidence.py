@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from functools import lru_cache
 from urllib import request
 import torch
-from counts import reconcile, animals
+from counts import reconcile, animals, inventory_counts
 
 RUNTIME = Path(__file__).resolve().parents[1]
 TAG = 'qwen3-vl:8b-instruct'
@@ -126,7 +126,7 @@ def objects(image):
 
 
 COUNT_SCHEMA={'type':'object','properties':{'items':{'type':'array','items':{'type':'object','properties':{
-    'category':{'type':'string'},'kind':{'enum':['person','animal','object']},'count':{'type':'integer'}},'required':['category','kind','count']}}},'required':['items']}
+    'category':{'type':'string'},'counting_species':{'type':'string'},'kind':{'enum':['person','animal','object']},'count':{'type':'integer'}},'required':['category','kind','count','counting_species']}}},'required':['items']}
 _request_counts={}
 
 
@@ -136,31 +136,19 @@ def classified_counts(url,text,requested):
           'but skip ambiguous additional people or items in a crowd or unrestricted background.'
           if requested else 'Count clearly described distinct subjects depicted directly in the scene, including each drawn character, cloth doll, clay figurine or modeled animal. The visible medium does not make the subject absent. Exclude secondary pictures within the scene, faces printed on clothing, shadows and reflections. Distinguish a depicted child or turtle from a picture of one on the wall.')
     instruction=(role+' This is an independent text extraction. Use short singular English object nouns. '
-                 'Aggregate every girl, child, man, and woman into category person. Keep animal species separate. '
+                 'Aggregate every girl, child, man, and woman into category person. For each animal supply its common species noun in counting_species (dog for Shiba Inu, cat for calico); put the named breed or type in category. Give one row per distinct type, exclude duplicate mentions. For other kinds use an empty counting_species. '
                  'Ignore uncounted mass nouns, scenery and light. If a category count is unclear omit it. '
                  'Use 0 only for explicit absence. Do not add entities. Source text: '+text)
     data=json.loads(ask(url,[],instruction,COUNT_SCHEMA))
-    counts={}
-    species=set()
-    for item in data['items']:
-        name=str(item['category']).lower().strip()
-        name={'human':'person','people':'person','girl':'person','boy':'person','woman':'person','man':'person',
-              'kitten':'cat','puppy':'dog','bunny':'rabbit'}.get(name,name)
-        n=item['count']
-        if name and isinstance(n,int) and 0<=n<=100:
-            counts[name]=n
-            if item.get('kind')=='animal' and name!='animal':species.add(name)
+    counts,species=inventory_counts(data['items'])
     counts=reconcile(counts,text,observed=not requested)
     if counts.get('animal',0)>0 and not (species|animals.intersection(counts)):
         provenance='requested in the brief' if requested else 'shown as main figures, in any artistic medium'
         instruction=('Identify the animal species '+provenance+' from this text. Return only explicitly named species with their total counts. '
                      'Use a singular English species name, never the generic category animal. Omit incidental pictures, reflections and uncertain identities. Text: '+text)
         specifics=json.loads(ask(url,[],instruction,COUNT_SCHEMA))['items']
-        detail={}
-        for item in specifics:
-            kind=item['category'].strip().lower()
-            if item['kind']=='animal' and kind not in ('animal','animals','unknown') and 0<item['count']<=100:
-                detail[kind]=item['count']
+        detail,_=inventory_counts([item for item in specifics if item['kind']=='animal' and item['count']>0])
+        detail={name:n for name,n in detail.items() if name not in ('animal','animals','unknown')}
         if detail and sum(detail.values())==counts['animal']:
             counts.update(detail);species.update(detail)
     species=(species|animals.intersection(counts)).intersection(counts)

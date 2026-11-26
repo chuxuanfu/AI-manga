@@ -148,6 +148,58 @@ class LocalRepairTests(unittest.TestCase):
         ImageDraw.Draw(boundary).line((50,20,385,420),fill='white',width=2)
         self.assertFalse(unsupported_lines(source,boundary)['hold'])
 
+    def test_breeds_share_a_counting_species_but_different_species_and_extra_animals_still_fail(self):
+        from counts import inventory_counts
+        from evidence import count_conflict
+        def observed(*pairs):
+            return inventory_counts([dict(category=label,counting_species=name,kind='animal',count=n)
+                                     for label,name,n in pairs])
+        wanted={'dog':1}
+        shiba,species=observed(('Shiba Inu','dog',1))
+        self.assertFalse(count_conflict(wanted,shiba,[],{'dog'},species))
+        fox,species=observed(('red fox','fox',1))
+        self.assertTrue(count_conflict(wanted,fox,[],{'dog'},species))
+        pair,species=observed(('Shiba Inu','dog',1),('basenji','dog',1),('dog','dog',2))
+        self.assertEqual(count_conflict(wanted,pair,[],{'dog'},species)[0]['observed'],2)
+
+    def test_self_contradictory_geometry_verdict_requires_an_independent_pixel_trace(self):
+        from print_judge import inspect_disputed_action, disputed_action_resolved
+        image=Image.new('RGB',(1800,1100))
+        contradiction=dict(condition='visible_fault',visible_shapes='paired fins on a tapered body',
+                           depicted_action='swimming',problem='No visible deformities or contradictions in structure are present.')
+        trace=dict(first_landmark='head',second_landmark='pectoral fins',connection='single unbroken contour')
+        for decision,repair,expected in [('continuous_and_plausible','none',True),
+                                         ('specific_visible_error','Reconnect the detached fin.',False),
+                                         ('cannot_trace','none',False)]:
+            with patch('print_judge.model_identity',return_value='local'),patch('print_judge.ask',side_effect=[
+                    json.dumps(contradiction),json.dumps(dict(trace,repair=repair,verdict=decision))]):
+                result=inspect_disputed_action('localhost',image,[200,400,500,600],'A koi swims in a pond.')
+            self.assertEqual(disputed_action_resolved(result),expected)
+            if decision=='specific_visible_error':self.assertIn('detached fin',result['problem'])
+
+    def test_specific_requirements_must_be_quoted_and_observed_before_returning_a_repair(self):
+        from brief_check import subject_witness
+        image=Image.new('RGB',(1800,1000));overview=image.resize((900,500))
+        brief='A child looks through a brass telescope.'
+        coordinates={'left':300,'top':200,'right':600,'bottom':530}
+        items=[{'quote':'looks through a brass telescope','inspect':'Compare eye and eyepiece.',**coordinates},
+               {'quote':'wears a blue coat','inspect':'Observe coat.',**coordinates}]
+        prediction={'reading':'The eyepiece touches the nose below the eye.','fix':'Align the eyepiece with the pupil.',
+                    'decision':'visible_contradiction'}
+        with patch('brief_check.ask',side_effect=[json.dumps({'checks':items}),json.dumps({'crop_1':prediction}),
+            json.dumps({'actual_landmarks':'The eyepiece touches the bridge of the nose below the eye.',
+                        'finding':'contradiction','repair_instruction':'Align the eyepiece with the pupil.'}),
+            json.dumps({'relation':'explicit_incompatibility','incompatible_words':'below the eye'})]) as query:
+            notes,issue=subject_witness('local',image,overview,brief,'model')
+        self.assertEqual(len(notes),1)
+        self.assertEqual(issue['operation'],'redraw')
+        self.assertEqual(issue['left'],300)
+        self.assertIs(query.call_args_list[-2].args[1][0],overview)
+        self.assertGreater(query.call_args_list[-2].args[1][1].width,500)
+        with patch('brief_check.ask',return_value=json.dumps({'checks':items[1:]})) as query:
+            self.assertEqual(subject_witness('local',image,overview,brief,'model'),([],None))
+        self.assertEqual(query.call_count,1)
+
     def test_ctc_word_decoder_preserves_double_letters_separated_by_blanks(self):
         import numpy as np
         from lettering import decode_word
