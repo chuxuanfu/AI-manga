@@ -351,6 +351,8 @@ def main():
     parser.add_argument('-p','--prompt',help='中文或英文画面描述')
     parser.add_argument('-o','--output-dir',type=Path,help='将选中的校样或通过终审的成品复制到此目录')
     parser.add_argument('--aspect',choices=('auto','2:3','3:2','9:16','16:9','1:1'),default='auto',help='画幅比例，默认从描述判断，未指定时为 2:3')
+    parser.add_argument('--print-method',choices=('auto','restoration','tiled'),default='auto',
+                        help='4K 初次精绘方式。自动模式在支持的设备上优先从底图用 SeedVR2 重建')
     parser.add_argument('--base-model',choices=('auto','qwen-image-2512'),default='auto',help='纯文字底图绘制模型，默认自动搭配候选')
     parser.add_argument('--style',help='可选画材或画风，例如透明水彩')
     parser.add_argument('--accept-final',metavar='SHA256',help='目检后，按当前母版指纹标记定稿')
@@ -385,6 +387,10 @@ def main():
         if not has_drawing_model(RUNTIME/'ComfyUI/models'):
             parser.error('缺少 Qwen-Image-2512 模型组件，请先运行安装器')
     args.eight_k=args.eight_k or args.full_8k_diffusion or args.keep_native or args.skip_focus is not None
+    if args.print_method=='restoration':
+        from restoration import available as has_restorer
+        if args.eight_k:parser.error('--print-method restoration 仅适用于 4K')
+        if not has_restorer(RUNTIME/'ComfyUI/models'):parser.error('缺少本地 SeedVR2，安装模型后可使用 --print-method restoration')
     if args.review_print:
         if (not args.reviewed_image or args.eight_k or args.from_image or args.repair_box or args.candidate_image
                 or args.native_only or args.proof_only or args.accept_final):
@@ -843,6 +849,15 @@ def main():
             from delivery import export_files
             export_files(args.output_dir,job,{'selected-proof.png':proof})
         rec['status']='底图已选 · 待目检';save(manifest,rec);print(rec['status'],proof,flush=True);return 0
+    def reconstruct_print(source_path,stage,print_seed):
+        from restoration import restoration_graph
+        with Image.open(source_path) as original:
+            input_name=local_image(original.convert('RGB'))
+        graph,node=restoration_graph(input_name,prefix+'/pending-review/'+stage,3840,print_seed)
+        save(job/(stage+'-workflow.json'),graph.ui())
+        outputs=post_graph(graph.api,args.port,job,stage,graph.ui())
+        return preserve_source_marks(source_path,output_image(outputs[node]))
+
     def render(source_path,stage):
         reviewer.cache_clear()
         if torch.backends.mps.is_available():torch.mps.empty_cache()
@@ -857,6 +872,16 @@ def main():
                 bound=3840 if rebuilt_source else (2304 if reference_style else 1536)
                 composition.thumbnail((bound,bound),Image.Resampling.LANCZOS)
             source=local_image(composition)
+        if four_only and stage=='refine' and source_edge<3840:
+            from restoration import prefer_source_reconstruction
+            # Resume a previously submitted graph with its own files and seed.
+            if not (job/'refine-task.json').is_file() and prefer_source_reconstruction(
+                    args.print_method,source_edge,RUNTIME/'ComfyUI/models'):
+                master=reconstruct_print(source_path,'first-source-restoration',seed+28601)
+                rec['初次4K方法']='SeedVR2'
+                rec['精绘区域报告']={'覆盖':'全幅源图条件扩散重建','长边':[3840]}
+                save(manifest,rec)
+                return master,None
         focus_mode=rec.get('输出模式')=='全幅4K扩散与8K焦点精修'
         medium=rec.get('画材','')
         natural_sr=continuous_tone(medium) and (RUNTIME/'models/upscale_models'/NATURAL_UP).is_file()
@@ -1266,20 +1291,16 @@ def main():
         if four_only and attempt<2 and not (args.keep_native or args.selection_mask or args.repair_box):
             from focal_edit import failed_focus, print_constraints, repaint_definition
             pixels=failed_focus(judged)
-            from restoration import available as restoration_available, restoration_graph
+            from restoration import available as restoration_available
             needs_detail=pixels or finding.get('category')=='unresolved_focus'
             if (attempt==0 and needs_detail and not repair_check and not args.candidate_image
+                    and rec.get('初次4K方法')!='SeedVR2' and args.print_method!='tiled'
                     and native_edge<3840 and restoration_available(RUNTIME/'ComfyUI/models')):
                 # Compare against the actual selected drawing. A final with a later structural
                 # repair must not be replaced by an earlier, uncorrected source.
                 stage='source-restoration'
-                with Image.open(approved) as src:
-                    input_name=local_image(src.convert('RGB'))
-                graph,node=restoration_graph(input_name,prefix+'/pending-review/'+stage,3840,seed+28601)
-                save(job/(stage+'-workflow.json'),graph.ui())
-                restored=post_graph(graph.api,args.port,job,stage,graph.ui())
                 prior_master=master
-                master=preserve_source_marks(approved,output_image(restored[node]))
+                master=reconstruct_print(approved,stage,seed+28601)
                 small=None
                 rec['4K源图重建']={'底图':str(approved),'前一版本':str(prior_master),'模型任务':stage+'-task.json'}
                 save(manifest,rec)

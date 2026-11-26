@@ -687,6 +687,14 @@ class LocalRepairTests(unittest.TestCase):
         self.assertEqual({forward['status'], reverse['status']}, {'intact', 'new_damage'})
         self.assertEqual(len(forward['transition_sites']), 4)
 
+    def test_automatic_4k_reconstruction_requires_weights_and_a_suitable_native_source(self):
+        from restoration import prefer_source_reconstruction
+        for available in (True,False):
+            with patch('restoration.available',return_value=available):
+                for method,edge,use in [('auto',1536,True),('auto',800,False),('auto',3840,False),
+                                        ('restoration',800,True),('tiled',1536,False)]:
+                    self.assertEqual(prefer_source_reconstruction(method,edge,None),use and available)
+
     def test_native_line_pairs_require_repeated_members_across_a_stroke(self):
         from print_artifacts import resolved_line_pair
         from print_judge import resize_only

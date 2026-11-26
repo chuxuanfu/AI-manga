@@ -31,6 +31,15 @@ def publish(job, source, record):
         raise ValueError('4K 母版指纹与终审记录不一致')
     if any(fingerprint(path)!=digest for path,digest in outputs.values()):
         raise ValueError('定稿文件在终审后发生变化')
+    aspect=record.get('aspect','auto')
+    if aspect and aspect!='auto':
+        from PIL import Image
+        a,b=map(int,aspect.split(':'))
+        for name,(path,_) in outputs.items():
+            edge=3840 if name=='4K.png' else 7680
+            wanted=(round(a*edge/max(a,b)),round(b*edge/max(a,b)))
+            with Image.open(path) as actual:
+                if actual.size!=wanted:raise ValueError('定稿尺寸与指定画幅不符')
     report_file=source/checked['终审报告']
     report=json.loads(report_file.read_text())
     if max(report['size'])!=(7680 if '8K.png' in outputs else 3840):
@@ -334,6 +343,7 @@ def run(args,job,entry):
             if args.object:options+=['--object',args.object]
             if getattr(args,'aspect','auto')!='auto':options+=['--aspect',args.aspect]
             if args.base_model!='auto':options+=['--base-model',args.base_model]
+            if args.print_method!='auto':options+=['--print-method',args.print_method]
             if args.candidates:options+=['--candidates',str(args.candidates)]
             state=dict(prompt=args.prompt.strip(),seed=args.seed if args.seed is not None else secrets.randbelow(2**45),
                        delivery_edge=7680 if args.eight_k else 3840,options=options,rounds=[],status='准备离线出片',port=args.port)

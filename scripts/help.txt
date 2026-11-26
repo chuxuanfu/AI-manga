@@ -11,6 +11,7 @@ AI Manga Studio
   --seed N                Starting seed (default random)
   --candidates N          Drafts per round, 1 to 8 (default 3)
   --max-rounds N          Maximum rounds this run (default 0, retry until accepted)
+  --print-method METHOD   First 4K pass: auto (default), restoration (SeedVR2) or tiled
   --8k                    Also render, inspect and export an 8K PNG
   --native-4k             Draw on a native 4K canvas
   --full-8k-diffusion     Enable 8K and use full-canvas tiled diffusion

@@ -6,6 +6,11 @@ def available(root):
     return (root/'diffusion_models'/RESTORER).is_file() and (root/'vae'/CODEC).is_file()
 
 
+def prefer_source_reconstruction(method,source_edge,models):
+    return (method!='tiled' and 0<source_edge<3840 and (method=='restoration' or source_edge>=1024)
+            and available(models))
+
+
 def restoration_graph(reference,prefix,edge,seed):
     g=Graph('studio-reference-restoration')
     src=g.add('LoadImage','Drawing',(0,0),['IMAGE','MASK'],values={'image':reference},widgets=[reference,'image'])
