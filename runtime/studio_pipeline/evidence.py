@@ -4,6 +4,7 @@ import hashlib
 import base64
 import io
 import json
+import marshal
 import os
 from pathlib import Path
 import shutil
@@ -107,10 +108,52 @@ def _local_service(tag,timings=None):
             if timings is not None:timings['device_lease_seconds']=round(time.monotonic()-acquired,2)
 
 
+@lru_cache(maxsize=1)
+def _inference_revision():
+    return hashlib.sha256(marshal.dumps(_model_answer.__code__)).hexdigest()
+
+
 def ask(url,images,prompt,schema=None,tag=TAG,*,reason=False):
     state=_inspection_session.get()
     if state is not None and state['pid']==os.getpid() and tag not in state['timings']['models']:
         state['timings']['models'].append(tag)
+    # Pictures always go to the visual model. A retry with the identical text
+    # and schema can reuse the prior extraction without evicting a loaded VLM.
+    if images or schema is None:
+        return _model_answer(url,images,prompt,schema,tag,reason)
+    identity=model_identity(tag)
+    executable=shutil.which('ollama') or '/Applications/Ollama.app/Contents/Resources/ollama'
+    if not identity:
+        return _model_answer(url,images,prompt,schema,tag,reason)
+    try:
+        stamp=Path(executable).stat()
+    except OSError:
+        return _model_answer(url,images,prompt,schema,tag,reason)
+    key=json.dumps([_inference_revision(),stamp.st_size,stamp.st_mtime_ns,tag,identity,reason,prompt,schema],
+                   ensure_ascii=False,separators=(',',':'))
+    digest=hashlib.sha256(key.encode()).hexdigest()
+    saved=RUNTIME/'cache'/'text-readings'/digest[:2]/(digest+'.json')
+    try:
+        row=json.loads(saved.read_text())
+        value=json.loads(row['answer'])
+        if row['request']==digest and isinstance(value,dict) and all(k in value for k in schema.get('required',[])):
+            if state is not None and state['pid']==os.getpid():
+                times=state['timings']
+                times['reused_text_readings']=times.get('reused_text_readings',0)+1
+            return row['answer']
+    except (OSError,ValueError,KeyError,TypeError):
+        pass
+    answer=_model_answer(url,images,prompt,schema,tag,reason)
+    try:
+        from print_judge import store
+        saved.parent.mkdir(parents=True,exist_ok=True)
+        store(saved,{'request':digest,'answer':answer})
+    except OSError:
+        pass
+    return answer
+
+
+def _model_answer(url,images,prompt,schema,tag,reason):
     encoded=[]
     for image in images:
         buf=io.BytesIO()

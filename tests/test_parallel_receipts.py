@@ -21,6 +21,34 @@ class ParallelReceiptsTests(unittest.TestCase):
                 list(pool.map(write,range(80)))
             self.assertEqual(list(path.parent.iterdir()),[path])
 
+    def test_text_extraction_reuses_exact_local_request_and_images_still_run(self):
+        import io
+        from unittest.mock import patch
+        from PIL import Image
+        import evidence
+        schema={'type':'object','properties':{'count':{'type':'integer'}},'required':['count']}
+        packet=json.dumps({'message':{'content':'{"count":1}'},'done_reason':'stop'}).encode()
+        with TemporaryDirectory() as tmp, patch.object(evidence,'RUNTIME',Path(tmp)), \
+                patch.object(evidence,'model_identity',return_value='weights-1') as identity, \
+                patch.object(evidence.shutil,'which',return_value=sys.executable), \
+                patch.object(evidence.request,'urlopen',side_effect=lambda *a,**k:io.BytesIO(packet)) as query:
+            url='http://127.0.0.1:12345/api/chat'
+            with evidence.review_session() as timing:
+                for _ in range(2):
+                    self.assertEqual(json.loads(evidence.ask(url,[],'one bird',schema)),{'count':1})
+                self.assertEqual(timing['reused_text_readings'],1)
+            self.assertEqual(query.call_count,1)
+            evidence.ask(url,[],'two birds',schema)
+            identity.return_value='weights-2'
+            evidence.ask(url,[],'one bird',schema)
+            for _ in range(2):
+                evidence.ask(url,[Image.new('RGB',(12,12))],'one bird',schema)
+            self.assertEqual(query.call_count,5)
+            for receipt in Path(tmp).rglob('*.json'):
+                receipt.write_text('incomplete')
+            evidence.ask(url,[],'one bird',schema)
+            self.assertEqual(query.call_count,6)
+
     def test_finish_reuses_one_gpu_lease_for_structure_and_print(self):
         from contextlib import contextmanager
         from unittest.mock import patch
