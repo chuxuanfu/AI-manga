@@ -47,7 +47,7 @@ def backend(tag=TAG):
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     address=f'127.0.0.1:{port}'
-    env={**os.environ,'OLLAMA_HOST':address,'OLLAMA_MODELS':str(WEIGHTS),'OLLAMA_NO_CLOUD':'1','OLLAMA_NUM_PARALLEL':'1'}
+    env={**os.environ,'OLLAMA_HOST':address,'OLLAMA_MODELS':str(WEIGHTS),'OLLAMA_NO_CLOUD':'1','OLLAMA_NUM_PARALLEL':'1','OLLAMA_MAX_LOADED_MODELS':'1'}
     with tempfile.TemporaryFile() as log, (RUNTIME/'vision-model-lock').open('a') as memory_lock:
         fcntl.flock(memory_lock,fcntl.LOCK_EX)
         proc=subprocess.Popen([binary,'serve'],env=env,stdout=log,stderr=log)

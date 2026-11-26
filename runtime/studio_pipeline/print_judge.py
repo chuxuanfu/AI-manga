@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-28'
+REVISION = 'print-inspection-29'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -252,6 +252,61 @@ def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
         outcome='global' if original['decision']=='global' else 'local'
     return dict(corroboration,decision=outcome,target=read['part'],evidence=read['evidence'])
 
+
+
+def verify_part_identity(url, image, box, finding):
+    """Avoid repainting an intact neighboring object mistaken for the alleged part."""
+    from construction_review import LARGE
+    if (not box or finding.get('operation')!='redraw' or not model_identity(LARGE)
+            or not 0<(box[2]-box[0])*(box[3]-box[1])<90000):
+        return None
+    width,height=image.size
+    left,top,right,bottom=(round(v*k/1000) for v,k in zip(box,image.size*2))
+    span=max(right-left,bottom-top)
+    if span<2:return None
+    side=max(span*4,min(1152,round(min(width,height)*.5)))
+    def axis(lo,hi,length):
+        extent=min(length,side)
+        start=max(0,min(length-extent,(lo+hi-extent)//2))
+        return start,start+extent
+    x1,x2=axis(left,right,width)
+    y1,y2=axis(top,bottom,height)
+    wide=image.crop((x1,y1,x2,y2))
+    draw=ImageDraw.Draw(wide)
+    for x,dx in ((left-x1-5,-1),(right-x1+5,1)):
+        for y,dy in ((top-y1-5,-1),(bottom-y1+5,1)):
+            draw.line([(x-12*dx,y),(x,y),(x,y-12*dy)],fill='#ff00da',width=2)
+    wide.thumbnail((1000,1000),Image.Resampling.LANCZOS)
+    detail=image.crop((max(0,left-span//2),max(0,top-span//2),
+                       min(width,right+span//2),min(height,bottom+span//2)))
+    detail.thumbnail((1280,1280),Image.Resampling.LANCZOS)
+    schema={'type':'object','properties':{k:{'type':'string'} for k in ('feature','material','attachment','image_evidence')},
+            'required':['feature','material','attachment','image_evidence']}
+    prompt=('Inspect the shape between the magenta corner marks in the first image; the second is an unmarked '
+            'enlargement from the same original. Identify the actual physical object, its material and which '
+            'larger object it is part of. Trace the contour outwards in the wider picture. Look for material '
+            'continuity, edges, and the actual point of attachment. If ownership is not visible, state ambiguous. '
+            'No target identity has been provided. Be concise.')
+    inventory=json.loads(ask(url,[wide,detail],prompt,schema,tag=LARGE))
+    fields={'trace':{'type':'string'}, 'is_claimed_part':{'enum':['yes','no','unresolved']},
+            'blind_identification_visible':{'type':'boolean'},'intact_contour':{'type':'boolean'}}
+    claim=finding.get('symptom') or finding.get('evidence','')
+    target=finding.get('target','')
+    audit=json.loads(ask(url,[wide,detail],
+        'Question: Is the outlined physical feature a part of «'+target+'» as alleged in this finding? '
+        +claim+' In trace, first name the alleged part and the actual visible part, then trace the actual '
+        'owner across the corner marks to the attachment. Answer is_claimed_part=yes if it really is that '
+        'part, including synonyms and different names for the same thing. Answer no only when the allegation '
+        'confuses entirely distinct kinds of objects and the actual attachment is visible. Use unresolved '
+        'if the marks miss the target, or ownership cannot be traced. A different material or adjacent '
+        'occluder alone does not contradict identity. Check this unaided inventory against the picture: '
+        +json.dumps(inventory,ensure_ascii=False)+' Set blind_identification_visible=true only for a '
+        'visibly confirmed identity and attachment. Set intact_contour=true only for an intact actual form.',
+        {'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    return {'blind_model':LARGE,'blind_model_id':model_identity(LARGE),'inventory':inventory,'verification':audit,
+            'disproved':audit['is_claimed_part']=='no' and audit['blind_identification_visible'] is True
+                        and audit['intact_contour'] is True
+                        and all(str(value).strip() for value in inventory.values()) and bool(audit['trace'].strip())}
 
 FRAME_CLAIM=re.compile(r'frame|framing|cropp?ed|cut off|out of (?:the )?(?:view|picture)|extend the canvas|画框|出框|裁切|画幅|截断',re.I)
 
@@ -606,6 +661,15 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     if intent.get('outcome')=='intentional' and requested_handling(intent.get('phrase'),brief) and str(intent.get('evidence') or '').strip():
                         second=dict(second,decision='clear',evidence=intent['evidence'],operation='none',fix='',target='')
                         record['independent_context']=second
+                if second['decision']!='clear':
+                    bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
+                    if second.get('decision')=='local' and kind not in ('palette','comparison','draft-comparison'):
+                        identity=verify_part_identity(url,image,bounds,second)
+                        if identity:
+                            record['part_identity']=identity
+                            if identity['disproved']:
+                                second=dict(second,decision='clear',operation='none',target='',fix='',evidence=identity['verification']['trace'])
+                                record['independent_context']=second
                 if second['decision']!='clear':
                     bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     framing=verify_frame_exit(url,image,overview_image,bounds,

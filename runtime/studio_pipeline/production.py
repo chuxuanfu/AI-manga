@@ -122,6 +122,9 @@ def local_retry_source(previous, brief, *, interrupted=False, review_upgrade=Fal
     recheck=(review_upgrade and report.get('revision') and report['revision']!=REVISION
              and entry['状态']=='uncertain' and (issue.get('operation') not in ('redraw','remove_forbidden')
              or not actionable_edit(issue.get('fix'))))
+    if (review_upgrade and report.get('revision') and report['revision']!=REVISION
+            and entry['状态']=='local' and issue.get('operation')=='redraw' and not recheck):
+        issue=dict(issue,verify_part_identity=True)
     if recheck:
         issue=dict(issue,operation='reinspect',fix=issue.get('fix') or 'Inspect this previously held region.')
         views=report.get('views',[])

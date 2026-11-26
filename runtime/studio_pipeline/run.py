@@ -806,6 +806,15 @@ def main():
         # Check a reported border problem on the retained pixels before redrawing
         # a body or object that intentionally continues beyond the canvas.
         from print_judge import FRAME_CLAIM, verify_frame_exit, excluded_by_brief, exclusion_repair, MODEL as PRINT_MODEL
+        if focus and issue.get('verify_part_identity'):
+            from print_judge import verify_part_identity
+            from evidence import backend
+            with Image.open(last) as source,backend(PRINT_MODEL) as address:
+                identity=verify_part_identity(address,source,focus,issue)
+            if identity:
+                save(job/'continued-part-identity.json',identity)
+                if identity['disproved']:
+                    issue=dict(issue,operation='reinspect',symptom='Check the visible attachment. '+identity['verification']['trace'])
         if focus and issue.get('unresolved_exclusion'):
             from evidence import backend
             with Image.open(last) as source,backend(PRINT_MODEL) as address:

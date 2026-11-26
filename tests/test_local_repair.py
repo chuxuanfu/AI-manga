@@ -13,11 +13,26 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
 from construction_review import LARGE, assess_local_edit, verify_interior_figure
 from masks import structural_composite
-from print_judge import actionable_edit, issue_category
+from print_judge import actionable_edit, issue_category, verify_part_identity
 from production import repeated_rejection
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_mistaken_part_requires_coherent_geometry_and_two_readers(self):
+        image = Image.new('RGB', (512, 288))
+        finding = {'operation': 'redraw', 'symptom': 'This outline belongs to a paw.'}
+        identified = {'feature': 'scroll', 'material': 'metal', 'attachment': 'armrest',
+                      'image_evidence': 'Continuous polished metal around the curve.'}
+        for outcome, intact, expected in [('no', True, True), ('yes', True, False),
+                                          ('no', False, False), ('unresolved', True, False)]:
+            audit = {'is_claimed_part': outcome, 'blind_identification_visible': True, 'intact_contour': intact, 'trace': 'Continuous metal.'}
+            with patch('print_judge.model_identity', return_value='installed'), patch(
+                    'print_judge.ask', side_effect=[json.dumps(identified), json.dumps(audit)]) as ask:
+                result = verify_part_identity(None, image, [170, 280, 230, 350], finding)
+            self.assertEqual(result['disproved'], expected)
+            self.assertNotEqual(ask.call_args_list[0].kwargs['tag'], ask.call_args_list[1].kwargs['tag'])
+            self.assertNotIn(finding['symptom'], ask.call_args_list[0].args[2])
+
     def test_negative_edit_instructions_cannot_trigger_a_redraw(self):
         for text in (None, '', 'none', 'No correction needed; the contour is continuous.',
                      'No repair is necessary.', '无需修改。'):
