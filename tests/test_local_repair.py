@@ -20,7 +20,7 @@ from production import repeated_rejection
 class LocalRepairTests(unittest.TestCase):
     def test_mistaken_part_requires_coherent_geometry_and_two_readers(self):
         image = Image.new('RGB', (512, 288))
-        finding = {'operation': 'redraw', 'symptom': 'This outline belongs to a paw.'}
+        finding = {'operation': 'redraw', 'target': 'paw', 'symptom': 'This outline belongs to a paw.'}
         identified = {'feature': 'scroll', 'material': 'metal', 'attachment': 'armrest',
                       'image_evidence': 'Continuous polished metal around the curve.'}
         for outcome, intact, expected in [('no', True, True), ('yes', True, False),
@@ -32,6 +32,14 @@ class LocalRepairTests(unittest.TestCase):
             self.assertEqual(result['disproved'], expected)
             self.assertNotEqual(ask.call_args_list[0].kwargs['tag'], ask.call_args_list[1].kwargs['tag'])
             self.assertNotIn(finding['symptom'], ask.call_args_list[0].args[2])
+
+    def test_identifying_a_visible_neighbor_cannot_disprove_a_missing_required_subject(self):
+        image = Image.new('RGB', (512, 288))
+        finding = {'operation': 'redraw', 'target': 'leg', 'symptom': 'A limb is confused with the railing.'}
+        with patch('print_judge.ask', side_effect=AssertionError('Needs composition/framing review')):
+            result = verify_part_identity(None, image, [100, 810, 200, 999], finding,
+                                          'The required feet are missing from the frame.')
+        self.assertIsNone(result)
 
     def test_negative_edit_instructions_cannot_trigger_a_redraw(self):
         for text in (None, '', 'none', 'No correction needed; the contour is continuous.',

@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-29'
+REVISION = 'print-inspection-30'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -254,10 +254,19 @@ def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
 
 
 
-def verify_part_identity(url, image, box, finding):
+ABSENCE_CLAIM=re.compile(r'\b(?:missing|absent|cropped|cut off|out of frame|extend the canvas|feet are (?:not|never) visible|'
+                         r'lettering|spelling|inscription|duplicat\w*|extra|surplus|forbidden)\b|缺失|缺少|画幅|裁切|截断|多余|重复',re.I)
+
+def verify_part_identity(url, image, box, finding, earlier_claim=''):
     """Avoid repainting an intact neighboring object mistaken for the alleged part."""
     from construction_review import LARGE
-    if (not box or finding.get('operation')!='redraw' or not model_identity(LARGE)
+    claim=finding.get('symptom') or finding.get('evidence','')
+    target=finding.get('target','').strip()
+    # Identifying a visible neighbor cannot settle an absent/off-canvas subject,
+    # a count disagreement, a written instruction, or a whole-scene omission.
+    if (not box or not target or target.casefold() in ('local','none','unknown','region','subject') or
+            ABSENCE_CLAIM.search(' '.join((claim,earlier_claim,str(finding.get('fix',''))))) or
+            finding.get('operation')!='redraw' or not model_identity(LARGE)
             or not 0<(box[2]-box[0])*(box[3]-box[1])<90000):
         return None
     width,height=image.size
@@ -290,8 +299,6 @@ def verify_part_identity(url, image, box, finding):
     inventory=json.loads(ask(url,[wide,detail],prompt,schema,tag=LARGE))
     fields={'trace':{'type':'string'}, 'is_claimed_part':{'enum':['yes','no','unresolved']},
             'blind_identification_visible':{'type':'boolean'},'intact_contour':{'type':'boolean'}}
-    claim=finding.get('symptom') or finding.get('evidence','')
-    target=finding.get('target','')
     audit=json.loads(ask(url,[wide,detail],
         'Question: Is the outlined physical feature a part of «'+target+'» as alleged in this finding? '
         +claim+' In trace, first name the alleged part and the actual visible part, then trace the actual '
@@ -664,7 +671,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 if second['decision']!='clear':
                     bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     if second.get('decision')=='local' and kind not in ('palette','comparison','draft-comparison'):
-                        identity=verify_part_identity(url,image,bounds,second)
+                        identity=verify_part_identity(url,image,bounds,second,row['evidence'])
                         if identity:
                             record['part_identity']=identity
                             if identity['disproved']:
