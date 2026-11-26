@@ -148,6 +148,19 @@ def blend_detail(master,patch,left,top,role=None):
     texture=cv2.GaussianBlur(high_band,(0,0),9.0)
     confidence=np.clip((texture-1.05)/2.65,0,1)
     confidence=confidence*confidence*(3-2*confidence)
+    # A lone outline in a smooth fill has a strong gradient but carries little
+    # interior texture. Transfer only very fine marks there. Mid-size strokes
+    # additionally need surrounding source texture and agreement on local tone.
+    density=cv2.boxFilter((high_band>3.5).astype(np.float32),-1,(35,35))
+    textured=np.clip((density-.10)/.34,0,1)
+    coarse_difference=cv2.GaussianBlur(values(patch)-values(base),(0,0),4.0)
+    tone_error=np.max(np.abs(coarse_difference),axis=2)
+    agreement=1/(1+(tone_error/8)**2)
+    local_signal=cv2.GaussianBlur(np.abs(gx)+np.abs(gy),(0,0),1.4)
+    supported=np.clip((cv2.dilate(local_signal,np.ones((5,5),np.uint8))-1.2)/3,0,1)
+    eligible=(textured**2*agreement*supported)[:,:,None]
+    fine=delta-cv2.GaussianBlur(delta,(0,0),1.5)
+    delta=eligible*delta+(1-eligible)*supported[:,:,None]*10*np.tanh(fine/10)
     # Painting grain can be rich even where no structural line exists. Suppress large
     # new contours there while allowing small fur lines and paper fibers to transfer.
     def coarse_edges(gray):
