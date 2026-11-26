@@ -138,12 +138,22 @@ def reference():
                 sheet.paste(im.crop(box).resize((384,384)),((i%2)*384,(i//2)*384))
             sheet.save(brush)
 
+def supports_large_editor():
+    if MAC:
+        memory=int(subprocess.check_output(['/usr/sbin/sysctl','-n','hw.memsize'],text=True).strip())
+        return memory>=64*1024**3
+    import torch
+    return torch.cuda.is_available() and torch.cuda.get_device_properties(0).total_memory>=48*1024**3
+
+
 def main():
     CACHE.mkdir(parents=True,exist_ok=True)
     with (RT/'.install.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
         install_engine()
+        large_editor=supports_large_editor()
         for row in json.loads((ROOT/'scripts/models.json').read_text()):
+            if row.get('profile')=='large-edit' and not large_editor:continue
             fetch(row['url'],ROOT/row['path'],row['sha256'])
         install_superres()
         pull_models(install_ollama())

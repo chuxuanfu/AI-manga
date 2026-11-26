@@ -17,7 +17,7 @@ import torch
 
 from gallery import write_gallery, write_focus_proof
 from graphs import UP, draft, finish
-from illustration import detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
+from illustration import EDIT_UNET, EDIT_CLIP, EDIT_LORA, instruction_edit, detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
 from reference_review import compare
 from structure import inspect_structure
 from construction_review import review as review_construction
@@ -64,6 +64,17 @@ def local_image(im):
 
 
 def post_graph(api, port, directory, stage, workflow=None):
+    # Unattended jobs share one graphics device. Rendering a large diffusion
+    # canvas while another process loads the print judge can exhaust unified RAM.
+    with (RUNTIME/'vision-model-lock').open('a') as memory_lock:
+        fcntl.flock(memory_lock,fcntl.LOCK_EX)
+        try:
+            return _post_graph(api,port,directory,stage,workflow)
+        finally:
+            release_idle_renderer(port)
+
+
+def _post_graph(api, port, directory, stage, workflow=None):
     cache = directory / (stage + '-task.json')
     url = 'http://127.0.0.1:' + str(port)
     request_data={'prompt':api}
@@ -128,8 +139,9 @@ def region(issue,assessment):
     return box if valid(box) else None
 
 
-def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False, reconstruction_attempt=0):
+def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False, reconstruction_attempt=0, allow_specialist=True):
     # Re-sample only the interior; the wider square gives diffusion scene context.
+    original_request=(box,description,target)
     if reference_style and rebuild_shape:
         from construction_review import plan_local_repair
         box,target,description=plan_local_repair(im,box,target,description,requested_medium(caption) or '',directory,stage)
@@ -150,7 +162,18 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     prepared = crop.resize(size,Image.Resampling.LANCZOS)
     prepared.putalpha(ImageOps.invert(mask.resize(size,Image.Resampling.BILINEAR)))
     prefix = (directory.relative_to(OUTPUT)/stage).as_posix()
-    if reference_style:
+    model_root=RUNTIME/'ComfyUI/models'
+    specialist=(allow_specialist and reference_style and rebuild_shape and reconstruction_attempt>=2 and
+                all((model_root/folder/filename).is_file() for folder,filename in (
+                    ('diffusion_models',EDIT_UNET),('text_encoders',EDIT_CLIP),('loras',EDIT_LORA))))
+    if specialist:
+        source=local_image(crop.resize(size,Image.Resampling.LANCZOS))
+        edit=instruction_edit('Edit this same illustration close-up. Preserve the original edge alignment, '
+                              'colors, light and medium. Reconstruct '+str(target or 'the damaged structure')+
+                              ' as follows: '+description,seed,source,prefix)
+        graph=edit.api
+        output=str(len(edit.nodes))
+    elif reference_style:
         size=tuple(max(64, round(n/16)*16) for n in size)
         guidance=crop
         text=description
@@ -184,7 +207,18 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
         graph['9'] = {'class_type':'SetLatentNoiseMask','inputs':{'samples':['8',0],'mask':['4',1]}}
         graph['5']['inputs'].update(latent_image=['9',0],steps=24,denoise=.81,cfg=5.5,sampler_name='dpmpp_2m')
         output='7'
-    hist = post_graph(graph,port,directory,stage)
+    if specialist:
+        try:
+            hist=post_graph(graph,port,directory,stage)
+        except RuntimeError as error:
+            # The baseline editor can still run on a device/operator combination
+            # that rejects the specialist graph. Its result receives the same review.
+            save(directory/(stage+'-editor-fallback.json'),{'model':EDIT_UNET,'reason':str(error)[:1500]})
+            original_box,original_description,original_target=original_request
+            return repaint(im,original_box,original_description,caption,seed,port,directory,stage,
+                           original_target,neighbours,reference_style,rebuild_shape,reconstruction_attempt,False)
+    else:
+        hist=post_graph(graph,port,directory,stage)
     with Image.open(output_image(hist[output])) as new:
         patched = im.copy()
         proposed=new.convert('RGB').resize((cw,ch),Image.Resampling.LANCZOS)
@@ -697,19 +731,22 @@ def main():
         deliver_file(source_path,master)
         temp=dest/(uuid.uuid4().hex+'.png');scaled.save(temp);temp.replace(small)
         return master,small
-    def correct_shape(source,issue,box,stage,edit_seed):
+    def correct_shape(source,issue,box,stage,edit_seed,previous=None):
         from construction_review import assess_local_edit
         instruction=issue['fix']
         with Image.open(source) as original:
             before=original.convert('RGB')
-        for variant in range(3):
+        from production import repeated_rejection
+        strategies=(2,0,1) if previous and repeated_rejection(previous,box) else (0,1,2)
+        for variant,strategy in enumerate(strategies):
             name=stage if variant==0 else f'{stage}-variant-{variant+1}'
             revised=repaint(before,box,instruction,rec['positive'],edit_seed+variant*1753,args.port,
                             job,name,issue.get('target'),[o for o,_ in rec['parts']],reference_style,rebuild_shape=True,
-                            reconstruction_attempt=variant)
+                            reconstruction_attempt=strategy)
             release_idle_renderer(args.port)
             with Image.open(revised) as proposed:
-                verdict=assess_local_edit(before,proposed,box,issue['fix'],issue.get('symptom'))
+                verdict=assess_local_edit(before,proposed,box,issue['fix'],issue.get('symptom'),prompt)
+            verdict.update(target_box=box,reconstruction_attempt=strategy)
             save(job/(name+'-patch-review.json'),verdict)
             if verdict['verdict']=='resolved':
                 return revised
@@ -735,15 +772,23 @@ def main():
         if framing and framing['explained']:
             repaired=last
         else:
-            repaired=correct_shape(last,issue,focus,'continued-repair',seed+820) if focus else None
+            repaired=correct_shape(last,issue,focus,'continued-repair',seed+820,args.retry_round) if focus else None
         if repaired:
             master,small=repaired,None
             repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
             rec['续修来源']=str(last)
         else:
-            # Re-evaluate the retained image normally, with the prior finding included.
-            master,small=last,None
-            if focus:repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
+            # None of the new candidates improved the defect. The prior, hash-verified
+            # negative receipt still describes these exact pixels and can be carried
+            # forward without asking a vision model to regrade an unchanged failure.
+            previous=json.loads((args.retry_round/'review.json').read_text())
+            entry=dict(previous['逐块终审'])
+            entry['报告']=os.path.relpath((args.retry_round/entry['报告']).resolve(),job)
+            rec.update({'4K':os.path.relpath(last,job),'逐块终审':entry,
+                        '终审退回原因':issue.get('symptom') or issue['fix'],'status':'未达标 · 本轮局部重绘未获通过'})
+            save(manifest,rec)
+            print(rec['status'],flush=True)
+            return 2
     else:
         master,small=native_pair(approved,'native-repair') if args.keep_native else render(approved,'refine')
     from print_judge import fingerprint, inspect as print_inspect, MODEL

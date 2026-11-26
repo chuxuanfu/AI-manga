@@ -30,6 +30,33 @@ def encode_brief(graph, clip, brief, direction, title, position):
                      widgets=[''],widget_links=['text'])
 
 
+EDIT_UNET='qwen_image_edit_2511_bf16.safetensors'
+EDIT_CLIP='qwen_2.5_vl_7b.safetensors'
+EDIT_LORA='Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
+
+
+def instruction_edit(text, seed, reference, prefix):
+    """Comfy's Qwen-Image-Edit-2511 Lightning graph for a local repair crop."""
+    g=Graph('studio-instruction-edit')
+    source=g.add('LoadImage','Source crop',(0,0),['IMAGE','MASK'],values={'image':reference})
+    unet=g.add('UNETLoader','Edit model',(0,300),['MODEL'],values={'unet_name':EDIT_UNET,'weight_dtype':'default'})
+    clip=g.add('CLIPLoader','Instruction encoder',(0,450),['CLIP'],values={'clip_name':EDIT_CLIP,'type':'qwen_image','device':'default'})
+    vae=g.add('VAELoader','Image codec',(0,580),['VAE'],values={'vae_name':'qwen_image_vae.safetensors'})
+    model=g.add('LoraLoaderModelOnly','Four-step edit',(350,300),['MODEL'],[('model',(unet,0))],
+                values={'lora_name':EDIT_LORA,'strength_model':1.0})
+    model=g.add('ModelSamplingAuraFlow','Edit timestep shift',(670,300),['MODEL'],[('model',(model,0))],values={'shift':3.1})
+    inputs=[('clip',(clip,0)),('vae',(vae,0)),('image1',(source,0))]
+    pos=g.add('TextEncodeQwenImageEditPlus','Edit instruction',(350,0),['CONDITIONING'],inputs,values={'prompt':text})
+    neg=g.add('TextEncodeQwenImageEditPlus','Unconditional',(350,170),['CONDITIONING'],inputs,values={'prompt':''})
+    latent=g.add('VAEEncode','Crop latent',(680,0),['LATENT'],[('pixels',(source,0)),('vae',(vae,0))])
+    sample=g.add('KSampler','Repair crop',(990,0),['LATENT'],[('model',(model,0)),('positive',(pos,0)),
+                 ('negative',(neg,0)),('latent_image',(latent,0))],values={
+                 'seed':seed,'steps':4,'cfg':1.0,'sampler_name':'euler','scheduler':'simple','denoise':1.0})
+    decoded=g.add('VAEDecode','Decode',(1300,0),['IMAGE'],[('samples',(sample,0)),('vae',(vae,0))])
+    g.save('Edited region',(1600,0),decoded,prefix)
+    return g
+
+
 def reference_draft(text, seed, width, height, prefix, reference=REFERENCE, layout=None, edit=False):
     g=Graph('studio-reference-conditioned-illustration')
     brief=prompt_field(g,text,(-2600,-60))

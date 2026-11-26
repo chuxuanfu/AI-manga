@@ -155,7 +155,7 @@ def review(im,brief,regions,path,detected=(),observed_people=0):
     except (OSError,ValueError,KeyError,RuntimeError) as exc:
         return {'model':tag,'verdict':'unclear','observation':str(exc)[:160]}
 
-def assess_local_edit(before, after, box, correction, symptom=None):
+def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
     """Screen the composited native patch, including its connection to the unchanged surroundings."""
     from PIL import ImageChops
     from print_judge import MODEL
@@ -179,7 +179,9 @@ def assess_local_edit(before, after, box, correction, symptom=None):
               '. Trace the actual visible boundaries, attachments, contact shadows, material and repair seam. '
               'Resolved requires visible evidence for the requested result and no new defect. '
               'Choose still_present if the unwanted shape is visible, uncertain if you cannot locate it. '
-              'A revision can make the defect worse. For failure, give a specific alternative local edit.')
+              'Judge the physical structure in its actual perspective and occlusion. An acceptable repair must make '
+              'the connection visibly plausible. For failure, describe a drawable shape that would correct it.'
+              +(' Original scene and medium: '+brief if brief else ''))
     with backend(MODEL) as url:
         result=json.loads(ask(url,[new],question,
                     {'type':'object','properties':props,'required':list(props)},tag=MODEL,reason=True))
@@ -218,7 +220,7 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage)
     view=image.crop((x,y,x+width,y+height))
     view.thumbnail((960,960),Image.Resampling.LANCZOS)
     bbox=[round(1000*(v-origin)/length) for v,origin,length in zip((l,t,r,b),(x,y,x,y),(width,height,width,height))]
-    key=hashlib.sha256(view.tobytes()+json.dumps([bbox,target,instruction,medium,model]).encode()).hexdigest()
+    key=hashlib.sha256(view.tobytes()+json.dumps(['physical-plan-v2',bbox,target,instruction,medium,model]).encode()).hexdigest()
     path=directory/(stage+'-repair-plan.json')
     cached=json.loads(path.read_text()) if path.is_file() else {}
     if cached.get('key')==key:return cached['box'],cached['part'],cached['instruction']
@@ -230,7 +232,9 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage)
             'the eye pair and muzzle of that same face; for fingers, include the hand and wrist; for '
             'a spoke or handle, include its immediate mounting contour. Exclude unrelated people, '
             'entire bodies and background objects. Return a box in 0..1000 RELATIVE TO THIS CROP and '
-            'name the complete part. In corrected_view describe the correct local pose, material, '
+            'name the complete part. Translate the request into a physically possible repair in this perspective. '
+            'Treat guesses by previous readers as hypotheses. Keep the visible contact and material plausible. '
+            'In corrected_view describe the correct local pose, material, '
             'orientation, color and connection visible in this framing for an illustrator. Use under '
             '45 English words, phrased positively. Target: '+str(target)+'. Repair: '+instruction+
             '. Medium: '+medium)
@@ -250,7 +254,7 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage)
     combined=[min(local[0],l),min(local[1],t),max(local[2],r),max(local[3],b)]
     bounds=[max(0,min(1000,round(v*1000/n))) for v,n in zip(combined,image.size*2)]
     name=part.strip()
-    correction=corrected.strip()+' '+instruction
+    correction=corrected.strip()
     data={'key':key,'box':bounds,'part':name,'instruction':correction}
     temp=path.with_suffix('.tmp')
     temp.write_text(json.dumps(data,ensure_ascii=False,indent=2));temp.replace(path)

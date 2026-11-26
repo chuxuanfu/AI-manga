@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-25'
+REVISION = 'print-inspection-26'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -266,12 +266,34 @@ def verify_frame_exit(url,image,overview,box,claim,brief):
     return result
 
 
+OPTICAL_SYMPTOM=re.compile(
+    r'blur|smear|mush|out[- ]of[- ]focus|low[- ](?:res|definition)|pixelat|interpolat|upscal|'
+    r'over[- ]?enlarg|soft(?:ness|ened|[- ](?:edge|boundar|transition|silhouette|focus))|'
+    r'indistinct (?:edges?|strokes?)|loss of (?:fine |micro)?detail|模糊|糊成|失焦|低清|插值|ぼやけ|ピンぼけ',re.I)
+
+
 def issue_category(url, region, evidence, brief):
-    schema={'type':'object','properties':{'issue':{'enum':['unresolved_focus','other']}},'required':['issue']}
-    task=('Classify the confirmed defect. Choose unresolved_focus only if an intended focal feature is visibly smeared, lacks separable detail or has been enlarged beyond its useful resolution. '
-          'Anatomy, style mismatch, ringing, oversharpening, intentional soft focus and quiet fills belong to other. Evidence: '+evidence+' Brief: '+brief)
+    # A confusing relation is often reported as "unclear" even when its edges are crisp.
+    # Only an observation of an optical symptom can trigger a costly focus rebuild.
+    # Other findings still require structural repair and the full release checks.
+    if not OPTICAL_SYMPTOM.search(evidence):return 'other'
+    fields={'issue':{'enum':['unresolved_focus','other']},
+            'geometric_fault':{'type':'boolean'}, 'optical_loss_visible':{'type':'boolean'},
+            'pixel_trace':{'type':'string'}}
+    task=('Diagnose the cause of this specific finding before selecting a repair. Trace an edge in the '
+          'image and state what is actually wrong. A crisp drawing of a wrong or ambiguous shape, '
+          'connection, overlap, proportion, attachment or count has a geometry problem. A missing '
+          'physical connection remains a geometry problem even when its written description uses '
+          'words like unresolved or unclear. Optical loss is a visibly smeared edge or disappearing '
+          'fine structure on a correctly constructed intended focal subject. Ignore deliberate '
+          'softness and empty fills. Choose unresolved_focus only for optical loss without a '
+          'geometric fault. Evidence: '+evidence+' Brief: '+brief)
     detail=list(region) if isinstance(region,(tuple,list)) else [region]
-    return json.loads(ask(url,detail,task,schema,tag=MODEL))['issue']
+    data=json.loads(ask(url,detail,task,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    if (data['issue']=='unresolved_focus' and data['optical_loss_visible'] is True
+            and data['geometric_fault'] is False and data['pixel_trace'].strip()):
+        return 'unresolved_focus'
+    return 'other'
 
 
 def independent_detail_check(url, images, overview, brief):
@@ -512,7 +534,11 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     if anchored['decision']=='local':
                         second=anchored
                         record['independent_context']=second
-                    elif anchored['decision']=='clear' and record.get('issue_category')=='other':
+                    elif (anchored['decision']=='clear' and record.get('issue_category')=='other'
+                          and record['part_verification'].get('operation')=='none'
+                          and re.search(r'attach|connect|anatom|joint|limb|digit|overlap|occlu|support|'
+                                        r'merg|fus(?:e|ion)|outline|接合|连接|关节|遮挡|肢体',
+                                        row['evidence']+' '+second['evidence'],re.I)):
                         second=anchored
                         record['independent_context']=second
                 if second['decision']=='uncertain' and SOFT_HANDLING.search(brief):

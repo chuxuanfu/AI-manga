@@ -123,6 +123,28 @@ def local_retry_source(previous, brief):
     return image,draft,issue
 
 
+def repeated_rejection(directory, box):
+    """Choose a different editor first when multiple nearby repairs actually failed."""
+    left,top,right,bottom=box
+    area=(right-left)*(bottom-top)
+    if area<=0:return False
+    failures=0
+    for receipt in directory.glob('*-patch-review.json'):
+        review=json.loads(receipt.read_text())
+        if review.get('verdict') not in ('still_present','new_defect','uncertain','unchanged'):continue
+        other=review.get('target_box')
+        if not other:
+            plan=directory/(receipt.name.removesuffix('-patch-review.json')+'-repair-plan.json')
+            if plan.is_file():other=json.loads(plan.read_text()).get('box')
+        if not isinstance(other,list) or len(other)!=4:continue
+        l,t,r,b=other
+        overlap=max(0,min(right,r)-max(left,l))*max(0,min(bottom,b)-max(top,t))
+        if overlap>=.55*area:
+            failures+=1
+            if failures>=2:return True
+    return False
+
+
 def run(args,job,entry):
     """Each round has its own graph cache and seed; an interrupted round resumes in place."""
     job.mkdir(parents=True,exist_ok=True)
