@@ -90,14 +90,54 @@ def check_body_level(url,overview,brief,tag):
                  'shoulder and hip heights from the same person. Use comparable false if either '
                  'point cannot be identified or posture, crop or perspective prevents comparison. '
                  'Describe where the item actually appears without recommending a placement.')
+    # If the detector marked the entire torso as one landmark, read the
+    # actual candidate again on a labeled scale. The margins do not cover art.
+    from PIL import ImageDraw,ImageFont
+    ruled=None
+    def measure_centers(model,row):
+        nonlocal ruled
+        if ruled is None:
+            sample=overview.copy()
+            sample.thumbnail((1000,1000),Image.Resampling.LANCZOS)
+            gutter=42
+            ruled=Image.new('RGB',(sample.width+2*gutter,sample.height),'white')
+            ruled.paste(sample,(gutter,0))
+            pen=ImageDraw.Draw(ruled)
+            font=ImageFont.load_default(size=max(10,min(18,sample.height//32)))
+            for band in range(20):
+                y=round((band+.5)*sample.height/20)
+                for margin in (gutter//2,ruled.width-gutter//2):
+                    pen.text((margin,y),str(band+1),fill='black',anchor='mm',font=font)
+                top=round(band*sample.height/20)
+                pen.line((0,top,gutter-1,top),fill='#777777')
+                pen.line((ruled.width-gutter,top,ruled.width-1,top),fill='#777777')
+        band={'type':'integer','minimum':1,'maximum':20}
+        fields={'visible':{'type':'boolean'},'item_band':band,'landmark_band':band,'trace':{'type':'string'}}
+        check=json.loads(ask(url,[ruled],
+            'The left and right margin number twenty horizontal bands from top to bottom. Read the '
+            'band containing the center of '+plan['object_or_point']+' and independently the band '
+            'containing the center of the '+anchor+' of '+plan['person']+'. Name both actual visible '
+            'landmarks. Report their observed positions. Set visible false for an ambiguous identification.',
+            {'type':'object','properties':fields,'required':list(fields)},tag=model))
+        if check['visible'] and check['trace'].strip() and all(1<=check[k]<=20 for k in ('item_band','landmark_band')):
+            n=check['landmark_band']
+            row=dict(row,item_y=round((check['item_band']-.5)*50),level_top=(n-1)*50,level_bottom=n*50,
+                     trace=check['trace'])
+        else:row=dict(row,comparable=False)
+        return row,check
     notes=[]
     other='qwen3-vl:32b-instruct'
     for model in dict.fromkeys((tag,other)):
         if model!=tag and not model_identity(model):break
         row=json.loads(ask(url,[overview],instruction,{'type':'object','properties':positions,
                             'required':list(positions)},tag=model))
-        notes.append({'model':model,'location':row})
+        note={'model':model,'location':row}
+        notes.append(note)
         torso=row['hip_y']-row['shoulder_y']
+        if row['comparable'] and torso>=60 and row['level_bottom']-row['level_top']>=.75*torso:
+            note['original_location']=row
+            row,scale_reading=measure_centers(model,row)
+            note.update(location=row,scale_reading=scale_reading)
         if not row['comparable'] or torso<60 or row['level_top']>row['level_bottom'] or not row['trace'].strip():break
         margin=max(24,torso*.25)
         if row['level_top']-margin<=row['item_y']<=row['level_bottom']+margin:break

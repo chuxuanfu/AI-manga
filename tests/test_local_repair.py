@@ -93,6 +93,19 @@ class LocalRepairTests(unittest.TestCase):
             self.assertEqual(check_body_level('local',image,'A closed wooden chest.','model'),([],None))
             unused.assert_not_called()
 
+    def test_torso_wide_landmark_gets_independently_localized_again(self):
+        from brief_check import check_body_level
+        plan=dict(explicit=True,object_or_point='paper ticket',person='the girl')
+        broad=dict(comparable=True,item_x=410,item_y=600,body_x=480,level_top=300,level_bottom=650,
+                   shoulder_y=300,hip_y=650,trace='The ticket is at the hip.')
+        bands=dict(visible=True,item_band=13,landmark_band=8,trace='The card is at the hip; the chest is near the lapel.')
+        for second,expected in ((bands,True),(dict(bands,landmark_band=12),False)):
+            replies=[plan,broad,bands,broad,second]
+            with patch('brief_check.model_identity',return_value='local'),patch('brief_check.ask',side_effect=map(json.dumps,replies)):
+                notes,issue=check_body_level('local',Image.new('RGB',(400,650)),'A ticket at chest level','qwen3.8:27b')
+            self.assertEqual(bool(issue),expected)
+            self.assertEqual(notes[0]['readings'][0]['original_location'],broad)
+
     def test_viewpoint_uses_a_camera_relative_description_of_the_same_subject(self):
         from brief_check import camera_conflict
         request='small ginger cat sits upright in strict side profile facing out to the sea'
