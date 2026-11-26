@@ -128,7 +128,7 @@ def region(issue,assessment):
     return box if valid(box) else None
 
 
-def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False):
+def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False):
     # Re-sample only the interior; the wider square gives diffusion scene context.
     w,h = im.size
     x0,y0,x1,y1 = [round(v*n/1000) for v,n in zip(box,(w,h,w,h))]
@@ -149,8 +149,17 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     prefix = (directory.relative_to(OUTPUT)/stage).as_posix()
     if reference_style:
         size=tuple(max(64, round(n/16)*16) for n in size)
-        layout=local_image(crop.resize(size,Image.Resampling.LANCZOS))
+        guidance=crop
         text=description
+        if rebuild_shape:
+            # Preserve the surroundings, attachment and light while clearing the faulty drawing.
+            subject=object_mask(crop,crop,target,mask,neighbours)
+            guidance=Image.composite(crop.filter(ImageFilter.GaussianBlur(max(5,span*.11))),crop,subject)
+            named=target if target and target.casefold() not in ('local','global','none') else 'subject'
+            text=('Replace the soft placeholder with a fully drawn '+named+
+                  '. Reconstruct its silhouette, internal parts and attachment in the local pose; '
+                  'match the tapered contours, local colors, material and shadows of its surroundings. '+description)
+        layout=local_image(guidance.resize(size,Image.Resampling.LANCZOS))
         edit=reference_draft(text,seed,*size,prefix,reference=layout,edit=True)
         graph=edit.api
         output=str(len(edit.nodes))
@@ -717,7 +726,8 @@ def main():
                 corrected.save(temp);temp.replace(revised)
             else:
                 revised=repaint(original.convert('RGB'),focus,issue['fix'],rec['positive'],seed+650+attempt,args.port,
-                                job,stage,issue.get('target'),[o for o,_ in rec['parts']],reference_style)
+                                job,stage,issue.get('target'),[o for o,_ in rec['parts']],reference_style,
+                                rebuild_shape=issue.get('operation')=='redraw')
         if native:master,small=native_pair(revised,stage,(small,master))
         else:
             approved=revised
