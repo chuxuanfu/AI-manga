@@ -26,18 +26,33 @@ def blank_surfaces_requested(brief):
 
 
 def lettering_polygons(image):
-    model = cv2.dnn_TextDetectionModel_DB(str(DETECTOR))
-    scale = min(1., 1088 / max(image.size))
-    size = tuple(max(32, round(length * scale / 32) * 32) for length in image.size)
-    model.setInputSize(size)
-    model.setInputMean((123.675, 116.28, 103.53))
-    model.setInputScale(tuple(1 / (255 * std) for std in (.229, .224, .225)))
+    from print_judge import axes, SIDE
+    model=cv2.dnn_TextDetectionModel_DB(str(DETECTOR))
+    model.setInputMean((123.675,116.28,103.53))
+    model.setInputScale(tuple(1/(255*std) for std in (.229,.224,.225)))
     model.setBinaryThreshold(.3)
     model.setPolygonThreshold(.80)
     model.setUnclipRatio(1.6)
-    quads, scores = model.detect(cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR))
-    return [quad.tolist() for quad, score in zip(quads, scores)
-            if score >= .80 and 15 <= cv2.contourArea(quad) < image.width * image.height * .05]
+    views=[(0,0,image.width,image.height)]
+    if max(image.size)>2304:
+        views.extend((x,y,min(x+SIDE,image.width),min(y+SIDE,image.height))
+                     for y in axes(image.height) for x in axes(image.width))
+    candidates=[]
+    for left,top,right,bottom in views:
+        crop=image.crop((left,top,right,bottom))
+        scale=min(1.,1088/max(crop.size))
+        model.setInputSize(tuple(max(32,round(v*scale/32)*32) for v in crop.size))
+        quads,scores=model.detect(cv2.cvtColor(np.asarray(crop),cv2.COLOR_RGB2BGR))
+        for quad,score in zip(quads,scores):
+            if score<.80 or not 15<=cv2.contourArea(quad)<image.width*image.height*.05:continue
+            quad=quad+np.array([left,top],dtype=quad.dtype)
+            candidates.append((float(score),quad))
+    kept=[]
+    for _,quad in sorted(candidates,key=lambda item:-item[0]):
+        area=cv2.contourArea(quad)
+        if any(cv2.intersectConvexConvex(quad,other)[0]>.85*min(area,cv2.contourArea(other)) for other in kept):continue
+        kept.append(quad)
+    return [quad.tolist() for quad in kept]
 
 
 def glyph_mask(image, proposal):
@@ -76,7 +91,7 @@ def clean_lettering(path, brief, folder, stage):
     if not blank_surfaces_requested(brief) or not DETECTOR.is_file() or not INPAINTER.is_file():
         return path
     source_id = fingerprint(path)
-    key = hashlib.sha256(json.dumps(['lettering-v2', source_id, brief, model_identity(MODEL)],
+    key = hashlib.sha256(json.dumps(['lettering-v3', source_id, brief, model_identity(MODEL)],
                                      ensure_ascii=False).encode()).hexdigest()
     report = folder / (stage + '-lettering.json')
     candidate = folder / (stage + '-plain-surfaces.png')
@@ -91,7 +106,7 @@ def clean_lettering(path, brief, folder, stage):
         image = opened.convert('RGB')
     quads = lettering_polygons(image)
     record = dict(key=key, source_sha256=source_id, polygons=quads, observations=[])
-    if not quads or len(quads)>12:
+    if not quads:
         store(report, record)
         return path
     # Join adjacent lines into one region so a multi-line label is seen in context.
@@ -106,7 +121,8 @@ def clean_lettering(path, brief, folder, stage):
     fields = {'appearance':{'type':'string'},'feature':{'enum':['characters','drawing','uncertain']}}
     schema = {'type':'object','properties':fields,'required':list(fields)}
     with backend(MODEL) as url:
-        for index, (left,top,width,height,_) in enumerate(statistics[1:], start=1):
+        groups=sorted(enumerate(statistics[1:],start=1),key=lambda item:-item[1][4])
+        for index,(left,top,width,height,_) in groups[:12]:
             pad = max(20, round(max(width,height)*.65))
             rect = (max(0,left-pad),max(0,top-pad),min(image.width,left+width+pad),min(image.height,top+height+pad))
             view = image.crop(rect)

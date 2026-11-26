@@ -1129,6 +1129,9 @@ def main():
     for attempt in range(3):
         label='final-art' if attempt==0 else f'revision-{attempt}-final-art'
         release_idle_renderer(args.port)
+        if four_only and not args.repair_box and not args.keep_native:
+            from lettering import clean_lettering
+            master=clean_lettering(master,prompt,job,label)
         final=check(master,label,focus)
         rec['4K']=os.path.relpath(master if four_only else small,job)
         if not four_only:rec['8K']=os.path.relpath(master,job)
