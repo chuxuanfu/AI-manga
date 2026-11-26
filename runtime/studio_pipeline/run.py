@@ -179,6 +179,16 @@ def region(issue,assessment):
     return box if valid(box) else None
 
 
+
+def draft_repair_issue(result):
+    """A localized, actionable draft finding can be repaired before paying for a print."""
+    from print_judge import actionable_edit
+    if result.get('status') not in ('local','uncertain'):return None
+    return next((issue for issue in result.get('issues',[]) if region(issue,result)
+                 and actionable_edit(issue.get('fix')) and (result['status']=='local'
+                 or issue.get('operation') in ('redraw','remove_forbidden'))),None)
+
+
 def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False, reconstruction_attempt=0, allow_specialist=True):
     # Re-sample only the interior; the wider square gives diffusion scene context.
     original_request=(box,description,target)
@@ -658,28 +668,43 @@ def main():
                 result={'status':'local','score':100,'issues':[{'box':args.repair_box,'fix':args.repair_text,'target':args.object}]}
             if usable(result) and not args.repair_box:
                 passing.append((result,path,i))
-            if result['status']=='local':
+            if draft_repair_issue(result):
                 assessed.append((result,path,i))
         for result,path,i in sorted(passing,key=lambda item:-item[0]['score']):
             result=check_draft_structure(path,result)
             if usable(result):
                 approved=path
                 break
-            if result['status']=='local':assessed.append((result,path,i))
+            if draft_repair_issue(result):assessed.append((result,path,i))
         if not approved:
             for result,path,i in sorted(assessed,key=lambda x:-x[0]['score']):
-                issue=next((j for j in result['issues'] if region(j,result) and j.get('fix')),None)
+                issue=draft_repair_issue(result)
                 if not issue:continue
                 base_path=path
                 for n in range(3):
                     label=f'region-repair-{i+1}-{n+1}'
                     with Image.open(base_path) as original:
-                        patched=repaint(original.convert('RGB'),region(issue,result),issue['fix'],rec['positive'],seed+100+i*3+n,args.port,job,label,issue.get('target'),[o for o,_ in rec['parts']],reference_style)
+                        if issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
+                            patched=job/(label+'-removed.png')
+                            masked_candidate(original.convert('RGB'),region(issue,result)).save(patched)
+                        else:
+                            structural=reference_style and issue.get('operation')=='redraw'
+                            patched=repaint(original.convert('RGB'),region(issue,result),issue['fix'],rec['positive'],
+                                            seed+100+i*3+n,args.port,job,label,issue.get('target'),
+                                            [o for o,_ in rec['parts']],reference_style,
+                                            rebuild_shape=structural,reconstruction_attempt=n)
+                            if structural:
+                                from construction_review import assess_local_edit
+                                with Image.open(patched) as candidate:
+                                    judged=assess_local_edit(original,candidate,region(issue,result),issue['fix'],
+                                                             issue.get('symptom'),prompt)
+                                save(job/(label+'-draft-patch.json'),judged)
+                                if judged.get('verdict')!='resolved':continue
                     next_review=check_draft_structure(patched,check(patched,label,region(issue,result)))
                     if usable(next_review):
                         approved=patched;break
-                    if next_review['status']=='local' and next_review['score']>=result['score']:
-                        next_issue=next((j for j in next_review['issues'] if region(j,next_review) and j.get('fix')),None)
+                    if next_review['score']>=result['score']:
+                        next_issue=draft_repair_issue(next_review)
                         if next_issue:
                             base_path,result,issue=patched,next_review,next_issue
                 if approved:break

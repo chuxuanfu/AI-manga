@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-36'
+REVISION = 'print-inspection-37'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -305,6 +305,57 @@ def inspect_disputed_action(url, image, box, brief):
          'hardware. Set visible_fault only for a concrete shape contradiction, and insufficient only when the '
          'part cannot be traced. Requested image: '+brief)
     return json.loads(ask(url,[whole,detail],cue,{'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+
+
+def verified_wrist_at(preliminary, image, box, claim):
+    """A wrist location can settle an allegedly absent hand, never a digit or count dispute."""
+    if not box or not re.search(r'arm|hand|wrist|sleeve|手臂|手掌|袖口',claim,re.I):return None
+    if not re.search(r'lack|missing|absent|merg|not visible|abrupt|cannot see|无法看到|缺|融合',claim,re.I):return None
+    if re.search(r'finger|thumb|digit|extra|duplicate|surplus|指|多余',claim,re.I):return None
+    audit=preliminary.get('局部连接复审',{}).get('arm_endpoint_evidence',{})
+    scoped=audit.get('native_figure',{})
+    if not audit.get('confirmed') or not scoped.get('confirmed'):return None
+    located=[]
+    for side in ('left','right'):
+        item=scoped.get(side,{})
+        check=item.get('crop_check',{})
+        if (item.get('state')!='hand' or check.get('visible_hand') is not True or
+                check.get('joins_own_wrist') is not True or check.get('visible_unsupported_end') is not False):continue
+        point=item.get('source_point')
+        if not point or len(point)!=2:continue
+        x,y=[1000*v/n for v,n in zip(point,image.size)]
+        if box[0]-30<=x<=box[2]+30 and box[1]-40<=y<=box[3]+40:
+            located.append(point)
+    return located[0] if len(located)==1 else None
+
+
+def inspect_located_attachment(url, image, point, brief):
+    """Use real native evidence of the same part when a wider reader inspected its neighbor."""
+    from construction_review import LARGE
+    span=max(42,round(min(image.size)*.13))
+    x,y=point
+    sample=image.crop((max(0,x-span),max(0,y-span),min(image.width,x+span),min(image.height,y+span)))
+    factor=min(3,820/max(sample.size))
+    sample=sample.resize(tuple(max(1,round(d*factor)) for d in sample.size),Image.Resampling.LANCZOS)
+    overview=image.copy();overview.thumbnail((1050,1050),Image.Resampling.LANCZOS)
+    px=x*overview.width/image.width;py=y*overview.height/image.height
+    ImageDraw.Draw(overview).ellipse((px-15,py-15,px+15,py+15),outline='#ca3388',width=2)
+    fields={'trace':{'type':'string'},'same_disputed_part':{'type':'boolean'},
+            'complete_plausible_hand_and_wrist':{'type':'boolean'},'visible_fault':{'type':'boolean'},
+            'requested_action_satisfied':{'type':'boolean'},'drawn_correction':{'type':'string'}}
+    prompt=('Image 1 is an actual native close-up centered on a localized wrist. Image 2 marks this location '
+            'in the composition. Inspect the full hand shape, sleeve termination, neighboring support or '
+            'occlusion and each visible digit. Name exactly where the cuff, hand and other surface meet. '
+            'The target is the human wrist at the marked location. If the detail only shows another object, '
+            'same_disputed_part is false. A detached, merged, physically distorted or unresolved hand cannot '
+            'be marked complete. Distinguish between a present but poorly drawn hand and a hand that is absent. '
+            'Name the visible skin silhouette and knuckles. If defective, give one drawable correction grounded '
+            'in these pixels. Check only the action actually requested. Actual brief: '+brief)
+    result=json.loads(ask(url,[sample,overview],prompt,{'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+    result['confirmed']=(result['same_disputed_part'] is True and result['complete_plausible_hand_and_wrist'] is True
+                         and result['visible_fault'] is False and result['requested_action_satisfied'] is True
+                         and bool(result['trace'].strip()))
+    return result
 
 
 def disputed_action_resolved(reading):
@@ -784,6 +835,21 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     if intent.get('outcome')=='intentional' and requested_handling(intent.get('phrase'),brief) and str(intent.get('evidence') or '').strip():
                         second=dict(second,decision='clear',evidence=intent['evidence'],operation='none',fix='',target='')
                         record['independent_context']=second
+                if second['decision']!='clear' and kind in ('whole','construction','contacts'):
+                    bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
+                    claim=row['evidence']+' '+second['evidence']
+                    point=verified_wrist_at(preliminary,image,bounds,claim)
+                    if point:
+                        located=inspect_located_attachment(url,image,point,brief)
+                        record['localized_attachment']={**located,'source_point':point}
+                        if located['confirmed']:
+                            second=dict(second,decision='clear',operation='none',target='',fix='',evidence=located['trace'])
+                            record['independent_context']=second
+                        elif (located['same_disputed_part'] is True and located['visible_fault'] is True
+                              and actionable_edit(located['drawn_correction']) and located['trace'].strip()):
+                            second=dict(second,decision='local',operation='redraw',target='hand and wrist',
+                                        evidence=located['trace'],fix=located['drawn_correction'])
+                            record['independent_context']=second
                 if second['decision']!='clear':
                     bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     if second.get('decision')=='local' and kind not in ('palette','comparison','draft-comparison'):

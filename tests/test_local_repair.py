@@ -14,7 +14,7 @@ sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
 from construction_review import LARGE, assess_edit_boundary, assess_local_edit, compare_prior_version, verify_interior_figure
 from illustration import instruction_edit, reference_draft
 from masks import structural_composite
-from print_judge import actionable_edit, crop_brief, disputed_action_resolved, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity
+from print_judge import actionable_edit, crop_brief, disputed_action_resolved, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity, verified_wrist_at
 from page_layout import retry_direction
 from production import earlier_local_version, previous_scene_candidate, repeated_rejection, same_repair_region
 from review import inspection_key
@@ -150,6 +150,28 @@ class LocalRepairTests(unittest.TestCase):
             self.assertNotIn(unexpected, direction)
         self.assertEqual(retry_direction(''), '')
         self.assertEqual(retry_direction('An unfamiliar artifact in the picture.'), '')
+
+    def test_localized_uncertainty_is_a_repair_candidate_not_an_approved_draft(self):
+        from run import draft_repair_issue
+        issue = {'operation':'redraw','box':[100, 200, 220, 330],'fix':'Reconnect the lower branch.'}
+        self.assertIs(draft_repair_issue({'status':'uncertain','issues':[issue]}), issue)
+        for status, change in [('global',{}),('pass',{}),('uncertain',{'box':None}),
+                               ('uncertain',{'operation':'none'}),('uncertain',{'fix':'No repair needed.'})]:
+            self.assertIsNone(draft_repair_issue({'status':status,'issues':[dict(issue,**change)]}))
+
+    def test_wrist_attachment_evidence_cannot_clear_malformed_fingers_or_a_different_hand(self):
+        point = [720, 900]
+        crop = {'visible_hand':True,'joins_own_wrist':True,'visible_unsupported_end':False}
+        right = {'state':'hand','source_point':point,'crop_check':crop}
+        both = {'confirmed':True,'native_figure':{'confirmed':True,'right':right}}
+        pre = {'局部连接复审':{'arm_endpoint_evidence':both}}
+        im = Image.new('RGB',(1000,1000))
+        box = [680, 720, 750, 950]
+        self.assertEqual(verified_wrist_at(pre, im, box, 'The sleeve lacks a visible hand.'), point)
+        self.assertIsNone(verified_wrist_at(pre, im, box, 'The fingers merge with the thumb.'))
+        self.assertIsNone(verified_wrist_at(pre, im, [100,350,230,450], 'The sleeve lacks a hand.'))
+        both['native_figure']['left'] = right
+        self.assertIsNone(verified_wrist_at(pre, im, box, 'The sleeve lacks a hand.'))
 
     def test_an_earlier_version_requires_locally_plausible_form_and_a_specific_boundary_win(self):
         for state, winner, expected in [('ambiguous','A',True),('defective','A',False),
