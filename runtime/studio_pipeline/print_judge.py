@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-20'
+REVISION = 'print-inspection-21'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -422,6 +422,18 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                         if check['confirmed']:
                             second=dict(second,decision='clear',evidence=check['trace']['improvement'],operation='none',fix='',target='')
                             record['independent_context']=second
+                if second['decision']=='uncertain' and kind in ('comparison','draft-comparison'):
+                    # A defect in one physical part can be corrected at print scale. Verify
+                    # its construction on the actual newer crop before choosing a whole redraw.
+                    anchored=arbitrate_finding(url,view[1],overview,row,second,
+                                               {'field':'Both scale samples show this same physical part.'})
+                    record['part_verification']=anchored
+                    if anchored['decision']=='local':
+                        second=anchored
+                        record['independent_context']=second
+                    elif anchored['decision']=='clear' and record.get('issue_category')=='other':
+                        second=anchored
+                        record['independent_context']=second
                 if second['decision']=='uncertain' and SOFT_HANDLING.search(brief):
                     overview=overview_image.copy()
                     overview.thumbnail((800,800),Image.Resampling.LANCZOS)

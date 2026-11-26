@@ -130,6 +130,9 @@ def region(issue,assessment):
 
 def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False):
     # Re-sample only the interior; the wider square gives diffusion scene context.
+    if reference_style and rebuild_shape:
+        from construction_review import plan_local_repair
+        box,target,description=plan_local_repair(im,box,target,description,requested_medium(caption) or '',directory,stage)
     w,h = im.size
     x0,y0,x1,y1 = [round(v*n/1000) for v,n in zip(box,(w,h,w,h))]
     span = max(x1-x0,y1-y0)
@@ -691,8 +694,15 @@ def main():
         candidates=([judged['issue']] if judged['status']=='local' else final['issues'] if final['status']=='local' and judged['status']=='pass' else [])
         issue=next((item for item in candidates if region(item,final) and item.get('fix')),None)
         rec['终审退回原因']=judged.get('issue',{}).get('symptom') or final.get('note','')
+        repeated=False
+        if issue and repair_check:
+            old=repair_check['box']
+            new=region(issue,final)
+            repeated=(min(old[2],new[2])>max(old[0],new[0]) and min(old[3],new[3])>max(old[1],new[1]))
+        with Image.open(approved) as original:
+            low_resolution=max(original.size)<1024
         if (reference_style and not args.keep_native and not detail_rebuilt and attempt<2 and
-                judged.get('issue',{}).get('category')=='unresolved_focus' and (not issue or attempt>0)):
+                judged.get('issue',{}).get('category')=='unresolved_focus' and (not issue or repeated or low_resolution)):
             # A verified focus failure across the picture, or one that survived a local repair,
             # needs a higher-resolution drawing of the scene before another print pass.
             detail_rebuilt=True
