@@ -1,4 +1,6 @@
 """Preserve neighbouring objects when a localized correction names its subject."""
+from functools import lru_cache
+from pathlib import Path
 from PIL import Image, ImageChops, ImageFilter
 import numpy as np
 from scipy import ndimage
@@ -42,6 +44,45 @@ def object_mask(before, after, target, area, neighbours=(), *, confirmed_shape=F
     return limited
 
 
+def refine_subject_mask(image, coarse):
+    """Refine a text-located object against its actual ink boundary on the CPU."""
+    model_dir=Path(__file__).resolve().parents[1]/'models/subject-mask'
+    if not (model_dir/'model.safetensors').is_file():return coarse
+    return _refine_subject_mask(image,coarse,model_dir)
+
+
+def _refine_subject_mask(image,coarse,model_dir):
+    import torch
+    small=image.convert('RGB')
+    small.thumbnail((960,960),Image.Resampling.LANCZOS)
+    if max(hi-lo for lo,hi in small.getextrema())<8:return coarse
+    support=np.asarray(coarse.resize(small.size,Image.Resampling.BILINEAR))>=128
+    components,total=ndimage.label(support)
+    if not total:return coarse
+    areas=np.bincount(components.ravel())[1:]
+    support=components==(1+int(areas.argmax()))
+    if support.sum()<.85*areas.sum() or support.mean()>.9:return coarse
+    ys,xs=np.nonzero(support)
+    pad=max(6,round(max(np.ptp(xs),np.ptp(ys))*.025))
+    box=[max(0,int(xs.min())-pad),max(0,int(ys.min())-pad),
+         min(small.width,int(xs.max())+pad+1),min(small.height,int(ys.max())+pad+1)]
+    processor,model=boundary_model(model_dir)
+    inputs=processor(images=small,input_boxes=[[box]],return_tensors='pt')
+    with torch.inference_mode():result=model(**inputs,multimask_output=False)
+    if result.iou_scores.item()<.86:return coarse
+    mask=processor.post_process_masks(result.pred_masks.cpu(),inputs['original_sizes'])[0][0,0].numpy().astype(bool)
+    common=(mask&support).sum()
+    if common<.65*support.sum() or common<.65*mask.sum():return coarse
+    return Image.fromarray(np.uint8(mask)*255).resize(image.size,Image.Resampling.LANCZOS)
+
+
+@lru_cache(maxsize=1)
+def boundary_model(model_dir):
+    from transformers import Sam2Model,Sam2Processor
+    return (Sam2Processor.from_pretrained(model_dir,local_files_only=True),
+            Sam2Model.from_pretrained(model_dir,local_files_only=True).eval())
+
+
 def focal_subject_mask(image, area, label, feature):
     """Confine optical detail to an existing subject and locate its feature for a closer retry."""
     names=[label]+([feature] if feature and feature!=label else [])
@@ -53,7 +94,7 @@ def focal_subject_mask(image, area, label, feature):
         body=score>max(.24,.45*float(score.max()))
         return Image.fromarray(np.uint8(body)*255).resize(image.size,Image.Resampling.BILINEAR)
 
-    silhouette=support(parent)
+    silhouette=refine_subject_mask(image,support(parent))
     # The outer contour stays in the source coordinates. A newly painted second
     # subject cannot enlarge its own edit mask.
     limited=ImageChops.multiply(area,silhouette)

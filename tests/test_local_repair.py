@@ -1102,6 +1102,27 @@ class LocalRepairTests(unittest.TestCase):
             self.assertEqual(plate.size,im.size)
             self.assertLess(extent['height'],im.height*.4)
 
+    def test_boundary_model_cannot_replace_a_subject_with_an_unrelated_object(self):
+        import numpy as np
+        import torch
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from masks import _refine_subject_mask
+        art=Image.new('RGB',(100,100),'blue')
+        art.paste('red',(20,20,60,60))
+        rough=Image.new('L',art.size)
+        rough.paste(255,(20,20,60,60))
+        processor=Mock(return_value={'original_sizes':torch.tensor([[100,100]])})
+        model=Mock(return_value=SimpleNamespace(iou_scores=torch.tensor(.95),pred_masks=torch.tensor(0)))
+        for region,accepted in [((65,65,90,90),False),((18,20,61,61),True)]:
+            mask=np.zeros((1,1,100,100),bool)
+            x,y,u,v=region
+            mask[:,:,y:v,x:u]=True
+            processor.post_process_masks.return_value=[torch.from_numpy(mask)]
+            with patch('masks.boundary_model',return_value=(processor,model)):
+                revised=_refine_subject_mask(art,rough,'local')
+            self.assertEqual(revised.getbbox(),region if accepted else rough.getbbox())
+
     def test_shoelace_reference_requires_an_actual_lace_interaction(self):
         from illustration import construction_guide
         selected=construction_guide('Draw the fingers pinching the boot lace.')
