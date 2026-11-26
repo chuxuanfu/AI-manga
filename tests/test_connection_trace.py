@@ -28,7 +28,22 @@ class ContradictoryActionTests(unittest.TestCase):
         from print_judge import disavowed_action_fault
         for finding,expected in [('None. The head and its contours are smooth.',True),
                                  ('No visible physical defect at this joint.',True),
+                                 ('No visible shape contradiction. The track passes behind the rail.',True),
                                  ('One visible joint is disconnected.',False),
                                  ('The shape is nonetheless broken.',False)]:
             self.assertEqual(disavowed_action_fault(dict(condition='visible_fault',problem=finding)),expected)
             self.assertFalse(disavowed_action_fault(dict(condition='insufficient',problem=finding)))
+
+    def test_trace_must_show_both_disputed_parts(self):
+        from print_judge import inspect_disputed_action
+        claim='The railing appears to merge with the tracks.'
+        initial=dict(condition='visible_fault',visible_shapes='Rail and train.',depicted_action='none',
+                     problem='No visible shape contradiction.')
+        trace=dict(first_landmark='cat ear',second_landmark='shoulder',connection='unbroken contour',
+                   repair='none',verdict='continuous_and_plausible',disputed_parts_in_view=False)
+        with patch('print_judge.model_identity',return_value='installed'),patch('print_judge.ask',side_effect=map(json.dumps,[initial,trace])) as review:
+            result=inspect_disputed_action(None,Image.new('RGB',(450,350)),[0,400,500,900],'A train scene.',claim)
+        self.assertEqual(result['condition'],'insufficient')
+        self.assertNotIn(claim,review.call_args_list[0].args[2])
+        self.assertIn(claim,review.call_args_list[-1].args[2])
+        self.assertEqual(result['consistency_check']['tested_claim'],claim)

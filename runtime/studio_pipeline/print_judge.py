@@ -413,12 +413,12 @@ def disavowed_action_fault(reading):
     if reading.get('condition')!='visible_fault':
         return False
     problem=str(reading.get('problem') or '').strip()
-    return bool(re.search(r'\bno (?:visible |physical |anatomical |structural )*'
+    return bool(re.search(r'\bno (?:visible |physical |anatomical |structural |shape |geometric |spatial )*'
                           r'(?:faults?|defects?|deformit(?:y|ies)|contradictions?|errors?|issues?)\b',problem,re.I)
                 or re.match(r'^(?:none|no problems?(?: found)?|无问题|未发现异常)(?:[.!。:：]|$)',problem,re.I))
 
 
-def inspect_disputed_action(url, image, box, brief):
+def inspect_disputed_action(url, image, box, brief, claim=None):
     """An intact contour can belong to an implausible action or malformed whole part."""
     from construction_review import LARGE
     if not box or not model_identity(LARGE):
@@ -526,6 +526,13 @@ def inspect_disputed_action(url, image, box, brief):
         fields={'first_landmark':{'type':'string'},'second_landmark':{'type':'string'},
                 'connection':{'type':'string'},'repair':{'type':'string'},
                 'verdict':{'enum':['continuous_and_plausible','specific_visible_error','cannot_trace']}}
+        target_question=''
+        if claim:
+            fields['disputed_parts_in_view']={'type':'boolean'}
+            target_question=(' An earlier reader asked about this relationship: '+claim+
+                ' Test that possibility directly. Describe both named parts at their crossing or contact. '
+                'If one passes behind the other, trace its edge on both sides of the occluder. '
+                'Set disputed_parts_in_view false when either part is missing or you have traced a different feature. ')
         check=json.loads(ask(url,[detail,whole],
             'Inspect the disputed part in image one. Image two gives its place in the scene. '
             'Follow its contour from one visible landmark to a second. Does that particular '
@@ -533,10 +540,11 @@ def inspect_disputed_action(url, image, box, brief):
             'and one concrete correction if broken. Apply the actual shape words to the parts they modify '
             'in the original brief. Trace where a contour rounds, tapers, joins, or protrudes when relevant. '
             'Say cannot_trace if the crop omits the part. '
-            'Consider the drawing style and this brief: '+brief,
+            'Consider the drawing style and this brief: '+brief+target_question,
             {'type':'object','properties':fields,'required':list(fields)},tag=MODEL,reason=True))
+        if claim:check['tested_claim']=claim
         reading['consistency_check']=check
-        traced=all(str(check[k]).strip() for k in ('first_landmark','second_landmark','connection'))
+        traced=(not claim or check['disputed_parts_in_view'] is True) and all(str(check[k]).strip() for k in ('first_landmark','second_landmark','connection'))
         if check['verdict']=='continuous_and_plausible' and traced and not actionable_edit(check['repair']):
             reading.update(condition='physically_plausible',problem='')
         elif check['verdict']=='specific_visible_error' and traced and actionable_edit(check['repair']):
@@ -1382,8 +1390,10 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
                 result.pop('issue',None)
     if result.get('status')=='uncertain' and result.get('views'):
         disputed=result['views'][-1].get('independent_action_check',{})
-        if disavowed_action_fault(disputed) and 'consistency_check' not in disputed:
-            report=report.with_name(report.stem+'-action-trace.json')
+        trace=disputed.get('consistency_check') or {}
+        if ((disavowed_action_fault(disputed) and not trace)
+                or (trace.get('verdict')=='cannot_trace' and not trace.get('tested_claim'))):
+            report=report.with_name(report.stem+'-action-trace-targeted.json')
             if report.is_file():result=json.loads(report.read_text())
             else:
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
@@ -1691,7 +1701,7 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
                     third=arbitrate_finding(url,zoom,overview,row,second,observation)
                     if (third['decision']=='clear' and kind in ('whole','construction','contacts')
                             and second.get('operation')=='redraw' and actionable_edit(second.get('fix'))):
-                        functional=inspect_disputed_action(url,image,tentative,brief)
+                        functional=inspect_disputed_action(url,image,tentative,brief,second.get('evidence') or row.get('evidence'))
                         record['independent_action_check']=functional
                         if not disputed_action_resolved(functional):
                             third=dict(second,decision='uncertain')
