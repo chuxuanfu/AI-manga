@@ -77,6 +77,18 @@ def text_composition(text,seed,width,height,prefix,*,full=False):
     return g
 
 
+def medium_study(medium):
+    """Use the identified physical medium so an object in the scene cannot select a technique."""
+    from pathlib import Path
+    media={'cut-paper':r'cut[ -]paper|paper[ -]cut(?:out)?|papercut|paper (?:relief|theater|theatre|diorama)|剪纸|剪紙|切り絵',
+           'woodblock':r'wood[ -]?(?:block|cut)|ukiyo[ -]e|shin[ -]hanga|木版画|木刻|浮世绘|浮世絵'}
+    text=(medium or '').casefold()
+    if re.search(r'\b(?:avoid|without|not|no)\b|不要|避免', text):return None
+    selected=[name for name,pattern in media.items() if re.search(pattern,text)]
+    if len(selected)!=1:return None
+    return Path(__file__).resolve().parents[2]/'assets/medium-studies'/(selected[0]+'.webp')
+
+
 def construction_guide(instruction, directory=None, *, attempt=0):
     """Find a local example of the construction named in this particular correction."""
     import json

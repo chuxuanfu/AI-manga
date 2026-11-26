@@ -18,6 +18,14 @@ class WorkmanshipTests(unittest.TestCase):
         self.assertLess(max(areas)-min(areas),2000)
         self.assertGreater(min(areas),398000)
 
+    def test_technique_studies_follow_the_requested_medium(self):
+        from illustration import medium_study
+        self.assertTrue(medium_study('Japanese shin-hanga woodblock print').is_file())
+        self.assertTrue(medium_study('layered cut-paper relief').is_file())
+        self.assertIsNone(medium_study('Botanical watercolor on rough paper'))
+        self.assertIsNone(medium_study('Avoid woodcut'))
+        self.assertIsNone(medium_study('Mixed cut-paper and woodcut'))
+
     def test_consistent_evidence_in_both_orders(self):
         from reference_review import order_verdict
         def decision(a,b,text='two separate marks'):

@@ -1,0 +1,28 @@
+[
+  {
+    "file": "cut-paper.webp",
+    "title": "Paper Theater or Diorama of an Italianate Villa and Garden",
+    "artist": "Martin Engelbrecht",
+    "source": "https://www.metmuseum.org/art/collection/search/651671",
+    "credit": "The Jefferson R. Burdick Collection, Purchase, Jefferson R. Burdick Bequest, 2014",
+    "license": "The Metropolitan Museum of Art, Open Access (public domain / CC0)",
+    "image_sources": [
+      "https://images.metmuseum.org/CRDImages/dp/original/DP838061.jpg",
+      "https://images.metmuseum.org/CRDImages/dp/original/DP838073.jpg",
+      "https://images.metmuseum.org/CRDImages/dp/original/DP838071.jpg"
+    ],
+    "processing": "Four grayscale details for observing mark-making and overlap."
+  },
+  {
+    "file": "woodblock.webp",
+    "title": "Under the Wave off Kanagawa (Kanagawa oki nami ura), also known as The Great Wave, from the series Thirty-six Views of Mount Fuji (Fugaku sanjūrokkei)",
+    "artist": "Katsushika Hokusai",
+    "source": "https://www.metmuseum.org/art/collection/search/45434",
+    "credit": "H. O. Havemeyer Collection, Bequest of Mrs. H. O. Havemeyer, 1929",
+    "license": "The Metropolitan Museum of Art, Open Access (public domain / CC0)",
+    "image_sources": [
+      "https://images.metmuseum.org/CRDImages/as/original/DP130155.jpg"
+    ],
+    "processing": "Four grayscale details for observing mark-making and overlap."
+  }
+]

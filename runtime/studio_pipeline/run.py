@@ -630,6 +630,8 @@ def main():
         text_slot=(index==1 or (args.candidates==1 and args.retry_round and index==0))
         automatic_text=text_slot and not borrow and not rec.get('原生4K') and not args.native_only and not args.from_image
         requested=rec.get('base_model','auto')
+        from illustration import medium_study
+        study=medium_study(rec.get('画材'))
         # After two rejected rounds, devote one independent text candidate to the base
         # denoiser when production actually requests a new composition.
         full=(requested=='qwen-image-2512-full' or (requested=='auto' and automatic_text
@@ -645,6 +647,11 @@ def main():
                 native={(832,1248):(1056,1584),(1248,832):(1584,1056),(720,1280):(928,1664),
                         (1280,720):(1664,928),(1024,1024):(1328,1328)}[width,height]
             graph=text_composition(direction+caption,draw_seed,*native,name,full=bool(full))
+        elif study and index==0 and not args.from_image and not args.native_only and not borrow:
+            with Image.open(study) as technique:
+                sample=local_image(technique.convert('RGB'))
+            graph=reference_draft(caption,draw_seed,*size,name,reference=sample,layout=True)
+            rec['画材技法样片']=study.name
         elif (own_first and index==0) or (not own_first and index==2 and rec.get('画法自适应')):
             direction=('Follow the medium and palette in the request. When unspecified, draw a finished Japanese storybook illustration. '
                        'Place each principal subject once. At every overlap, keep the nearer contour legible. Show a plausible support or occluding surface for visible figures, tools and animals. Preserve all requested interactions. ')
@@ -792,7 +799,7 @@ def main():
             # Assess workmanship on the actual version eligible to advance.
             if reference_style and (result['status']=='pass' or not args.round_worker):
                 comparison=compare(rgb,result.get('regions',{}),job/(stage+'-reference-comparison.jpg'),
-                                   brief=prompt if rec.get('画法自适应') else '',final=stage.endswith('final-art'))
+                                   brief=prompt if rec.get('画法自适应') else '',final=stage.endswith('final-art'),medium=rec.get('画材'))
                 result['参考比较']=comparison
                 if result['status']=='pass' and comparison['decision']=='below':
                     result['status']='global'

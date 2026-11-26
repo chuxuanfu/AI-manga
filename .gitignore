@@ -5,6 +5,11 @@
 !/assets/
 /assets/*
 !/assets/illustration-reference.webp
+!/assets/medium-studies/
+/assets/medium-studies/*
+!/assets/medium-studies/credits.json
+!/assets/medium-studies/cut-paper.webp
+!/assets/medium-studies/woodblock.webp
 !/assets/repair-guides/
 /assets/repair-guides/*
 !/assets/repair-guides/index.json

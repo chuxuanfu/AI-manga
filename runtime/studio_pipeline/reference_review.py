@@ -138,7 +138,7 @@ FINISH_EDITS={
 }
 
 
-def redraw_direction(assessment,brief,*,address=None,tag=TAG):
+def redraw_direction(assessment,brief,*,address=None,tag=TAG,medium=None):
     """Only the candidate's visible marks and the author brief enter the next drawing prompt."""
     if assessment.get('decision')!='below':return ''
     axes=[axis for axis in AXES if axis in assessment.get('consistent_deficits',[])]
@@ -158,7 +158,16 @@ def redraw_direction(assessment,brief,*,address=None,tag=TAG):
               'Include only objects from the author brief or observations of this same candidate. '
               'Author brief: '+brief+' Required improvements: '+general+' Observed candidate features: '+' '.join(observations))
     try:
-        answer=json.loads(ask(address,[],question,schema,tag=tag))['edit'].strip()
+        from illustration import medium_study
+        sample=medium_study(medium)
+        images=[]
+        if sample:
+            with Image.open(sample) as study:
+                images=[study.convert('RGB')]
+            question+=(' The grayscale studies show handling in this medium. Use their edges, layers and value '
+                       'relationships to suggest specific techniques for the subjects named in the brief. '
+                       'Preserve the requested colors, scene and time of day.')
+        answer=json.loads(ask(address,images,question,schema,tag=tag))['edit'].strip()
     except (OSError,RuntimeError,ValueError,KeyError,AttributeError):
         return general
     return answer if 8<=len(answer.split())<=120 else general
@@ -189,7 +198,7 @@ def confirmed_final_comparison(review):
         return False
 
 
-def compare(im,regions,path,brief='',*,final=False):
+def compare(im,regions,path,brief='',*,final=False,medium=None):
     from print_judge import MODEL
     tag=MODEL if final else TAG
     board=comparison(im,regions,path)
@@ -229,7 +238,7 @@ def compare(im,regions,path,brief='',*,final=False):
                     result['consistent_deficits']=independent['consistent_deficits']
             result.update(assessment_model=tag,separate_material_evidence=final,reference_on_left=forward,reference_on_right=backward)
             if result['decision']=='below':
-                result['redraw_direction']=redraw_direction(result,brief,address=url if brief else None,tag=tag)
+                result['redraw_direction']=redraw_direction(result,brief,address=url if brief else None,tag=tag,medium=medium)
         return result
     except (RuntimeError,OSError,ValueError,KeyError) as exc:
         return {'decision':'review','reason':str(exc)[:180]}
