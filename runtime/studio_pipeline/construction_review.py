@@ -2,7 +2,7 @@
 import json
 import re
 from PIL import Image, ImageOps, ImageDraw
-from evidence import ask, available, backend, TAG
+from evidence import ask, available, backend, review_session, TAG
 
 LARGE='qwen3-vl:32b-instruct'
 SCHEMA={'type':'object','properties':{
@@ -343,6 +343,7 @@ def assess_edit_boundary(before, after, box, correction=None):
 
 
 
+@review_session()
 def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
     """Screen the composited native patch, including its connection to the unchanged surroundings."""
     from PIL import ImageChops
