@@ -1257,6 +1257,18 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     if kind in ('comparison','draft-comparison'):
                         verify=(detail_comparison_prompt(question,brief)+' Image 3 locates the samples. '
                                 'Verify whether this alleged optical defect is visible in image 2: '+claim)
+                if kind=='whole' and tentative:
+                    # A crop cannot establish that a subject, garment or prop is missing
+                    # elsewhere in the scene. Keep the original picture with that evidence.
+                    overview=overview_image.copy()
+                    overview.thumbnail((960,960),Image.Resampling.LANCZOS)
+                    verify+=(' Image 1 is a detail crop. The LAST image is the full composition. Use '
+                             'the full image to establish any absence, count, outfit, location, or '
+                             'orientation. Verify exactly the initial claim. If it says a position '
+                             'or action was requested, quote the actual words and inspect what they '
+                             'specify. Do not add a required corner, side or angle absent from the brief. '
+                             'Describe unrelated visible errors under their own precise claim. Any '
+                             'coordinates for an issue must be relative to image 1.')
                 second=judge_view(url,region,verify,overview=overview)
                 record['context_pixels']=list(context)
                 record['corroboration']=second
