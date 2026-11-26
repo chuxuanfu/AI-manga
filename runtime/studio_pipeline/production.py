@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 from urllib.parse import quote
-from print_judge import MODEL, REVISION, fingerprint, model_identity, print_windows, store
+from print_judge import MODEL, REVISION, fingerprint, model_identity, complete_print_review, store
 
 
 def link(path,target):
@@ -44,12 +44,8 @@ def publish(job, source, record):
     report=json.loads(report_file.read_text())
     if max(report['size'])!=(7680 if '8K.png' in outputs else 3840):
         raise ValueError('终审像素尺寸与发布规格不符')
-    expected={rect for kind,rect in print_windows(tuple(report['size']),{}) if kind=='native'}
-    inspected={tuple(row['pixels']) for row in report['views'] if row['view']=='native'}
-    unresolved=any((row.get('independent_context') or row.get('corroboration') or row['observation']).get('decision')!='clear' for row in report['views'])
-    if (unresolved or report['status']!='pass' or report['sha256']!=checked['sha256'] or
-        report['comparison_sha256']!=checked.get('对照指纹',checked['4K指纹']) or report['model_id']!=checked['模型指纹'] or
-        len(report['views'])!=report['planned'] or expected!=inspected):
+    if (not complete_print_review(report) or report['sha256']!=checked['sha256'] or
+        report['comparison_sha256']!=checked.get('对照指纹',checked['4K指纹']) or report['model_id']!=checked['模型指纹']):
         raise ValueError('终审凭据未能验证此图的完整覆盖')
     receipt=fingerprint(report_file)
     selected=job/'approved-versions'/(checked['sha256']+'-'+receipt[:12])
@@ -371,6 +367,9 @@ def run(args,job,entry):
             record=json.loads((folder/'review.json').read_text())
             receipt=record['自动定稿']
             stale=receipt.get('审图版本')!=REVISION or receipt.get('模型指纹')!=model_identity(MODEL)
+            if not stale:
+                inspected=folder/receipt['终审报告']
+                stale=not inspected.is_file() or not complete_print_review(json.loads(inspected.read_text()))
             if not stale:
                 publish(job,folder,record)
                 export_release(job,state);save(job,state)

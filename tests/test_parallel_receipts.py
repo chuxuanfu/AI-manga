@@ -46,3 +46,18 @@ class ParallelReceiptsTests(unittest.TestCase):
             _,report,_=grade_finished_print(im,'A figure',root,lambda:{'status':'global'},**args)
             self.assertIsNone(report)
             self.assertEqual(scan.call_count,1)
+
+    def test_gallery_and_publication_require_the_brief_and_every_native_field(self):
+        from print_judge import REVISION, complete_print_review, print_windows
+        size=[3840,2160]
+        views=[dict(view='whole',pixels=[0,0,*size],observation={'decision':'local'},
+                    independent_context={'decision':'clear'})]
+        views.extend(dict(view=kind,pixels=list(rect),observation={'decision':'clear'})
+                     for kind,rect in print_windows(tuple(size),{}) if kind=='native')
+        report=dict(size=size,views=views,status='pass',revision=REVISION,planned=len(views))
+        self.assertFalse(complete_print_review(report))
+        views[0]['brief_checked']=True
+        self.assertTrue(complete_print_review(report))
+        views.pop()
+        report['planned']=len(views)
+        self.assertFalse(complete_print_review(report))

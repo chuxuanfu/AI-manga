@@ -1194,6 +1194,21 @@ def needs_brief_after_clearance(view):
             and not view.get('brief_witnesses'))
 
 
+def complete_print_review(report):
+    """A distributable print covers every native window and the author's full brief."""
+    size=report.get('size') or []
+    views=report.get('views') or []
+    if (report.get('status')!='pass' or report.get('revision')!=REVISION or len(size)!=2
+            or any(type(n) is not int or n<=0 for n in size) or not views
+            or len(views)!=report.get('planned') or not any(v.get('view')=='whole' for v in views)):
+        return False
+    expected={rect for kind,rect in print_windows(tuple(size),{}) if kind=='native'}
+    inspected={tuple(v.get('pixels') or []) for v in views if v.get('view')=='native'}
+    return (expected==inspected and not any(needs_brief_after_clearance(v) for v in views)
+            and all((v.get('independent_context') or v.get('corroboration') or
+                     v.get('observation') or {}).get('decision')=='clear' for v in views))
+
+
 def check_brief_after_clearance(url, image, overview, brief, view):
     from brief_check import subject_witness
     notes, contradiction = subject_witness(url, image, overview, brief, MODEL)

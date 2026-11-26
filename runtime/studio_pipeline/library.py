@@ -66,7 +66,7 @@ def record(path):
 
 def published_cover(job, data):
     """A retained historical PNG is not proof of a current release."""
-    from print_judge import REVISION, fingerprint
+    from print_judge import REVISION, fingerprint, complete_print_review
     art=job/'4K.png'
     receipt=record(job/'final/review-receipt.json')
     proof=job/'final/tile-inspection.json'
@@ -74,7 +74,7 @@ def published_cover(job, data):
             and data.get('status')=='已自动定稿'):
         return None
     report=record(proof)
-    if (report.get('status')=='pass' and report.get('revision')==REVISION and
+    if (complete_print_review(report) and
             report.get('sha256')==receipt.get('sha256')==data.get('sha256') and
             fingerprint(proof)==receipt.get('报告指纹') and fingerprint(art)==receipt.get('4K指纹')):
         return art
