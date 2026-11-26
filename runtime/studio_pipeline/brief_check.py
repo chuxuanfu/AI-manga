@@ -205,10 +205,10 @@ def identity_reference(quote):
 
 CONTACT_ACTION=re.compile(r'\b(?:turn(?:s|ing)?|press(?:es|ing)?|pinch(?:es|ing)?|'
                           r'grip(?:s|ping)?|touch(?:es|ing)?|grasps?|holding|holds?|'
-                          r'tying|fasten(?:s|ing)?|plug(?:s|ging)?|steps? on)\b|旋转|拧动|握住|捏住|按下|触碰|踏在',re.I)
+                          r'tying|fasten(?:s|ing)?|plug(?:s|ging)?|steps? on|slid(?:es|ing)|insert(?:s|ing)?)\b|旋转|拧动|握住|捏住|按下|触碰|踏在|插入|滑入|抵住|贴在|推入',re.I)
 
 
-def confirm_contact_gap(url,crop,overview,quote,tag,independent):
+def confirm_contact_gap(url,crop,overview,quote,tag,independent,*,endpoints=None):
     """Locate the nearest edges of a requested contact in the same native field."""
     if not CONTACT_ACTION.search(quote) or tag==independent:return None
     unit={'type':'integer','minimum':0,'maximum':1000}
@@ -224,6 +224,8 @@ def confirm_contact_gap(url,crop,overview,quote,tag,independent):
             'surface or empty space between BOTH edges. Describe that strip. Touching, foreshortened '
             'overlap or hidden far fingers do not demonstrate a gap. If another relevant contact could '
             'be off-crop, or if the action does not require contact, select uncertain.')
+    if endpoints:
+        prompt+=' Locate the working end of '+endpoints[0]+' and the surface of '+endpoints[1]+'. The coordinates must describe this pair, even if the hand already grips the implement.'
     observations=[]
     for model in (tag,independent):
         read=json.loads(ask(url,[crop,overview],prompt,{'type':'object','properties':fields,'required':list(fields)},tag=model))
@@ -239,6 +241,34 @@ def confirm_contact_gap(url,crop,overview,quote,tag,independent):
         if all(math.dist(a[key],b[key])<=tolerance for key in ('actor_edge','target_edge')):
             return dict(confirmed=True,observations=observations,models=[tag,independent])
     return dict(confirmed=False,observations=observations,models=[tag,independent][:len(observations)])
+
+
+def check_working_contact(url, image, brief, tag, independent):
+    """Before a local repair, establish whether its complete action fits the current staging."""
+    clauses=[s.strip() for s in re.split(r'[.!?。！？;；]',brief) if CONTACT_ACTION.search(s) and
+             re.search(r'\b(?:against|into|onto)\b|(?:插入|按在|抵住|贴在|推入)',s,re.I)]
+    if not clauses or not model_identity(independent):return None
+    props={'required':{'type':'boolean'},'acting_item':{'type':'string'},'receiving_surface':{'type':'string'}}
+    quote=clauses[0]
+    plan=json.loads(ask(url,[],'Does the following sentence explicitly require a depicted part or implement '
+        'to make physical contact with a separate surface? If so, quote the names of the working item '
+        'and the receiving surface verbatim. For a held tool choose the tool and its working surface. '
+        'Ignore figurative, future, intended, interrupted, and negated actions. Sentence: '+quote,
+        {'type':'object','properties':props,'required':list(props)},tag=tag))
+    names=[plan[k].strip() for k in ('acting_item','receiving_surface')]
+    if (not plan['required'] or not all(n and n.casefold() in quote.casefold() for n in names)
+            or names[0].casefold()==names[1].casefold()):return None
+    full=image.copy();full.thumbnail((1120,1120),Image.Resampling.LANCZOS)
+    overview=image.copy();overview.thumbnail((560,560),Image.Resampling.LANCZOS)
+    result=confirm_contact_gap(url,full,overview,quote,tag,independent,endpoints=names)
+    if not result:return None
+    result.update(requirement=quote,items=names)
+    if result['confirmed']:
+        positions=[p[k] for p in result['observations'] for k in ('actor_edge','target_edge')]
+        xs,ys=zip(*positions)
+        result['box']=[max(0,min(xs)-35),max(0,min(ys)-35),min(1000,max(xs)+35),min(1000,max(ys)+35)]
+        result['minimum_gap']=min(math.dist(p['actor_edge'],p['target_edge']) for p in result['observations'])
+    return result
 
 
 def subject_witness(url, image, overview, brief, tag):

@@ -36,3 +36,20 @@ class ContactGapTests(unittest.TestCase):
         inconsistent=dict(visible=True,band=5,trace='Ambiguous point near the top.')
         with patch('brief_check.ask',return_value=json.dumps(inconsistent)):
             self.assertFalse(resolve_mixed_bands(None,im,'reader','paper','chest',paired)['visible'])
+
+    def test_full_scene_contact_binds_the_working_item_to_its_surface(self):
+        from brief_check import check_working_contact
+        proof={'confirmed':True,'observations':[
+            {'actor_edge':[300,500],'target_edge':[680,510],'intervening_surface':'meadow'},
+            {'actor_edge':[310,496],'target_edge':[675,505],'intervening_surface':'grass and sky'}]}
+        im=Image.new('RGB',(600,400),'green')
+        wording='She holds one short brush against a painted canvas.'
+        with patch('brief_check.model_identity',return_value='installed'),patch('brief_check.ask',return_value=json.dumps(
+                dict(required=True,acting_item='brush',receiving_surface='painted canvas'))),patch('brief_check.confirm_contact_gap',return_value=proof) as reader:
+            result=check_working_contact('local',im,wording,'first','second')
+        self.assertEqual(reader.call_args.kwargs['endpoints'],['brush','painted canvas'])
+        self.assertGreater(result['minimum_gap'],300)
+        self.assertEqual(result['box'],[265,461,715,545])
+        with patch('brief_check.ask') as reader:
+            self.assertIsNone(check_working_contact('local',im,'A landscape in morning light.','first','second'))
+            reader.assert_not_called()

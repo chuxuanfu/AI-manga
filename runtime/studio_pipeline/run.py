@@ -713,6 +713,26 @@ def main():
                             result['issues'].insert(0,dict(target=detail['target'],box=detail['box'],fix=detail['fix'],symptom=detail['observation']))
                     elif dv=='unclear' and result['status']=='pass':
                         result.update(status='uncertain',note=detail['observation'])
+                if (args.round_worker and not args.from_image and not args.repair_box
+                        and result['status'] in ('pass','local','uncertain') and stage.startswith(('draft-','recompose-'))):
+                    from brief_check import check_working_contact
+                    from construction_review import LARGE
+                    from evidence import backend
+                    from print_judge import MODEL
+                    with backend(MODEL) as url:
+                        contact=check_working_contact(url,rgb,prompt,MODEL,LARGE)
+                    if contact:
+                        result['requested_contact']=contact
+                        if contact['confirmed']:
+                            box=contact['box'];gap=contact['minimum_gap']
+                            item,surface=contact['items']
+                            symptom=contact['observations'][0]['intervening_surface']
+                            fix='Arrange '+item+' so its working end visibly meets '+surface+' as requested: '+contact['requirement']
+                            result['issues'].insert(0,dict(box=box,target=item+' and '+surface,
+                                operation='redraw',symptom=symptom,fix=fix))
+                            result.update(status='global' if gap>145 else 'local',note=symptom)
+                            if gap>145:
+                                result['局部连接复审']=dict(result.get('局部连接复审') or {},fix=fix)
                 # A rejected composition must be re-rendered and assessed again.
                 # Assess workmanship on the actual version eligible to advance.
                 if result['status']=='pass' or not args.round_worker:
