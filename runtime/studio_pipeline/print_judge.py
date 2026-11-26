@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-30'
+REVISION = 'print-inspection-31'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -168,6 +168,36 @@ def judge_view(url, image, prompt, *, reason=False, overview=None):
     if row.get('decision') not in FIELDS['decision']['enum'] or not isinstance(row.get('evidence'),str) or not row['evidence'].strip():
         raise ValueError('终审模型返回了无效的目检判断')
     return row
+
+
+def inspect_repaired_region(url, image, history, brief):
+    """Record the present appearance before exposing the reader to a past diagnosis."""
+    observed={'type':'object','properties':{'visible':{'type':'string'},'condition':{'type':'string'}},
+              'required':['visible','condition']}
+    inventory=json.loads(ask(url,[image],
+        'Describe this detail in the supplied image. Which surfaces and contours are visible? Trace '
+        'their edges and connections. Describe any actual visible damage, anomalous geometry or '
+        'unresolved detail. The last edit and the earlier image are unavailable. Be concise.',
+        observed,tag=MODEL))
+    fields={'trace':{'type':'string'},'defect_now':{'enum':['resolved_in_view','present','indeterminate']}}
+    verdict=json.loads(ask(url,[image],
+        'This image shows the CURRENT print crop. Before reading any history a reader observed: '
+        +json.dumps(inventory,ensure_ascii=False)+'. An OLD version was flagged for: '+history+
+        '. Compare that historical claim with the current pixels. In trace give a concrete, current '
+        'visual observation in your own words. Is the historical defect visible NOW? Choose resolved_in_view only '
+        'when the affected surface or attachment is in view and its current appearance resolves '
+        'that claim; present for a visible defect; indeterminate if untraceable or partly out of view. '
+        'Consider the current request: '+brief,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    if (verdict['defect_now']=='resolved_in_view' and verdict['trace'].strip()
+            and inventory['visible'].strip() and inventory['condition'].strip()):
+        row=dict(decision='clear',operation='none',target='',fix='',left=0,top=0,right=0,bottom=0,
+                 evidence=verdict['trace'])
+    else:
+        row=judge_view(url,image,GUIDE+' Inspect the current pixels. Locate this reported concern only '
+                       'if visible: '+verdict['trace']+' '+brief)
+        if row['decision']=='clear':
+            row=dict(row,decision='uncertain',evidence=verdict['trace'])
+    return row,{'inventory':inventory,'current_condition':verdict}
 
 
 def inspect_native(url,image,prompt):
@@ -536,11 +566,6 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                           'For each visible hand trace it to a specific wrist, elbow and shoulder; for each animal trace separate paws to its torso. '
                           'Look behind held objects for stray hands. Account for hidden limbs, reflections, bipeds and overlapping people. '
                           'When there are no figures, trace object edges and supports through overlaps. Judge the physical construction you actually see.')
-            elif kind=='previous_local':
-                question=('Inspect the actual part in this enlargement. A previous pass identified this concrete '
-                          'problem here: '+known[rect]['symptom']+'. Trace the part independently. Clear a corrected or '
-                          'visibly disproved finding. If the defect is still visible, describe and locate the '
-                          'whole affected part including its attachment. Use the surrounding edge as context.')
             elif kind=='contacts':
                 question=('Inventory all distinct palm-and-finger clusters actually visible in this interaction. Scan from left to right, including loose fingers behind and between objects. '
                           'For each cluster trace where its wrist physically continues. Flag a stray third cluster with no attached arm, an impossible grip or a fused tool only when visible. '
@@ -569,8 +594,13 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                         'palette. For clear, describe a matching hue relationship, set operation to none '
                         'and coordinates to zero. For a color concern give a local box in the final '
                         'image, normalized to 0..1000, and a concrete color correction. Brief: '+brief)
-            row=inspect_native(url,view,prompt) if kind=='native' else judge_view(url,view,prompt)
+            prior_reading=None
+            if kind=='previous_local':
+                row,prior_reading=inspect_repaired_region(url,view,known[rect]['symptom'],guidance)
+            else:
+                row=inspect_native(url,view,prompt) if kind=='native' else judge_view(url,view,prompt)
             record={'view':kind,'pixels':list(rect),'observation':row}
+            if prior_reading:record['current_pixel_check']=prior_reading
             if row['decision']!='clear':
                 # Inspect wider context separately using source pixels.
                 tentative=map_box(row,rect,image.size)

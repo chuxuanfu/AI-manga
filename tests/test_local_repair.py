@@ -12,12 +12,51 @@ from PIL import Image, ImageChops, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
 from construction_review import LARGE, assess_local_edit, verify_interior_figure
+from illustration import instruction_edit, reference_draft
 from masks import structural_composite
-from print_judge import actionable_edit, issue_category, verify_part_identity
+from print_judge import actionable_edit, inspect_repaired_region, issue_category, verify_part_identity
 from production import repeated_rejection
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_structural_edit_sampling_is_anchored_to_the_source_and_mask(self):
+        editors = (reference_draft('Fix a seam', 77, 960, 960, 'trial', reference='guide.png',
+                                   edit=True, masked_source='original-mask.png', preserve_layout=True),
+                   instruction_edit('Fix a seam', 77, 'original-mask.png', 'trial', masked=True))
+        for graph in editors:
+            nodes = graph.api
+            sampler = next(n for n in nodes.values() if n['class_type'] in ('KSampler', 'SamplerCustomAdvanced'))
+            mask = nodes[sampler['inputs']['latent_image'][0]]
+            self.assertEqual(mask['class_type'], 'SetLatentNoiseMask')
+            source, channel = mask['inputs']['mask']
+            self.assertEqual(channel, 1)
+            self.assertEqual(nodes[source]['inputs']['image'], 'original-mask.png')
+            original = nodes[mask['inputs']['samples'][0]]
+            self.assertEqual(original['class_type'], 'VAEEncode')
+            self.assertEqual(original['inputs']['pixels'], [source, 0])
+        sampler = next(n for n in editors[0].api.values() if n['class_type'] == 'SamplerCustomAdvanced')
+        split_id, selected_output = sampler['inputs']['sigmas']
+        split = editors[0].api[split_id]
+        self.assertEqual((split['class_type'], selected_output), ('SplitSigmas', 1))
+        schedule = editors[0].api[split['inputs']['sigmas'][0]]
+        self.assertEqual(schedule['inputs']['steps'] - split['inputs']['step'], 4)
+        normal = reference_draft('A scene', 77, 960, 960, 'trial')
+        self.assertTrue(any(n['class_type'] == 'EmptyFlux2LatentImage' for n in normal.api.values()))
+
+    def test_review_reads_current_pixels_before_receiving_the_past_diagnosis(self):
+        image = Image.new('RGB', (64, 64))
+        diagnosis = 'Historic blurred pattern on the plate.'
+        inventory = {'visible': 'Ceramic surface', 'condition': 'Even finish.'}
+        for state, expected in [('resolved_in_view', 'clear'), ('present', 'uncertain'), ('indeterminate', 'uncertain')]:
+            answer = {'trace': 'Uniform plate surface.', 'defect_now': state}
+            with patch('print_judge.ask', side_effect=[json.dumps(inventory), json.dumps(answer)]) as ask, patch(
+                    'print_judge.judge_view', return_value={'decision': 'clear', 'evidence': 'Even surface.'}):
+                row, record = inspect_repaired_region(None, image, diagnosis, 'Ceramic still life')
+            self.assertNotIn(diagnosis, ask.call_args_list[0].args[2])
+            self.assertIn(diagnosis, ask.call_args_list[1].args[2])
+            self.assertEqual(row['decision'], expected)
+            self.assertEqual(record['inventory'], inventory)
+
     def test_mistaken_part_requires_coherent_geometry_and_two_readers(self):
         image = Image.new('RGB', (512, 288))
         finding = {'operation': 'redraw', 'target': 'paw', 'symptom': 'This outline belongs to a paw.'}

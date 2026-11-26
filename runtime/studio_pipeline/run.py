@@ -199,6 +199,8 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     rect = (x0-x-margin,y0-y-margin,x1-x+margin,y1-y+margin)
     ImageDraw.Draw(mask).rounded_rectangle(rect,radius=max(2,round(span*.05)),fill=255)
     mask = mask.filter(ImageFilter.GaussianBlur(max(2,round(span*.022))))
+    if reference_style:
+        size=tuple(max(64,round(n/16)*16) for n in size)
     prepared = crop.resize(size,Image.Resampling.LANCZOS)
     prepared.putalpha(ImageOps.invert(mask.resize(size,Image.Resampling.BILINEAR)))
     prefix = (directory.relative_to(OUTPUT)/stage).as_posix()
@@ -206,14 +208,13 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     specialist=(installed_editor(model_root) if allow_specialist and reference_style and rebuild_shape
                 and reconstruction_attempt>=2 else None)
     if specialist:
-        source=local_image(crop.resize(size,Image.Resampling.LANCZOS))
+        source=local_image(prepared)
         edit=instruction_edit('Edit this same illustration close-up. Preserve the original edge alignment, '
                               'colors, light and medium. Reconstruct '+str(target or 'the damaged structure')+
-                              ' as follows: '+description,seed,source,prefix,specialist)
+                              ' as follows: '+description,seed,source,prefix,specialist,masked=True)
         graph=edit.api
         output=str(len(edit.nodes))
     elif reference_style:
-        size=tuple(max(64, round(n/16)*16) for n in size)
         guidance=crop
         text=description
         if rebuild_shape:
@@ -236,7 +237,9 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
                   '. Reconstruct its silhouette, internal parts and attachment in the local pose; '
                   'match the tapered contours, local colors, material and shadows of its surroundings. '+description)
         layout=local_image(guidance.resize(size,Image.Resampling.LANCZOS))
-        edit=reference_draft(text,seed,*size,prefix,reference=layout,edit=True)
+        edit=reference_draft(text,seed,*size,prefix,reference=layout,edit=True,
+                             masked_source=local_image(prepared) if rebuild_shape else None,
+                             preserve_layout=rebuild_shape and reconstruction_attempt==0)
         graph=edit.api
         output=str(len(edit.nodes))
     else:
@@ -791,6 +794,10 @@ def main():
             release_idle_renderer(args.port)
             with Image.open(revised) as proposed:
                 verdict=assess_local_edit(before,proposed,box,issue['fix'],issue.get('symptom'),prompt)
+            with source.open('rb') as original_file, revised.open('rb') as edited_file:
+                verdict.update(source_sha256=hashlib.file_digest(original_file,'sha256').hexdigest(),
+                               candidate_sha256=hashlib.file_digest(edited_file,'sha256').hexdigest(),
+                               source_file=os.path.relpath(source,job),candidate_file=os.path.relpath(revised,job))
             verdict.update(target_box=box,reconstruction_attempt=strategy)
             save(job/(name+'-patch-review.json'),verdict)
             if verdict['verdict']=='resolved':

@@ -43,7 +43,7 @@ def installed_editor(model_root):
     return None
 
 
-def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET):
+def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET, *, masked=False):
     """Comfy's Qwen-Image-Edit-2511 Lightning graph for a local repair crop."""
     g=Graph('studio-instruction-edit')
     source=g.add('LoadImage','Source crop',(0,0),['IMAGE','MASK'],values={'image':reference})
@@ -57,6 +57,9 @@ def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET):
     pos=g.add('TextEncodeQwenImageEditPlus','Edit instruction',(350,0),['CONDITIONING'],inputs,values={'prompt':text})
     neg=g.add('TextEncodeQwenImageEditPlus','Unconditional',(350,170),['CONDITIONING'],inputs,values={'prompt':''})
     latent=g.add('VAEEncode','Crop latent',(680,0),['LATENT'],[('pixels',(source,0)),('vae',(vae,0))])
+    if masked:
+        latent=g.add('SetLatentNoiseMask','Preserve surrounding drawing',(820,110),['LATENT'],
+                     [('samples',(latent,0)),('mask',(source,1))])
     sample=g.add('KSampler','Repair crop',(990,0),['LATENT'],[('model',(model,0)),('positive',(pos,0)),
                  ('negative',(neg,0)),('latent_image',(latent,0))],values={
                  'seed':seed,'steps':4,'cfg':1.0,'sampler_name':'euler','scheduler':'simple','denoise':1.0})
@@ -65,7 +68,7 @@ def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET):
     return g
 
 
-def reference_draft(text, seed, width, height, prefix, reference=REFERENCE, layout=None, edit=False):
+def reference_draft(text, seed, width, height, prefix, reference=REFERENCE, layout=None, edit=False, masked_source=None, preserve_layout=False):
     g=Graph('studio-reference-conditioned-illustration')
     brief=prompt_field(g,text,(-2600,-60))
     if layout and reference==REFERENCE:reference=BRUSHWORK
@@ -101,7 +104,13 @@ def reference_draft(text, seed, width, height, prefix, reference=REFERENCE, layo
             node=g.add('ReferenceLatent','第一张 · 构图',(755,y-75),['CONDITIONING'],[('conditioning',(node,0)),('latent',(layout_latent,0))])
         return g.add('ReferenceLatent','结合画法参考',(1090,y),['CONDITIONING'],[('conditioning',(node,0)),('latent',(enc,0))])
     positive=condition(pos,305);negative=condition(zero,545)
-    return flux_canvas(g,positive,negative,vae,seed,width,height,prefix)
+    initial=None
+    if masked_source:
+        src=g.add('LoadImage','Original crop and edit mask',(740,760),['IMAGE','MASK'],values={'image':masked_source})
+        encoded=g.add('VAEEncode','Preserve original geometry',(1060,760),['LATENT'],[('pixels',(src,0)),('vae',(vae,0))])
+        initial=g.add('SetLatentNoiseMask','Limit sampling to the repair',(1260,900),['LATENT'],
+                      [('samples',(encoded,0)),('mask',(src,1))])
+    return flux_canvas(g,positive,negative,vae,seed,width,height,prefix,initial=initial,preserve_layout=preserve_layout)
 
 
 ANIME_PAINT='animagine-xl-4.0-opt.safetensors'
@@ -143,7 +152,7 @@ def text_draft(text,seed,width,height,prefix):
     return flux_canvas(g,pos,neg,vae,seed,width,height,prefix)
 
 
-def flux_canvas(g,positive,negative,vae,seed,width,height,prefix):
+def flux_canvas(g,positive,negative,vae,seed,width,height,prefix,*,initial=None,preserve_layout=False):
     model=g.add('UNETLoader','FLUX.2 klein 4B',(1090,75),['MODEL'],values={'unet_name':KLEIN,'weight_dtype':'default'})
     guide=g.add('CFGGuider','蒸馏引导',(1430,300),['GUIDER'],[('model',(model,0)),('positive',(positive,0)),('negative',(negative,0))],{'cfg':1.0})
     noise=g.add('RandomNoise','种子',(1430,90),['NOISE'],values={'noise_seed':seed},widgets=[seed,'fixed'])
@@ -153,10 +162,18 @@ def flux_canvas(g,positive,negative,vae,seed,width,height,prefix):
     # proven noise schedule while still drawing on the full requested latent.
     schedule_scale=min(1,(1248*1872/(width*height))**.5)
     sw,sh=(round(n*schedule_scale) for n in (width,height))
-    sigma=g.add('Flux2Scheduler','四步去噪曲线',(1430,680),['SIGMAS'],values={'steps':4,'width':sw,'height':sh})
-    lat=g.add('EmptyFlux2LatentImage','新画幅',(1430,910),['LATENT'],values={'width':width,'height':height,'batch_size':1})
+    # Keep four denoising evaluations. The first local attempt starts later on
+    # the actual model schedule, retaining the source geometry inside the mask.
+    steps=16 if initial and preserve_layout else 4
+    sigma=g.add('Flux2Scheduler','四步去噪曲线',(1430,680),['SIGMAS'],values={'steps':steps,'width':sw,'height':sh})
+    schedule=(sigma,0)
+    if steps>4:
+        trimmed=g.add('SplitSigmas','Four-step local reconstruction',(1630,730),['SIGMAS','SIGMAS'],
+                      [('sigmas',schedule)],values={'step':steps-4})
+        schedule=(trimmed,1)
+    lat=initial or g.add('EmptyFlux2LatentImage','新画幅',(1430,910),['LATENT'],values={'width':width,'height':height,'batch_size':1})
     sample=g.add('SamplerCustomAdvanced','参考图条件生成',(1790,360),['LATENT','LATENT'],
-                 [('noise',(noise,0)),('guider',(guide,0)),('sampler',(sampler,0)),('sigmas',(sigma,0)),('latent_image',(lat,0))])
+                 [('noise',(noise,0)),('guider',(guide,0)),('sampler',(sampler,0)),('sigmas',schedule),('latent_image',(lat,0))])
     inputs=[('samples',(sample,0)),('vae',(vae,0))]
     if max(width,height)>=3840 or width*height>2048*1152:
         image=g.add('VAEDecodeTiled','分块解码',(2130,360),['IMAGE'],inputs,dict(tile_size=768,overlap=96,temporal_size=64,temporal_overlap=8))

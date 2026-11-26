@@ -171,6 +171,42 @@ def edit_locator(image, bounds):
     return overview
 
 
+def assess_edit_boundary(before, after, box, correction=None):
+    """Follow connections outside the planned box on the actual composited before/after images."""
+    from PIL import ImageChops
+    from print_judge import MODEL
+    old=before.convert('RGB');new=after.convert('RGB')
+    difference=ImageChops.difference(old,new)
+    channels=difference.split()
+    changed=ImageChops.lighter(ImageChops.lighter(channels[0],channels[1]),channels[2]).point(
+        lambda value: 255 if value>10 else 0).getbbox()
+    if not changed:return {'status':'uncertain','trace':'No visible edit found at print scale.'}
+    target=[round(v*n/1000) for v,n in zip(box,old.size*2)]
+    l,t,r,b=(min(changed[0],target[0]),min(changed[1],target[1]),
+             max(changed[2],target[2]),max(changed[3],target[3]))
+    pad=max(72,round(max(r-l,b-t)*.45))
+    field=max(0,l-pad),max(0,t-pad),min(old.width,r+pad),min(old.height,b+pad)
+    panels=[]
+    for im in (old,new):
+        view=im.crop(field)
+        view.thumbnail((1152,1152),Image.Resampling.LANCZOS)
+        panels.append(view)
+    fields={'trace':{'type':'string'},'status':{'enum':['intact','new_damage','uncertain']}}
+    text=('Image A is the original drawing. Image B is the locally edited version at the same scale. '
+          'Ignore whether the intended center detail looks better. Inspect the TRANSITION from the '
+          'changed interior to the unchanged drawing around it. Trace long lines, material boundaries '
+          'and shadows entering and leaving it on ALL four sides. In B look for a previously continuous '
+          'line ending in open space, offset strands, a silhouette jumping sideways, or an abrupt block '
+          'of different shading or perspective. Compare its location in A. Classify new_damage only for '
+          'a concrete new break introduced in B; describe the actual line/sample and side. An intentional '
+          'changed contour that reconnects coherently is intact. Use uncertain if the transition is unresolved.')
+    if correction:
+        text+=' The requested central change was: '+correction+'. Changes within the intended object alone are insufficient evidence of a broken transition. Identify the continuation into the surrounding drawing.'
+    with backend(MODEL) as url:
+        answer=json.loads(ask(url,panels,text,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    return {**answer,'field_pixels':list(field),'changed_pixels':list(changed)}
+
+
 def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
     """Screen the composited native patch, including its connection to the unchanged surroundings."""
     from PIL import ImageChops
@@ -246,6 +282,12 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
         if (source['construction']=='defective' and candidate['construction']=='coherent'
                 and candidate['unrelated_damage'] is False and all(v['trace'].strip() for v in traces.values())):
             result.update(verdict='resolved',next_edit='')
+    if result.get('verdict')=='resolved' and bounds!=(0,0,width,height):
+        boundary=assess_edit_boundary(before,after,box,correction)
+        result['boundary_comparison']=boundary
+        if boundary.get('status')!='intact' or not boundary.get('trace','').strip():
+            result.update(verdict='new_defect' if boundary.get('status')=='new_damage' else 'uncertain',
+                          next_edit='Preserve the original contours crossing the change boundary. '+boundary.get('trace',''))
     if result.get('verdict')=='resolved' and not str(result.get('evidence') or '').strip():
         result['verdict']='uncertain'
     return result
