@@ -1,0 +1,20 @@
+[
+  {
+    "id": "bicycle-workshop",
+    "seed": 3128791,
+    "aspect": "16:9",
+    "prompt": "日系赛璐璐插画。午后的自行车修理铺里，一名穿砖红色围裙的短发女孩扶着蓝色自行车，另一只手往下压打气筒的横把。软管连接前轮的气嘴。一只黑白小狗睡在木柜下。左侧窗光照亮轮圈和围裙的褶皱，画面中没有文字。"
+  },
+  {
+    "id": "otters-in-a-reedbed",
+    "seed": 4472169,
+    "aspect": "3:2",
+    "prompt": "Colored-pencil wildlife illustration. Two river otters rest on different stones in a reedbed. The nearer otter faces the viewer with its front paws on the rim of its rock. The farther otter looks up at one red dragonfly. Show the direction of the pencil strokes in wet fur, clear contact shadows and quieter reflections behind them. No people or text."
+  },
+  {
+    "id": "glass-and-citrus",
+    "seed": 7835411,
+    "aspect": "2:3",
+    "prompt": "静物水粉画。钴蓝色的玻璃水瓶立在折好的白色亚麻布上，旁边是一只切开的柠檬，果肉朝向观众。窗光穿过瓶身，在布面投下蓝色的透射光。玻璃口沿、柠檬果瓣、布边各自清晰，背景是一面安静的灰墙，没有人物和文字。"
+  }
+]

@@ -49,6 +49,16 @@ bash Studio.command
 
 Qwen 的完整起稿模式使用基础模型、50 步和 4.0 引导强度，按模型原生画幅从空白画布采样。每张底图的计算量较大。自动模式在前两轮退稿后需要重新构图时，才会为一个独立文字候选启用完整采样。两种模式都经过相同的构图、精绘和原尺寸审查。相同区域跨轮退稿、清除错误轮廓后仍未改好时，工具会尝试一次 40 步的完整编辑模型，再检查修改前后的实际像素。[Qwen 官方模型说明](https://huggingface.co/Qwen/Qwen-Image-2512)
 
+## 验证新提示词的表现
+
+安装后可用一组从未参与调参的纯文字提示词测试整条流程。测试依次调用同一个 `Studio.command`，每个场景各用固定种子，只在实际 4K 文件、整图终审记录和文件指纹吻合时计为通过。默认每个场景测一轮，日常出图的重试设置独立。原稿和中间图不会计为成功。
+
+```sh
+runtime/venv/bin/python scripts/evaluate.py --run first-local-test
+```
+
+结果保存在 `images/benchmarks/first-local-test/results.json`。要比较两个版本，可用不同的 `--run` 名称，在同一台机器上保持提示词、种子和 `--rounds` 相同。也可以用 `--suite FILE.json` 换成自己的测试集，格式见 `tests/fixtures/unseen-scenes.json`。总耗时包含等待本机设备的时间。
+
 ## 成品在哪里
 
 - 图库入口为项目根目录的 `gallery.html` 或 `images/gallery.html`。
