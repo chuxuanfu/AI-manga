@@ -243,6 +243,54 @@ def confirm_contact_gap(url,crop,overview,quote,tag,independent,*,endpoints=None
     return dict(confirmed=False,observations=observations,models=[tag,independent][:len(observations)])
 
 
+def inspect_disputed_surface(url, image, quote, names, observations, readers):
+    """Resolve two widely separated proposed locations by inspecting both physical surfaces."""
+    from PIL import ImageDraw,ImageOps
+    if len(observations)!=2 or {v['relation'] for v in observations}!={'touching','separated'}:
+        return None
+    far=next(v for v in observations if v['relation']=='separated')
+    near=next(v for v in observations if v['relation']=='touching')
+    if not all(v.get('both_visible') and v.get('nearest_relevant_target') for v in observations):
+        return None
+    actor=far['actor_edge'];surface=far['target_edge']
+    if (math.dist(actor,surface)<145 or math.dist(actor,near['actor_edge'])>35 or
+            math.dist(actor,near['target_edge'])>35):return None
+    patches=[]
+    for x,y in [actor,surface]:
+        px,py=round(x*image.width/1000),round(y*image.height/1000)
+        margin=round(min(image.size)*.12)
+        rect=(max(0,px-margin),max(0,py-margin),min(image.width,px+margin),min(image.height,py+margin))
+        if rect[0]>=rect[2] or rect[1]>=rect[3]:return None
+        patches.append(ImageOps.contain(image.crop(rect),(550,550),Image.Resampling.LANCZOS))
+    props={'working_tip':{'enum':['A','B','unclear']},'receiving_object':{'enum':['A','B','both','neither','unclear']},
+           'target_support':{'type':'string'},'gap_trace':{'type':'string'},
+           'visible_gap':{'type':'boolean'},'other_suitable_contact':{'type':'boolean'}}
+    votes=[]
+    for idx,model in enumerate(readers):
+        order=[0,1] if idx==0 else [1,0]
+        scene=ImageOps.contain(image,(990,990),Image.Resampling.LANCZOS)
+        pen=ImageDraw.Draw(scene)
+        for label,j in zip('AB',order):
+            x,y=[actor,surface][j]
+            x,y=round(x*scene.width/1000),round(y*scene.height/1000)
+            pen.ellipse((x-11,y-11,x+11,y+11),outline='#d92b99',width=2)
+            pen.text((x+12,y-12),label,fill='#af1378',stroke_width=1,stroke_fill='white')
+        msg=('First image locates A and B. The next images show unmarked crops A and B respectively. '
+             'Which site contains the working tip of '+names[0]+'? Which shows the nearest working surface of '
+             +names[1]+'? Identify its physical support or frame from the whole view. A depicted object inside '
+             'a picture or display and the real surroundings occupy separate surfaces. Trace actual space or '
+             'obstructions between the tool and the nearest working surface. If another suitable surface is '
+             'in contact, report it. Judge the actual depicted arrangement. Requested action: '+quote)
+        vote=json.loads(ask(url,[scene]+[patches[j] for j in order],msg,
+                        {'type':'object','properties':props,'required':list(props)},tag=model))
+        votes.append(vote)
+        if (vote['working_tip']!='AB'[order.index(0)] or vote['receiving_object']!='AB'[order.index(1)]
+                or not vote['visible_gap'] or vote['other_suitable_contact'] or not vote['target_support'].strip()
+                or not vote['gap_trace'].strip()):
+            return dict(confirmed=False,sites=[actor,surface],readings=votes)
+    return dict(confirmed=True,sites=[actor,surface],readings=votes)
+
+
 def check_working_contact(url, image, brief, tag, independent):
     """Before a local repair, establish whether its complete action fits the current staging."""
     clauses=[s.strip() for s in re.split(r'[.!?。！？;；]',brief) if CONTACT_ACTION.search(s) and
@@ -252,7 +300,8 @@ def check_working_contact(url, image, brief, tag, independent):
     quote=clauses[0]
     plan=json.loads(ask(url,[],'Does the following sentence explicitly require a depicted part or implement '
         'to make physical contact with a separate surface? If so, quote the names of the working item '
-        'and the receiving surface verbatim. For a held tool choose the tool and its working surface. '
+        'and the receiving surface verbatim, including the physical support when named (a canvas, screen, '
+        'page, or workpiece). For a held tool choose the tool and its working surface. '
         'Ignore figurative, future, intended, interrupted, and negated actions. Sentence: '+quote,
         {'type':'object','properties':props,'required':list(props)},tag=tag))
     names=[plan[k].strip() for k in ('acting_item','receiving_surface')]
@@ -263,11 +312,19 @@ def check_working_contact(url, image, brief, tag, independent):
     result=confirm_contact_gap(url,full,overview,quote,tag,independent,endpoints=names)
     if not result:return None
     result.update(requirement=quote,items=names)
+    if not result['confirmed']:
+        audit=inspect_disputed_surface(url,image,quote,names,result['observations'],(tag,independent))
+        if audit:
+            result['surface_comparison']=audit
+            if audit['confirmed']:
+                result['confirmed']=True
+                result['gap_evidence']=audit['readings'][0]['gap_trace']
     if result['confirmed']:
-        positions=[p[k] for p in result['observations'] for k in ('actor_edge','target_edge')]
+        geometry=[p for p in result['observations'] if p.get('relation','separated')=='separated']
+        positions=[p[k] for p in geometry for k in ('actor_edge','target_edge')]
         xs,ys=zip(*positions)
         result['box']=[max(0,min(xs)-35),max(0,min(ys)-35),min(1000,max(xs)+35),min(1000,max(ys)+35)]
-        result['minimum_gap']=min(math.dist(p['actor_edge'],p['target_edge']) for p in result['observations'])
+        result['minimum_gap']=min(math.dist(p['actor_edge'],p['target_edge']) for p in geometry)
     return result
 
 

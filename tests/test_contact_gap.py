@@ -53,3 +53,14 @@ class ContactGapTests(unittest.TestCase):
         with patch('brief_check.ask') as reader:
             self.assertIsNone(check_working_contact('local',im,'A landscape in morning light.','first','second'))
             reader.assert_not_called()
+
+    def test_disputed_physical_surface_is_identified_again_after_swapping_crops(self):
+        from brief_check import inspect_disputed_surface
+        image=Image.new('RGB',(800,500),'grey')
+        votes=[dict(relation='separated',actor_edge=[450,350],target_edge=[805,345],both_visible=True,nearest_relevant_target=True),
+               dict(relation='touching',actor_edge=[455,349],target_edge=[455,349],both_visible=True,nearest_relevant_target=True)]
+        a=dict(working_tip='A',receiving_object='B',target_support='Framed panel on a stand.',gap_trace='Grass between brush and panel.',visible_gap=True,other_suitable_contact=False)
+        for b,passed in [(dict(a,working_tip='B',receiving_object='A'),True),(a,False),(dict(a,working_tip='B',receiving_object='A',other_suitable_contact=True),False)]:
+            with patch('brief_check.ask',side_effect=map(json.dumps,[a,b])):
+                result=inspect_disputed_surface(None,image,'Press tip against paper',['tip','paper'],votes,['reader one','reader two'])
+            self.assertEqual(result['confirmed'],passed)

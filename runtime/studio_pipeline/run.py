@@ -731,7 +731,7 @@ def main():
                         if contact['confirmed']:
                             box=contact['box'];gap=contact['minimum_gap']
                             item,surface=contact['items']
-                            symptom=contact['observations'][0]['intervening_surface']
+                            symptom=contact.get('gap_evidence') or contact['observations'][0]['intervening_surface']
                             fix='Arrange '+item+' so its working end visibly meets '+surface+' as requested: '+contact['requirement']
                             result['issues'].insert(0,dict(box=box,target=item+' and '+surface,
                                 operation='redraw',symptom=symptom,fix=fix))
