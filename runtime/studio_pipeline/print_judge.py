@@ -1153,6 +1153,14 @@ def independent_detail_check(url, images, overview, brief):
                 and reverse['location'].strip() and reverse['evidence'].strip()):
             report['confirmed']=True
             report['trace']={**finding,'overview_improvement':finding['improvement'],'improvement':reverse['evidence']}
+    from optical_feature import unresolved_neighbor,verify_source_feature
+    if unresolved_neighbor(report):
+        from construction_review import LARGE
+        registered=verify_source_feature(url,low,high,overview,(LARGE,MODEL))
+        report['subject_optics']=registered
+        if registered['confirmed']:
+            report['confirmed']=True
+            report['trace']={**finding,'improvement':registered['orders'][-1]['trace']}
     return report
 
 
@@ -1459,6 +1467,32 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
                     original=held.get('independent_context') or held['corroboration']
                     held['independent_context']=dict(original,decision='clear',operation='none',target='',fix='',
                                                      evidence=disputed['visible_shapes']+' '+disputed['depicted_action'])
+                    result.update(status='running')
+                    result.pop('issue',None)
+                store(report,result)
+    if result.get('status')=='uncertain' and small and result.get('views'):
+        from optical_feature import unresolved_neighbor,verify_source_feature
+        held=result['views'][-1]
+        comparison=held.get('blind_detail_check') or {}
+        if held.get('view')=='comparison' and unresolved_neighbor(comparison):
+            report=report.with_name(report.stem+'-subject-optics.json')
+            if report.is_file():
+                result=json.loads(report.read_text())
+            else:
+                from construction_review import LARGE,edit_locator
+                rect=held['pixels']
+                with Image.open(path) as master, Image.open(small) as baseline, backend(LARGE) as address:
+                    art=master.convert('RGB')
+                    low,high=compare_pixels(baseline.convert('RGB'),art,rect,art.size)
+                    registered=verify_source_feature(address,low,high,edit_locator(art,rect),(LARGE,MODEL))
+                comparison['subject_optics']=registered
+                result['report']=str(report.relative_to(root))
+                if registered['confirmed']:
+                    evidence=registered['orders'][-1]['trace']
+                    comparison['confirmed']=True
+                    comparison['trace']['improvement']=evidence
+                    held['independent_context']=dict(held.get('corroboration') or held['observation'],
+                                                     decision='clear',operation='none',target='',fix='',evidence=evidence)
                     result.update(status='running')
                     result.pop('issue',None)
                 store(report,result)

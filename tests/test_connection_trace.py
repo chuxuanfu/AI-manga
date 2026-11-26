@@ -93,3 +93,27 @@ class OpticalTieBreakTests(unittest.TestCase):
             self.assertEqual(judge.call_count,2 if damaged else 4)
             if not damaged:
                 self.assertEqual([c.kwargs['tag'] for c in judge.call_args_list[-2:]],[LARGE,LARGE])
+
+
+class SubjectOpticsTests(unittest.TestCase):
+    def test_an_unresolved_neighbor_triggers_a_subject_check_without_clearing_it(self):
+        from optical_feature import unresolved_neighbor
+        before=dict(kind='contrast_or_texture_only',finer_version='second')
+        after=dict(kind='contrast_or_texture_only',finer_version='first')
+        row=dict(confirmed=False,trace={'new_artifact':False},contour_magnification=dict(line_pair={'strength':50},forward=before,reverse=after))
+        self.assertTrue(unresolved_neighbor(row))
+        self.assertFalse(unresolved_neighbor(dict(row,subject_optics={'confirmed':False})))
+        self.assertFalse(unresolved_neighbor(dict(row,trace={'new_artifact':True})))
+
+    def test_each_reader_must_identify_the_same_feature_in_its_own_order(self):
+        from optical_feature import verify_source_feature
+        source=dict(scope='bounded_subject',label='cat',feature='iris')
+        site=dict(pixels_in_field=[25,25,121,121])
+        side=dict(located=True,finer='second',improvement='resolved_shape',trace='Two iris boundaries separate at the lower lid.',new_artifact=False)
+        picture=Image.new('RGB',(160,160))
+        for second,expected in ((dict(side,finer='first'),True),(dict(side,finer='first',located=False),False),
+                                (dict(side,finer='first',new_artifact=True),False),(dict(side,finer='second'),False)):
+            with patch('focal_edit.describe_patch',return_value=source),patch('optical_feature.source_loupe',return_value=site), \
+                    patch('optical_feature.ask',side_effect=map(json.dumps,(side,second))):
+                result=verify_source_feature(None,picture,picture,picture,('one','two'))
+                self.assertEqual(result['confirmed'],expected)
