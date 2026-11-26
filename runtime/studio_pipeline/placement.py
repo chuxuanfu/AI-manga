@@ -15,9 +15,9 @@ from masks import refine_subject_mask
 
 def placement_requested(instruction):
     # Enable the planner only when a correction explicitly calls for relocation.
-    return bool(re.search(r'\b(?:move|reposition|relocate|place|position|seat|shift)\b.{0,170}'
+    return bool(re.search(r'\b(?:move|reposition|relocate|place|position|seat|shift|put|rest|set)\b.{0,170}'
                           r'\b(?:farther|further|foreground|background|closer to|to the (?:left|right) of|'
-                          r'far (?:behind|in front)|beside the distant)\b|(?:移到|放到|移动到).{0,18}(?:远处|近处|前景|背景|左侧|右侧)',
+                          r'far (?:behind|in front)|beside the distant|onto|on top of)\b|(?:移到|放到|移动到).{0,18}(?:远处|近处|前景|背景|左侧|右侧|上面|顶部|上)',
                           instruction,re.I|re.S))
 
 
@@ -26,7 +26,8 @@ def placement_plan(image,instruction,brief):
     scene=image.copy()
     scene.thumbnail((1152,1152),Image.Resampling.LANCZOS)
     point=dict(type='integer',minimum=0,maximum=1000)
-    fields={'standalone':{'type':'boolean'},'requirement_quote':{'type':'string'},'label':{'type':'string'},'source':{
+    fields={'standalone':{'type':'boolean'},'requirement_quote':{'type':'string'},'label':{'type':'string'},'parts':{
+            'type':'array','maxItems':6,'items':{'type':'string'}},'source':{
             'type':'array','minItems':4,'maxItems':4,'items':point},
             'destination_foot':{'type':'array','minItems':2,'maxItems':2,'items':point},
             'scale':{'type':'number','minimum':.2,'maximum':1.8},'revealed_surface':{'type':'string'}}
@@ -37,7 +38,11 @@ def placement_plan(image,instruction,brief):
             'is separable from other subjects, and only its position or apparent scale is wrong. '
             'A limb, head, clothing on a body, attached hardware, intertwined figures or a cropped '
             'subject is ineligible. A destination behind an occluder is ineligible. Name one '
-            'concrete segmentable subject. Locate its present bounding box LTRB and the intended '
+            'concrete segmentable subject. For a single subject return empty parts. When contents, '
+            'their container or distinct attached pieces must travel together, supply a short local '
+            'segmentation label for each visible constituent including the container. Use simple '
+            'object nouns and colors. Exclude the fixed source surface and the destination support. '
+            'Locate the bounding box LTRB of the entire carried assembly and the intended '
             'new bottom-center point on its support plane in whole-canvas coordinates 0..1000. '
             'Estimate the required uniform scale relative to its current size. Describe the '
             'unoccupied material and contours to restore at the vacated site. Quote verbatim the part of '
@@ -73,6 +78,32 @@ def mend_color_matched_holes(image, alpha):
     return Image.fromarray(modified)
 
 
+def color_boundary(image, coarse):
+    """Refine a small carried part using its own foreground and background colors."""
+    import cv2
+    ink=np.asarray(coarse)>128
+    yy,xx=np.nonzero(ink)
+    if not len(xx):return None
+    gap=max(3,round(min(np.ptp(xx)+1,np.ptp(yy)+1)*.10))
+    box=(max(0,min(xx)-2*gap),max(0,min(yy)-2*gap),
+         min(image.width,max(xx)+2*gap+1),min(image.height,max(yy)+2*gap+1))
+    seed=ink[box[1]:box[3],box[0]:box[2]]
+    inside=ndimage.binary_erosion(seed,iterations=gap)
+    outside=ndimage.binary_dilation(seed,iterations=gap)
+    if inside.sum()<12 or (~outside).sum()<12:return None
+    classes=np.full(seed.shape,cv2.GC_BGD,np.uint8)
+    classes[outside]=cv2.GC_PR_BGD
+    classes[seed]=cv2.GC_PR_FGD
+    classes[inside]=cv2.GC_FGD
+    pixels=np.array(image.crop(box).convert('RGB'))
+    cv2.grabCut(pixels,classes,None,np.zeros((1,65)),np.zeros((1,65)),4,cv2.GC_INIT_WITH_MASK)
+    matte=(classes==cv2.GC_FGD)|(classes==cv2.GC_PR_FGD)
+    if min((matte&seed).sum()/seed.sum(),(matte&seed).sum()/matte.sum())<.75:return None
+    result=Image.new('L',image.size)
+    result.paste(Image.fromarray(matte.astype(np.uint8)*255),box[:2])
+    return result
+
+
 def reposition(image,plan):
     """Return a provisional local composite plus the areas requiring model inspection."""
     if not isinstance(plan,dict) or plan.get('standalone') is not True:return None
@@ -91,11 +122,36 @@ def reposition(image,plan):
     pad=max(10,round(max(src[2]-src[0],src[3]-src[1])*.14))
     search=(max(0,src[0]-pad),max(0,src[1]-pad),min(w,src[2]+pad),min(h,src[3]+pad))
     crop=image.crop(search)
-    score=probabilities(crop,[plan['label']])[0]
-    if score.max()<.55:return None
-    rough=Image.fromarray(np.uint8(score>max(.27,score.max()*.44))*255).resize(crop.size,Image.Resampling.BILINEAR)
-    alpha=refine_subject_mask(crop,rough)
-    if alpha is rough:return None
+    parts=plan.get('parts',[])
+    if not isinstance(parts,list) or len(parts)>6:return None
+    if any(not isinstance(part,str) or not part.strip() for part in parts):return None
+    labels=list(dict.fromkeys(parts or [plan['label']]))
+    alpha=Image.new('L',crop.size)
+    for score in probabilities(crop,labels):
+        peak=float(score.max())
+        if peak<.55:return None
+        support=score>max(.27,peak*.44)
+        if len(labels)==1:
+            rough=Image.fromarray(np.uint8(support)*255).resize(crop.size,Image.Resampling.BILINEAR)
+            alpha=refine_subject_mask(crop,rough)
+            if alpha is rough:return None
+            break
+        objects,count=ndimage.label(support)
+        areas=np.bincount(objects.ravel(),minlength=count+1)
+        pieces=[i for i in range(1,count+1) if areas[i]>=max(12,.025*support.sum())]
+        if not pieces or len(pieces)>12:return None
+        for i in pieces:
+            rough=Image.fromarray(np.uint8(objects==i)*255).resize(crop.size,Image.Resampling.BILINEAR)
+            contour=refine_subject_mask(crop,rough)
+            if contour is rough:contour=color_boundary(crop,rough)
+            if contour is None or contour is rough:return None
+            alpha=ImageChops.lighter(alpha,contour)
+    if len(labels)>1:
+        # Parts travelling together must form one spatial assembly. Do not lift
+        # another copy of a named component from elsewhere in the source window.
+        occupied=np.asarray(alpha)>128
+        near=ndimage.binary_dilation(occupied,iterations=max(2,round(min(crop.size)*.012)))
+        if ndimage.label(near)[1]!=1:return None
     border=alpha.point(lambda v:255 if v>128 else 0).getbbox()
     if not border or min(border[0],border[1],crop.width-border[2],crop.height-border[3])<1:return None
     alpha=mend_color_matched_holes(crop,alpha)

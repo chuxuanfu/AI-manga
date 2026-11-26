@@ -76,3 +76,16 @@ class PlacementTests(unittest.TestCase):
             path,inspection=repair_placement(self.image,{},'one dog',3,8193,Path(tmp),'dog')
             with Image.open(path) as actual:self.assertIsNone(ImageChops.difference(actual,self.image).getbbox())
             self.assertEqual(inspection,[50,100,800,900])
+
+    def test_carried_parts_must_be_present_and_touch_the_assembly(self):
+        plan={**self.plan,'parts':['saucer','fruit']}
+        body=np.zeros((72,72),dtype=float);body[42:48,16:55]=.99
+        fruit=np.zeros_like(body);fruit[32:44,26:46]=.99
+        distant=np.zeros_like(body);distant[5:10,8:16]=.99
+        with patch.object(placement,'refine_subject_mask',side_effect=lambda rgb,rough:rough.copy()), \
+                patch.object(placement,'erase_region',side_effect=lambda rgb,mask:rgb.copy()):
+            for other,expected in ((fruit,True),(fruit*.1,False),(distant,False)):
+                with patch.object(placement,'probabilities',return_value=[body,other]):
+                    self.assertEqual(placement.reposition(self.image,{**plan,'scale':1}) is not None,expected)
+        self.assertTrue(placement.placement_requested('Rest the filled saucer on top of the lid.'))
+        self.assertTrue(placement.placement_requested('把盛好的盘子放到篮子上面。'))
