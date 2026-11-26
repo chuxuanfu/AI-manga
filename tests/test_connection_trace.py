@@ -22,3 +22,13 @@ class ConnectionTraceTests(unittest.TestCase):
                 result=verify_depicted_connection(None,image,[240,200,440,350],'No visible bolt at the rail.','One strap wraps the rail.')
             self.assertEqual(result['disproved'],expected)
             self.assertIn('contradiction_check',result)
+
+class ContradictoryActionTests(unittest.TestCase):
+    def test_disagreements_reenter_a_visual_check(self):
+        from print_judge import disavowed_action_fault
+        for finding,expected in [('None. The head and its contours are smooth.',True),
+                                 ('No visible physical defect at this joint.',True),
+                                 ('One visible joint is disconnected.',False),
+                                 ('The shape is nonetheless broken.',False)]:
+            self.assertEqual(disavowed_action_fault(dict(condition='visible_fault',problem=finding)),expected)
+            self.assertFalse(disavowed_action_fault(dict(condition='insufficient',problem=finding)))

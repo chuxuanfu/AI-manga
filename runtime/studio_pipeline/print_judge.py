@@ -408,6 +408,16 @@ def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
 
 
 
+def disavowed_action_fault(reading):
+    """A contradicted result triggers a fresh visual trace of the same physical part."""
+    if reading.get('condition')!='visible_fault':
+        return False
+    problem=str(reading.get('problem') or '').strip()
+    return bool(re.search(r'\bno (?:visible |physical |anatomical |structural )*'
+                          r'(?:faults?|defects?|deformit(?:y|ies)|contradictions?|errors?|issues?)\b',problem,re.I)
+                or re.match(r'^(?:none|no problems?(?: found)?|无问题|未发现异常)(?:[.!。:：]|$)',problem,re.I))
+
+
 def inspect_disputed_action(url, image, box, brief):
     """An intact contour can belong to an implausible action or malformed whole part."""
     from construction_review import LARGE
@@ -510,9 +520,7 @@ def inspect_disputed_action(url, image, box, brief):
                                    depicted_action=scene['location_on_parent']+' '+scene['plane_evidence'],problem='')
                 elif check['result']=='malformed' and check['visible_fault'] is True and check['specific_fault'].strip():
                     reading.update(condition='visible_fault',problem=check['specific_fault'])
-    if reading['condition']=='visible_fault' and re.search(
-            r'\bno (?:visible |physical |anatomical |structural )*(?:faults?|defects?|deformit(?:y|ies)|contradictions?|errors?|issues?)\b',
-            reading['problem'],re.I):
+    if disavowed_action_fault(reading):
         # A disputed shape cannot acquire a repair instruction just because the
         # verdict field contradicts the reader's actual description of its pixels.
         fields={'first_landmark':{'type':'string'},'second_landmark':{'type':'string'},
@@ -522,7 +530,9 @@ def inspect_disputed_action(url, image, box, brief):
             'Inspect the disputed part in image one. Image two gives its place in the scene. '
             'Follow its contour from one visible landmark to a second. Does that particular '
             'contour and action make physical sense? Name both landmarks, their connection, '
-            'and one concrete correction if broken. Say cannot_trace if the crop omits the part. '
+            'and one concrete correction if broken. Apply the actual shape words to the parts they modify '
+            'in the original brief. Trace where a contour rounds, tapers, joins, or protrudes when relevant. '
+            'Say cannot_trace if the crop omits the part. '
             'Consider the drawing style and this brief: '+brief,
             {'type':'object','properties':fields,'required':list(fields)},tag=MODEL,reason=True))
         reading['consistency_check']=check
@@ -1366,6 +1376,14 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
         connection=result['views'][-1].get('visible_connection') or {}
         if contradictory_connection(connection) and 'contradiction_check' not in connection:
             report=report.with_name(report.stem+'-connection-trace.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
+                result.pop('issue',None)
+    if result.get('status')=='uncertain' and result.get('views'):
+        disputed=result['views'][-1].get('independent_action_check',{})
+        if disavowed_action_fault(disputed) and 'consistency_check' not in disputed:
+            report=report.with_name(report.stem+'-action-trace.json')
             if report.is_file():result=json.loads(report.read_text())
             else:
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
