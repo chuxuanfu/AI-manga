@@ -186,25 +186,58 @@ def assess_edit_boundary(before, after, box, correction=None):
              max(changed[2],target[2]),max(changed[3],target[3]))
     pad=max(72,round(max(r-l,b-t)*.45))
     field=max(0,l-pad),max(0,t-pad),min(old.width,r+pad),min(old.height,b+pad)
-    panels=[]
-    for im in (old,new):
-        view=im.crop(field)
-        view.thumbnail((1152,1152),Image.Resampling.LANCZOS)
-        panels.append(view)
-    fields={'trace':{'type':'string'},'status':{'enum':['intact','new_damage','uncertain']}}
-    text=('Image A is the original drawing. Image B is the locally edited version at the same scale. '
-          'Ignore whether the intended center detail looks better. Inspect the TRANSITION from the '
-          'changed interior to the unchanged drawing around it. Trace long lines, material boundaries '
-          'and shadows entering and leaving it on ALL four sides. In B look for a previously continuous '
-          'line ending in open space, offset strands, a silhouette jumping sideways, or an abrupt block '
-          'of different shading or perspective. Compare its location in A. Classify new_damage only for '
-          'a concrete new break introduced in B; describe the actual line/sample and side. An intentional '
-          'changed contour that reconnects coherently is intact. Use uncertain if the transition is unresolved.')
-    if correction:
-        text+=' The requested central change was: '+correction+'. Changes within the intended object alone are insufficient evidence of a broken transition. Identify the continuation into the surrounding drawing.'
+    import hashlib
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+    # Localize what actually changed near each side, independent of image order.
+    # Keep the native crop off the central part that is being redrawn.
+    x,y,u,v=changed
+    strength=np.asarray(difference.crop(changed)).max(axis=2)
+    h,w=strength.shape
+    score=gaussian_filter(strength.astype(np.float32),max(1,min(9,min(w,h)/18)))
+    bx,by=max(1,round(w*.18)),max(1,round(h*.18))
+    bands=[(0,0,bx,h),(w-bx,0,w,h),(0,0,w,by),(0,h-by,w,h)]
+    radius=max(34,min(200,round(max(w,h)*.22)))
+    sites=[]
+    for x1,y1,x2,y2 in bands:
+        cut=score[y1:y2,x1:x2]
+        dy,dx=np.unravel_index(np.argmax(cut),cut.shape)
+        cx=x+x1+int(dx);cy=y+y1+int(dy)
+        sites.append((max(0,cx-radius),max(0,cy-radius),min(old.width,cx+radius),min(old.height,cy+radius)))
+    def views(im):
+        overview=im.crop(field);overview.thumbnail((900,900),Image.Resampling.LANCZOS)
+        sheet=Image.new('RGB',(584,584),'#777777')
+        for i,site in enumerate(sites):
+            tile=ImageOps.contain(im.crop(site),(288,288),Image.Resampling.LANCZOS)
+            sheet.paste(tile,((i%2)*296,(i//2)*296))
+        return overview,sheet
+    old_views,new_views=views(old),views(new)
+    # Both directions of a comparison must show the same anonymous A/B pair.
+    # Revealing the edited side prompted readers to find new damage in either order.
+    first_new=hashlib.sha256(new.crop(field).tobytes()).digest()<hashlib.sha256(old.crop(field).tobytes()).digest()
+    a,b=(new_views,old_views) if first_new else (old_views,new_views)
+    candidate='A' if first_new else 'B'
+    fields={'trace':{'type':'string'},'transition':{'enum':['A','B','both_intact','both_broken','ambiguous']}}
+    text=('Two anonymous samples A and B of one illustration. Images 1 and 2 show the same field for A and B; '
+          'images 3 and 4 enlarge four matching transition sites for A and B. For each grid the order is left, '
+          'right, top, bottom. Inspect where a changed shape meets the surrounding drawing. Follow contours, '
+          'material color and shadow across these sites. Look for a line cut off in open space, a jagged '
+          'material switch across a continuous surface, a displaced edge, or a rectangular change of shading. '
+          'Judge joins with the surrounding drawing independently of which central object you prefer. '
+          'Choose A or B only when its transitions are coherent and the other sample shows a specific damaged '
+          'transition. Choose both_intact if both join naturally, both_broken when both show breaks, ambiguous '
+          'when the evidence cannot distinguish them. Name the exact location and what you see in EACH sample.')
     with backend(MODEL) as url:
-        answer=json.loads(ask(url,panels,text,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
-    return {**answer,'field_pixels':list(field),'changed_pixels':list(changed)}
+        answer=json.loads(ask(url,[a[0],b[0],a[1],b[1]],text,
+                        {'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    winner=answer['transition']
+    status='uncertain'
+    if answer.get('trace','').strip():
+        if winner in (candidate,'both_intact'):status='intact'
+        elif winner in ('A','B'):status='new_damage'
+    return {**answer,'status':status,'candidate':candidate,'field_pixels':list(field),
+            'changed_pixels':list(changed),'transition_sites':sites}
+
 
 
 def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
@@ -291,6 +324,26 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
     if result.get('verdict')=='resolved' and not str(result.get('evidence') or '').strip():
         result['verdict']='uncertain'
     return result
+
+
+def compare_prior_version(current, earlier, box, correction, symptom, brief):
+    """Select a former print for full reinspection when a later edit damaged its surroundings."""
+    reading=assess_local_edit(current,earlier,box,correction,symptom,brief)
+    if reading.get('verdict')!='uncertain' or not reading.get('blind_comparison'):
+        return reading
+    # The single-image inspection found the earlier detail plausible and the
+    # narrow center comparison disagreed. A restored transition must win on
+    # specific visible damage, not on a tie or an ambiguous boundary.
+    comparison=reading.get('independent_construction',{})
+    candidate=comparison.get('samples',{}).get(comparison.get('candidate'),{})
+    if candidate.get('construction')=='defective' or candidate.get('unrelated_damage'):
+        return reading
+    boundary=assess_edit_boundary(current,earlier,box,correction)
+    reading['surrounding_recovery']=boundary
+    if (boundary['status']=='intact' and boundary.get('candidate') in ('A','B')
+            and boundary['transition']==boundary['candidate']):
+        reading['eligible_for_full_review']=True
+    return reading
 
 
 def plan_local_repair(image, box, target, instruction, medium, directory, stage, brief=None):

@@ -941,12 +941,12 @@ def main():
                 alternative=earlier_local_version(job,last,retry_source[1],focus,prompt,REVISION)
                 if alternative:
                     earlier,history=alternative
-                    from construction_review import assess_local_edit
+                    from construction_review import compare_prior_version
                     with Image.open(last) as current_art, Image.open(earlier) as older_art:
-                        verdict=assess_local_edit(current_art,older_art,focus,issue['fix'],issue.get('symptom'),prompt)
+                        verdict=compare_prior_version(current_art,older_art,focus,issue['fix'],issue.get('symptom'),prompt)
                     save(job/('prior-version-'+history['current'][:12]+'-'+history['earlier'][:12]+'-review.json'),
                          {**history,'verdict':verdict})
-                    if verdict.get('verdict')=='resolved':
+                    if verdict.get('verdict')=='resolved' or verdict.get('eligible_for_full_review'):
                         reverted=earlier
         if not reverted and focus and issue.get('verify_part_identity'):
             from print_judge import verify_depicted_connection, verify_part_identity

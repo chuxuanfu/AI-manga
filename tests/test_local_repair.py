@@ -11,7 +11,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
-from construction_review import LARGE, assess_local_edit, verify_interior_figure
+from construction_review import LARGE, assess_edit_boundary, assess_local_edit, compare_prior_version, verify_interior_figure
 from illustration import instruction_edit, reference_draft
 from masks import structural_composite
 from print_judge import actionable_edit, crop_brief, disputed_action_resolved, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity
@@ -151,6 +151,18 @@ class LocalRepairTests(unittest.TestCase):
         self.assertEqual(retry_direction(''), '')
         self.assertEqual(retry_direction('An unfamiliar artifact in the picture.'), '')
 
+    def test_an_earlier_version_requires_locally_plausible_form_and_a_specific_boundary_win(self):
+        for state, winner, expected in [('ambiguous','A',True),('defective','A',False),
+                                        ('ambiguous','both_intact',False),('ambiguous','B',False)]:
+            uncertain = {'verdict':'uncertain','blind_comparison':{'better':'equal'},
+                         'independent_construction':{'candidate':'A','samples':{'A':{'construction':state}}}}
+            boundary = {'status':'intact' if winner!='B' else 'new_damage', 'candidate':'A','transition':winner}
+            with patch('construction_review.assess_local_edit',return_value=uncertain), patch(
+                    'construction_review.assess_edit_boundary', return_value=boundary):
+                result = compare_prior_version(None,None,None,'A connection',None,'Artwork')
+            self.assertEqual(bool(result.get('eligible_for_full_review')), expected)
+            self.assertEqual(result['verdict'], 'uncertain')
+
     def test_native_detail_review_keeps_the_authors_material_and_color_directions(self):
         for brief in ('A red boat in an indigo woodblock print with crisp carved contours.',
                       'A plain cotton scarf in warm reflected light. · Japanese anime key visual.',
@@ -164,6 +176,23 @@ class LocalRepairTests(unittest.TestCase):
                      'No repair is necessary.', '无需修改。'):
             self.assertFalse(actionable_edit(text))
         self.assertTrue(actionable_edit('Redraw the joint where it meets the handle.'))
+
+    def test_sides_of_a_boundary_comparison_do_not_reveal_which_image_was_edited(self):
+        before = Image.new('RGB', (320, 200), 'gray')
+        after = before.copy()
+        ImageDraw.Draw(after).line((100, 78, 197, 115), fill='black', width=6)
+        pairs = []
+        def compare(url, images, *args, **kwargs):
+            pairs.append([im.tobytes() for im in images])
+            return json.dumps({'transition':'A', 'trace':'Stroke continues in sample A.'})
+        box = [280, 330, 680, 660]
+        with patch('construction_review.ask', side_effect=compare), patch(
+                'construction_review.backend', return_value=nullcontext(None)):
+            forward = assess_edit_boundary(before, after, box)
+            reverse = assess_edit_boundary(after, before, box)
+        self.assertEqual(pairs[0], pairs[1])
+        self.assertEqual({forward['status'], reverse['status']}, {'intact', 'new_damage'})
+        self.assertEqual(len(forward['transition_sites']), 4)
 
     def test_repair_preserves_a_new_contour_and_the_crop_boundary(self):
         original = Image.new('RGB', (180, 128), 'beige')
