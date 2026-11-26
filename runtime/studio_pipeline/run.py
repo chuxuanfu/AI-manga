@@ -154,7 +154,7 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     original_request=(box,description,target)
     if reference_style and rebuild_shape:
         from construction_review import plan_local_repair
-        box,target,description=plan_local_repair(im,box,target,description,requested_medium(caption) or '',directory,stage)
+        box,target,description=plan_local_repair(im,box,target,description,requested_medium(caption) or '',directory,stage,caption)
     w,h = im.size
     x0,y0,x1,y1 = [round(v*n/1000) for v,n in zip(box,(w,h,w,h))]
     span = max(x1-x0,y1-y0)

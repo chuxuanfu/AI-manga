@@ -155,6 +155,15 @@ def review(im,brief,regions,path,detected=(),observed_people=0):
     except (OSError,ValueError,KeyError,RuntimeError) as exc:
         return {'model':tag,'verdict':'unclear','observation':str(exc)[:160]}
 
+def edit_locator(image, bounds):
+    """A neutral location marker preserves the source pose without revealing a candidate."""
+    overview=image.convert('RGB').copy()
+    overview.thumbnail((780,780),Image.Resampling.LANCZOS)
+    marked=[round(v*n/k) for v,n,k in zip(bounds,overview.size*2,image.size*2)]
+    ImageDraw.Draw(overview).rectangle(marked,outline='#be3674',width=2)
+    return overview
+
+
 def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
     """Screen the composited native patch, including its connection to the unchanged surroundings."""
     from PIL import ImageChops
@@ -172,6 +181,7 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
     scale=min(3,640/edge) if edge<640 else min(1,960/edge)
     size=tuple(max(1,round(side*scale)) for side in old.size)
     old,new=(im.resize(size,Image.Resampling.LANCZOS) for im in (old,new))
+    context=[] if bounds==(0,0,width,height) else [edit_locator(before,bounds)]
     props={'verdict':{'enum':['resolved','still_present','new_defect','uncertain']},
            'evidence':{'type':'string'},'next_edit':{'type':'string'}}
     question=('Inspect this single candidate crop in isolation. An earlier version had this reported defect: '
@@ -194,7 +204,9 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
             else:
                 pair,expected=[old,new],'B'
             pair_fields={'evidence':{'type':'string'},'better':{'enum':['A','B','equal','uncertain']}}
-            choice=json.loads(ask(url,pair,'Two independent samples of the same detail. Trace the actual '
+            choice=json.loads(ask(url,pair+context,'Two independent samples A and B of the same detail. '
+                +('Image 3 only locates the subject and establishes its pose. Compare A and B. ' if context else '')
+                +'Trace the visible parts, endpoints and their connections in each sample. Trace the actual '
                 'structure in each image separately. Which better satisfies this goal: '+correction+
                 '? Do not infer the order in which the samples were made. Return equal for indistinguishable '
                 'samples and uncertain if neither demonstrates the requested improvement.',
@@ -202,12 +214,37 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
             result['blind_comparison']={**choice,'candidate':expected}
             if choice['better']!=expected or not choice['evidence'].strip():
                 result.update(verdict='uncertain',next_edit='Make the corrected structure legible at the final pixel scale.')
+    if (result.get('verdict')=='uncertain' and result.get('blind_comparison')
+            and result.get('evidence','').strip() and available(LARGE)):
+        # An isolated reading and a pair comparison disagreed. Use a different
+        # local model on each anonymous crop separately; neither sees the other crop
+        # or the earlier votes. Both observations must distinguish the actual fault.
+        fields={'trace':{'type':'string'},'construction':{'enum':['coherent','defective','ambiguous']},
+                'unrelated_damage':{'type':'boolean'}}
+        query=('Inspect this single anonymous sample. Inventory the visible parts, their endpoints and '
+               'their actual position relative to their parent and nearby surfaces. Do the visible '
+               'contours make the requested construction legible in this perspective? Treat hidden '
+               'parts and background surfaces according to the physical scene. If you cannot trace '
+               'the named structure, choose ambiguous. Goal: '+correction+
+               ('. The other image is only the whole-scene location marker.' if context else '')+
+               ('. Scene: '+brief if brief else ''))
+        traces={}
+        with backend(LARGE) as addr:
+            for label,frame in zip(('A','B'),pair):
+                traces[label]=json.loads(ask(addr,[frame,*context],query,
+                    {'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+        source=traces['B' if expected=='A' else 'A']
+        candidate=traces[expected]
+        result['independent_construction']={'model':LARGE,'samples':traces,'candidate':expected}
+        if (source['construction']=='defective' and candidate['construction']=='coherent'
+                and candidate['unrelated_damage'] is False and all(v['trace'].strip() for v in traces.values())):
+            result.update(verdict='resolved',next_edit='')
     if result.get('verdict')=='resolved' and not str(result.get('evidence') or '').strip():
         result['verdict']='uncertain'
     return result
 
 
-def plan_local_repair(image, box, target, instruction, medium, directory, stage):
+def plan_local_repair(image, box, target, instruction, medium, directory, stage, brief=None):
     """Locate the complete local attachment when a review box describes only a damaged tip."""
     import hashlib
     model='qwen3.8:27b'
@@ -220,7 +257,8 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage)
     view=image.crop((x,y,x+width,y+height))
     view.thumbnail((960,960),Image.Resampling.LANCZOS)
     bbox=[round(1000*(v-origin)/length) for v,origin,length in zip((l,t,r,b),(x,y,x,y),(width,height,width,height))]
-    key=hashlib.sha256(view.tobytes()+json.dumps(['physical-plan-v2',bbox,target,instruction,medium,model]).encode()).hexdigest()
+    locator=edit_locator(image,(x,y,x+width,y+height))
+    key=hashlib.sha256(view.tobytes()+locator.tobytes()+json.dumps([bbox,target,instruction,medium,brief,model]).encode()).hexdigest()
     path=directory/(stage+'-repair-plan.json')
     cached=json.loads(path.read_text()) if path.is_file() else {}
     if cached.get('key')==key:return cached['box'],cached['part'],cached['instruction']
@@ -232,14 +270,16 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage)
             'the eye pair and muzzle of that same face; for fingers, include the hand and wrist; for '
             'a spoke or handle, include its immediate mounting contour. Exclude unrelated people, '
             'entire bodies and background objects. Return a box in 0..1000 RELATIVE TO THIS CROP and '
-            'name the complete part. Translate the request into a physically possible repair in this perspective. '
+            'name the complete part. Image 2 locates image 1 in the whole scene. Trace the part to its parent '
+            'there and establish whether it touches the apparent surface or is in front of it. Describe the '
+            'actual connection or separation. Translate the request into a physically possible repair. '
             'Treat guesses by previous readers as hypotheses. Keep the visible contact and material plausible. '
             'In corrected_view describe the correct local pose, material, '
             'orientation, color and connection visible in this framing for an illustrator. Use under '
             '45 English words, phrased positively. Target: '+str(target)+'. Repair: '+instruction+
-            '. Medium: '+medium)
+            '. Medium: '+medium+('. Original scene: '+brief if brief else ''))
     with backend(model) as addr:
-        result=json.loads(ask(addr,[view],prompt,{'type':'object','properties':props,'required':list(props)},tag=model))
+        result=json.loads(ask(addr,[view,locator],prompt,{'type':'object','properties':props,'required':list(props)},tag=model))
     coords=result.get('box')
     part=result.get('part')
     corrected=result.get('corrected_view')
