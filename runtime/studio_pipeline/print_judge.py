@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-38'
+REVISION = 'print-inspection-39'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -422,6 +422,53 @@ def disputed_action_resolved(reading):
 HARDWARE_CLAIM=re.compile(r'\b(?:brackets?|hinge[sd]?|sockets?|bolts?|welds?|rivets?|mounting|fasteners?|'
                           r'locking mechanism|articulat(?:ion|ed) joint|load path|cleats?|mechanical joint|mechanical.{0,100}(?:joint|articulation)|'
                           r'order of (?:over/under )?crossings)\b|铰链|螺栓|焊缝|紧固件|承力路径',re.I)
+
+
+CROP_OMISSION=re.compile(r'(?:crop|close.up|field of view).{0,115}?(?:exclude|cut.?off|does not (?:include|show)|'
+                         r'doesn.t (?:include|show)|too (?:tight|narrow)|out of view)|'
+                         r'(?:outside|beyond|out of).{0,28}?(?:crop|close.up|cropped view)|'
+                         r'(?:not visible|cannot be seen|can.t see).{0,30}?(?:crop|close.up)|裁切.{0,15}(?:未包含|没有显示|未显示)',re.I)
+
+
+def verify_outside_crop(url,image,brief,claim):
+    """Find a claimed missing contact in the whole illustration before reviewing its pixels."""
+    from construction_review import LARGE
+    if not CROP_OMISSION.search(claim) or not model_identity(LARGE):return None
+    whole=image.copy()
+    whole.thumbnail((1440,1440),Image.Resampling.LANCZOS)
+    edges=('left','top','right','bottom')
+    fields={k:{'type':'integer','minimum':0,'maximum':1000} for k in edges}
+    fields.update(condition={'enum':['satisfied_in_view','visible_fault','not_identified']},trace={'type':'string'},clause={'type':'string'})
+    question=('An earlier crop excluded part of the scene. Using this COMPLETE illustration, find the actual '
+              'required part, support or contact the crop omitted. Locate that contact itself, not merely the '
+              'nearest identifiable subject. Bound the two meeting contours in normalized coordinates. '
+              'If the brief asks for a relation spanning two sites, trace the visible path between them and '
+              'identify the far attachment. In clause quote the exact words of the original brief requiring the relation. Mark satisfied_in_view only if the requested visible relationship '
+              'can be traced. A nearby shape or a guessed off-screen endpoint is insufficient. Crop report: '
+              +claim+' Author brief: '+brief)
+    site=json.loads(ask(url,[whole],question,{'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+    result={'search':site,'confirmed':False}
+    box=[site[k] for k in edges]
+    l,t,r,b=box
+    clause=site.get('clause','').strip().strip('“”\"')
+    if (not clause or ' '.join(clause.casefold().split()) not in ' '.join(brief.casefold().split())
+            or site['condition']!='satisfied_in_view' or not site['trace'].strip()
+            or not (0<=l<r<=1000 and 0<=t<b<=1000 and (r-l)*(b-t)<300000)):return result
+    rect=tuple(round(n*k/1000) for n,k in zip(box,image.size*2))
+    detail=image.crop(expanded(rect,image.size))
+    scale=min(2.5,1024/max(detail.size))
+    detail=detail.resize(tuple(max(1,round(n*scale)) for n in detail.size),Image.Resampling.LANCZOS)
+    keys={'condition':{'enum':['satisfied_in_view','visible_fault','uncertain']},'evidence':{'type':'string'}}
+    request=('Image 1 enlarges a physical detail from the actual original pixels. Image 2 shows the '
+             'composition. First trace the two visible contours and identify their relative depth in '
+             'the enlargement. Compare only with this verbatim author requirement: '+clause+
+             '. Use satisfied_in_view if the specified relation is visibly depicted. A contact can '
+             'occlude part of a surface; judge the visible sides and any actual contradictions. A '
+             'missing endpoint expressly requested, a broken or fused part, or a visible gap where '
+             'contact is required cannot be marked satisfied. Describe concrete visual evidence.')
+    check=json.loads(ask(url,[detail,whole],request,{'type':'object','properties':keys,'required':list(keys)},tag=MODEL))
+    result.update(check=check,box=box,confirmed=check['condition']=='satisfied_in_view' and bool(check['evidence'].strip()))
+    return result
 
 
 def verify_depicted_connection(url,image,box,claim,brief):
@@ -951,6 +998,21 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                             record['visible_connection']=contact
                             if contact['disproved']:
                                 second=dict(second,decision='clear',operation='none',target='',fix='',evidence=contact['verification']['trace'])
+                                record['independent_context']=second
+                if second['decision']=='uncertain' and kind in ('whole','construction','contacts','subject','comparison','draft-comparison'):
+                    offscreen=verify_outside_crop(url,image,brief,second['evidence'])
+                    if offscreen:
+                        record['whole_scene_location']=offscreen
+                        if offscreen['confirmed']:
+                            cross=dict(second,decision='clear',operation='none',fix='',target='',evidence=offscreen['check']['evidence'])
+                            if kind in ('comparison','draft-comparison'):
+                                # The missing contact now has its own native inspection. Still verify that
+                                # the two ORIGINAL comparison samples agree in sharpness, ink and material.
+                                cross=judge_view(url,view,'Compare only the optical detail visible in both supplied pixel fields. '
+                                    'Look for separated strokes or material edges, smearing, halos and lost contrast. '
+                                    'The missing body part has been checked at another location. Give a concrete observation. '+question)
+                            if cross['decision']=='clear':
+                                second=cross
                                 record['independent_context']=second
                 if second['decision']!='clear':
                     bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)

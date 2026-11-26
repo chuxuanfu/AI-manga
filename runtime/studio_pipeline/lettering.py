@@ -91,7 +91,7 @@ def clean_lettering(path, brief, folder, stage):
     if not blank_surfaces_requested(brief) or not DETECTOR.is_file() or not INPAINTER.is_file():
         return path
     source_id = fingerprint(path)
-    key = hashlib.sha256(json.dumps(['lettering-v3', source_id, brief, model_identity(MODEL)],
+    key = hashlib.sha256(json.dumps(['lettering-v4', source_id, brief, model_identity(MODEL)],
                                      ensure_ascii=False).encode()).hexdigest()
     report = folder / (stage + '-lettering.json')
     candidate = folder / (stage + '-plain-surfaces.png')
@@ -118,7 +118,9 @@ def clean_lettering(path, brief, folder, stage):
     joined = cv2.dilate(np.asarray(masks),np.ones((threshold,threshold),np.uint8))
     _, labels, statistics, _ = cv2.connectedComponentsWithStats(joined)
     confirmed = []
-    fields = {'appearance':{'type':'string'},'feature':{'enum':['characters','drawing','uncertain']}}
+    fields = {'appearance':{'type':'string'},'feature':{'enum':['printed_or_handwritten_marks','surface_detail','insufficient_evidence']}}
+    overview=image.copy()
+    overview.thumbnail((750,750),Image.Resampling.LANCZOS)
     schema = {'type':'object','properties':fields,'required':list(fields)}
     with backend(MODEL) as url:
         groups=sorted(enumerate(statistics[1:],start=1),key=lambda item:-item[1][4])
@@ -128,13 +130,15 @@ def clean_lettering(path, brief, folder, stage):
             view = image.crop(rect)
             factor = min(3.,800/max(view.size))
             view = view.resize(tuple(max(1,round(n*factor)) for n in view.size),Image.Resampling.LANCZOS)
-            question = ('Describe the marks near the middle of this crop. Are they deliberately drawn '
-                        'letters, numerals, words or illegible pseudo-writing? A decoration, fabric fold, '
-                        'anatomy, light reflection or simple nonalphabetic emblem is drawing. Use uncertain '
-                        'if a surface inscription cannot be identified independently.')
-            result = json.loads(ask(url,[view],question,schema,tag=MODEL))
+            question = ('Image one enlarges markings near the center. Image two shows their original '
+                        'illustration. Identify the physical surface, ink color and layout of the markings '
+                        'in your own words. A row of glyph-like strokes arranged as a label, title, signature '
+                        'or inscription is printed_or_handwritten_marks even if it is illegible or invented. '
+                        'Lines defining object contours, seams, grain, reflections or a pictorial motif are '
+                        'surface_detail. If the pixels cannot distinguish these, use insufficient_evidence.')
+            result = json.loads(ask(url,[view,overview],question,schema,tag=MODEL))
             record['observations'].append(dict(box=list(map(int,(left,top,width,height))),reading=result))
-            if result['feature']=='characters' and result['appearance'].strip():
+            if result['feature']=='printed_or_handwritten_marks' and result['appearance'].strip():
                 selected = (np.asarray(masks)>0) & (labels==index)
                 strokes=glyph_mask(image,Image.fromarray(selected.astype(np.uint8)*255))
                 if strokes is not None:confirmed.append(strokes)

@@ -27,10 +27,20 @@ def inspection_environment():
     from evidence import TAG,model_identity
     from construction_review import LARGE
     from print_judge import MODEL
-    # Bind reuse to the installed reviewers, prompt logic and local feature extractors.
-    acc=hashlib.sha256()
+    import importlib
+    import marshal
+    import types
+    # A long-running process can coexist with an upgraded checkout. Bind the
+    # receipt to its actually loaded functions as well as its installation.
+    acc=hashlib.sha256(b'loaded-review-functions-v1')
     for name in ('review','construction_review','reference_review','evidence','structure','counts','page_layout'):
+        module=importlib.import_module(name)
         acc.update(Path(__file__).with_name(name+'.py').read_bytes())
+        for key,value in sorted(vars(module).items()):
+            fn=getattr(value,'__wrapped__',value)
+            if isinstance(fn,types.FunctionType) and fn.__module__==name:
+                acc.update(key.encode())
+                acc.update(marshal.dumps(fn.__code__))
     for family in ('visual_reviewer','clipseg','object_detector'):
         for path in sorted((RUNTIME/'models'/family).glob('*')):
             if path.is_file():

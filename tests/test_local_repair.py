@@ -130,6 +130,19 @@ class LocalRepairTests(unittest.TestCase):
             self.assertTrue(json.loads(submitted.data)['prompt']['1']['inputs']['filename_prefix'].startswith('image-restored-'))
             self.assertEqual(json.loads((root/'drawing-task.json').read_text())['id'],'new')
 
+    def test_crop_omission_requires_a_located_attachment_and_an_independent_native_read(self):
+        from print_judge import verify_outside_crop
+        claim='The crop shows part of the bird but excludes the feet and support.'
+        found={'condition':'satisfied_in_view','trace':'Feet reach the bar.','clause':'Bird perched on rail','left':420,'top':530,'right':550,'bottom':590}
+        for outcome,expected in (('uncertain',False),('satisfied_in_view',True),('visible_fault',False)):
+            replies=[json.dumps(found),json.dumps({'condition':outcome,'evidence':'Two toes curl over the bar.'})]
+            with patch('print_judge.model_identity',return_value='model'),patch('print_judge.ask',side_effect=replies):
+                value=verify_outside_crop(None,Image.new('RGB',(400,300)),'Bird perched on rail',claim)
+            self.assertEqual(value['confirmed'],expected)
+        with patch('print_judge.ask') as reader:
+            self.assertIsNone(verify_outside_crop(None,None,'Bird on rail','A talon visibly merges with the wood.'))
+            reader.assert_not_called()
+
     def test_full_scene_repair_sees_the_native_detail_but_uses_the_full_canvas(self):
         graph = instruction_edit('Repair this connection', 77, 'whole.png', 'trial',
                                  masked=True, detail_reference='detail.png').api
