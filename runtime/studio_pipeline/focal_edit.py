@@ -246,8 +246,8 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
     fields={'same_subject_and_pose':{'type':'boolean'},'same_medium_and_light':{'type':'boolean'},
             'introduced_defect':{'type':'boolean'},'marks_follow_surfaces':{'type':'boolean'},'trace':{'type':'string'}}
     with backend(LARGE) as url:
-        check=json.loads(ask(url,[base,paint,locator],
-            'Compare the ORIGINAL crop (1), raw editor output (2), and the scene locator (3). A small change to '
+        check=json.loads(ask(url,[base,corrected,locator],
+            'Compare the ORIGINAL crop (1), the actual composited print crop (2), and the scene locator (3). A small change to '
             'fine lines is desired. Trace an actual feature in both crops. Hold a changed species or person, '
             'new object, shifted pose, damaged contact, doubled silhouette, lettering, new seam, or a material '
             'or light change. Follow a NEW mark from its start to its end. A graphic overlay, texture crossing a '
