@@ -700,6 +700,15 @@ def verify_outside_crop(url,image,brief,claim):
     return result
 
 
+def contradictory_connection(reading):
+    """Flag an explicit contradiction for a new visual inquiry, never for automatic clearance."""
+    inventory=reading.get('inventory') or {}
+    return (inventory.get('condition')=='visible_break' and
+            re.search(r'\b(?:no (?:visible |actual |physical )?(?:gap|break|interruption|discontinuity)|'
+                      r'without (?:any |a )?(?:visible )?(?:break|gap|interruption))\b',
+                      inventory.get('trace',''),re.I) is not None)
+
+
 def verify_depicted_connection(url,image,box,claim,brief):
     """Check visible construction separately from a demand to illustrate hidden hardware."""
     from construction_review import LARGE
@@ -723,6 +732,28 @@ def verify_depicted_connection(url,image,box,claim,brief):
         'Choose unresolved when the relevant contact cannot be located. Work from the drawing itself.',
         {'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
     result={'blind_model':LARGE,'inventory':read,'disproved':False}
+    if contradictory_connection(result):
+        # Resolve the conflict using only the drawing and the author's actual
+        # endpoint requirements. A continuous line elsewhere cannot clear this site.
+        tight=image.crop(pixels)
+        factor=min(3,750/max(tight.size))
+        tight=tight.resize(tuple(max(1,round(v*factor)) for v in tight.size),Image.Resampling.LANCZOS)
+        props={'entry_surface':{'type':'string'},'end_or_occluder':{'type':'string'},
+               'visible_fault':{'type':'string'},'trace':{'type':'string'},
+               'condition':{'enum':['visible_coherent_contact','visible_break','unresolved']}}
+        cue=('Inspect the marked connection in the full drawing, the surrounding close-up and the '
+             'tight enlargement. Trace the SAME strand or outer contour from its entry on a named surface '
+             'to its endpoint or the exact boundary that occludes its continuing part. A wrap on a '
+             'support, a crossing behind an edge, or hidden fastening can be plausible. Visible contact '
+             'alone is insufficient if it fails the stated action. A gap or an unanchored loose part is '
+             'a fault. Identify any actually visible failure, otherwise leave visible_fault empty. '
+             'Attribute a requested fitting only to the site explicitly named in the brief. Brief: '+brief)
+        fresh=json.loads(ask(url,[overview,detail,tight],cue,{'type':'object','properties':props,
+                             'required':list(props)},tag=LARGE))
+        result['contradiction_check']=fresh
+        if (fresh['condition']=='visible_coherent_contact' and not fresh['visible_fault'].strip()
+                and all(fresh[k].strip() for k in ('entry_surface','end_or_occluder','trace'))):
+            read=fresh
     if read['condition']!='visible_coherent_contact' or not read['trace'].strip():return result
     fields={'trace':{'type':'string'},'basis':{'enum':['only_unseen_internal_hardware','visible_fault',
                                                      'required_visible_detail_missing','unresolved']}}
@@ -1295,6 +1326,14 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
         if (intact_description(held.get('independent_context') or {})
                 and 'disputed_redraw' not in held):
             report=report.with_name(report.stem+'-visible-fault.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
+                result.pop('issue',None)
+    if result.get('status') in ('local','uncertain') and result.get('views'):
+        connection=result['views'][-1].get('visible_connection') or {}
+        if contradictory_connection(connection) and 'contradiction_check' not in connection:
+            report=report.with_name(report.stem+'-connection-trace.json')
             if report.is_file():result=json.loads(report.read_text())
             else:
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
