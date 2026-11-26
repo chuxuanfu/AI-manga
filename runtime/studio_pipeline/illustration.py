@@ -77,7 +77,7 @@ def text_composition(text,seed,width,height,prefix,*,full=False):
     return g
 
 
-def construction_guide(instruction, directory=None):
+def construction_guide(instruction, directory=None, *, attempt=0):
     """Find a local example of the construction named in this particular correction."""
     import json
     from pathlib import Path
@@ -99,7 +99,14 @@ def construction_guide(instruction, directory=None):
             file=(directory/guide['file']).resolve()
             if file.is_relative_to(directory.resolve()) and file.is_file():
                 matches.append((file,guide))
-    return matches[0] if len(matches)==1 else None
+    if len(matches)!=1:return None
+    file,guide=matches[0]
+    alternative=guide.get('retry_reference')
+    if attempt>=3 and alternative:
+        alternate=(directory/alternative['file']).resolve()
+        if alternate.is_relative_to(directory.resolve()) and alternate.is_file():
+            return alternate,{**alternative,'requires':guide['requires']}
+    return file,guide
 
 
 def pigment_edit(instruction):

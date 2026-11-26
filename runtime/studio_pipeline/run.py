@@ -245,7 +245,7 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     model_root=RUNTIME/'ComfyUI/models'
     recolor=pigment_edit(original_request[1])
     from illustration import construction_guide
-    guide=construction_guide(original_request[1]) if reference_style and rebuild_shape else None
+    guide=construction_guide(original_request[1],attempt=reconstruction_attempt) if reference_style and rebuild_shape else None
     scene_depth='whole scene as a depth reference' in original_request[1].casefold()
     specialist=(installed_editor(model_root) if allow_specialist and reference_style and rebuild_shape
                 and (guide or scene_depth or recolor or reconstruction_attempt>=2) else None)

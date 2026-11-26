@@ -1133,6 +1133,9 @@ class LocalRepairTests(unittest.TestCase):
     def test_boat_hitch_and_dock_ring_select_distinct_construction_guides(self):
         from illustration import construction_guide
         cleat=construction_guide('Tie the rope to a cleat on the bow. Preserve the mooring ring on the dock.')
+        after=construction_guide('Tie the rope to a cleat on the bow.',attempt=3)
+        self.assertEqual(after[0].name,'mounted-cleat-and-line.jpg')
+        self.assertIn('Marek',after[1]['author'])
         ring=construction_guide('Tie the mooring rope to the iron ring on the pier. Keep the boat cleat.')
         self.assertEqual(cleat[0].name,'rope-on-horn-cleat.png')
         self.assertEqual(ring[0].name,'rope-through-mooring-ring.jpg')

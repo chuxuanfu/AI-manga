@@ -21,7 +21,16 @@
     "source": "https://commons.wikimedia.org/wiki/File:Knot_cleat.jpg",
     "author": "Jazzmanian",
     "license": "Public domain (released by the author)",
-    "modifications": "Cropped the completed hitch at right, rotated it and added a white margin."
+    "modifications": "Cropped the completed hitch at right, rotated it and added a white margin.",
+    "retry_reference": {
+      "file": "mounted-cleat-and-line.jpg",
+      "construction": "Two low posts and their mounting plate touch the deck. Follow the rope as it wraps the bases in loaded contact and crosses between them. The standing end leaves the wrap toward the other mooring point in the illustration. Retain the requested ink, scale and support plane.",
+      "source": "https://commons.wikimedia.org/wiki/File:002_Chrome_steel_boat_cleat_with_tied_mooring_rope_-_nautical_vessel_equipment_detail,_yacht_cleat.jpg",
+      "author": "Marek Ślusarczyk",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "modifications": "Cropped and resized the photograph to show the hardware and loaded rope."
+    }
   },
   {
     "file": "rope-through-mooring-ring.jpg",
