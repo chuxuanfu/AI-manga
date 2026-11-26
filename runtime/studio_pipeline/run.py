@@ -490,6 +490,14 @@ def main():
     if args.round_worker and args.retry_round and four_only:
         from production import local_retry_source
         retry_source=local_retry_source(args.retry_round,prompt)
+        if retry_source and not (args.reviewed_image or args.from_image or args.candidate_image or args.repair_box):
+            # When a text-only job consumes a whole new round yet keeps exactly
+            # the previous rejected master, let new seeds try a fresh composition.
+            # User-supplied source images always keep their original composition.
+            retained=retry_source[0].resolve()
+            if not retained.is_relative_to(args.retry_round.resolve()):
+                rec['重选构图原因']='上一轮局部重画未能改变被退回的母版'
+                retry_source=None
     if retry_source:
         approved=retry_source[1]
     elif args.candidate_image:
