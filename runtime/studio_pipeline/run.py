@@ -892,10 +892,17 @@ def main():
         # a body or object that intentionally continues beyond the canvas.
         from print_judge import FRAME_CLAIM, verify_frame_exit, excluded_by_brief, exclusion_repair, MODEL as PRINT_MODEL
         if focus and issue.get('verify_part_identity'):
-            from print_judge import verify_part_identity
+            from print_judge import verify_depicted_connection, verify_part_identity
             from evidence import backend
             with Image.open(last) as source,backend(PRINT_MODEL) as address:
                 identity=verify_part_identity(address,source,focus,issue)
+                contact=None
+                if not (identity and identity['disproved']):
+                    contact=verify_depicted_connection(address,source,focus,issue.get('symptom',''),prompt)
+            if contact:
+                save(job/'continued-visible-connection.json',contact)
+                if contact['disproved']:
+                    issue=dict(issue,operation='reinspect',symptom=contact['verification']['trace'])
             if identity:
                 save(job/'continued-part-identity.json',identity)
                 if identity['disproved']:

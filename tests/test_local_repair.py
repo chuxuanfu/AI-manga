@@ -14,7 +14,7 @@ sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
 from construction_review import LARGE, assess_local_edit, verify_interior_figure
 from illustration import instruction_edit, reference_draft
 from masks import structural_composite
-from print_judge import actionable_edit, inspect_repaired_region, issue_category, verify_part_identity
+from print_judge import actionable_edit, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity
 from production import repeated_rejection, same_repair_region
 from review import inspection_key
 from structure import inspect_small_figure_support
@@ -78,6 +78,23 @@ class LocalRepairTests(unittest.TestCase):
             self.assertIn(diagnosis, ask.call_args_list[1].args[2])
             self.assertEqual(row['decision'], expected)
             self.assertEqual(record['inventory'], inventory)
+
+    def test_hidden_hardware_check_preserves_broken_or_explicitly_required_connections(self):
+        field = Image.new('RGB', (400, 300))
+        claim = 'The socket has no visible bolt.'
+        for condition, basis, expected in [
+                ('visible_break', None, False), ('unresolved', None, False),
+                ('visible_coherent_contact', 'visible_fault', False),
+                ('visible_coherent_contact', 'required_visible_detail_missing', False),
+                ('visible_coherent_contact', 'only_unseen_internal_hardware', True)]:
+            values = [json.dumps({'condition': condition, 'trace': 'The edges meet at the collar.'})]
+            if basis:values.append(json.dumps({'basis': basis, 'trace': 'Crossing traced in the final crop.'}))
+            with patch('print_judge.ask', side_effect=values), patch('print_judge.model_identity', return_value='installed'):
+                audit = verify_depicted_connection(None, field, [200, 350, 370, 530], claim, 'An assembled mechanism')
+            self.assertEqual(audit['disproved'], expected)
+        with patch('print_judge.ask', side_effect=AssertionError('Anatomy needs a direct review')):
+            self.assertIsNone(verify_depicted_connection(None, field, [5, 5, 80, 80],
+                                                        'Two fingers are fused together.', 'A hand holding bread'))
 
     def test_mistaken_part_requires_coherent_geometry_and_two_readers(self):
         image = Image.new('RGB', (512, 288))

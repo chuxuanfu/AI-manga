@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-31'
+REVISION = 'print-inspection-32'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -282,6 +282,51 @@ def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
         outcome='global' if original['decision']=='global' else 'local'
     return dict(corroboration,decision=outcome,target=read['part'],evidence=read['evidence'])
 
+
+
+HARDWARE_CLAIM=re.compile(r'\b(?:brackets?|hinge[sd]?|sockets?|bolts?|welds?|rivets?|mounting|fasteners?|'
+                          r'locking mechanism|articulat(?:ion|ed) joint|load path|cleats?|mechanical joint|'
+                          r'order of (?:over/under )?crossings)\b|铰链|螺栓|焊缝|紧固件|承力路径',re.I)
+
+
+def verify_depicted_connection(url,image,box,claim,brief):
+    """Check visible construction separately from a demand to illustrate hidden hardware."""
+    from construction_review import LARGE
+    if not box or not HARDWARE_CLAIM.search(claim) or not model_identity(LARGE):return None
+    if not 0<(box[2]-box[0])*(box[3]-box[1])<160000:return None
+    pixels=tuple(round(v*n/1000) for v,n in zip(box,image.size*2))
+    field=expanded(pixels,image.size)
+    detail=image.crop(field)
+    scale=min(2,1000/max(detail.size))
+    detail=detail.resize(tuple(max(1,round(n*scale)) for n in detail.size),Image.Resampling.LANCZOS)
+    overview=image.copy()
+    overview.thumbnail((920,920),Image.Resampling.LANCZOS)
+    ImageDraw.Draw(overview).rectangle(tuple(round(v*n/1000) for v,n in zip(box,overview.size*2)),outline='#c92e69',width=2)
+    fields={'trace':{'type':'string'},'condition':{'enum':['visible_coherent_contact','visible_break','unresolved']}}
+    read=json.loads(ask(url,[detail,overview],
+        'Inspect the actual physical connection at the marked location. First image is the detail. '
+        'Name both visible components and trace their contours to the shared contact or explicit occluding '
+        'edge. Identify what goes in front and what goes behind. Determine whether the DRAWN shapes make '
+        'a coherent contact. A real gap, shape that abruptly changes into something else, or inconsistent '
+        'depth counts as a visible break. Do not invent an internal mechanism to justify a broken silhouette. '
+        'Choose unresolved when the relevant contact cannot be located. Work from the drawing itself.',
+        {'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+    result={'blind_model':LARGE,'inventory':read,'disproved':False}
+    if read['condition']!='visible_coherent_contact' or not read['trace'].strip():return result
+    fields={'trace':{'type':'string'},'basis':{'enum':['only_unseen_internal_hardware','visible_fault',
+                                                     'required_visible_detail_missing','unresolved']}}
+    check=json.loads(ask(url,[detail,overview],
+        'A print reviewer flagged: '+claim+' An independent reader traced the connection: '+read['trace']+
+        ' Verify both against the detail and its location. Classify only_unseen_internal_hardware ONLY if '
+        'the exterior contact and depth order are visibly coherent, the allegation merely demands a visible '
+        'internal fitting, hidden strand or connector beyond what this illustration must depict, and the '
+        'AUTHOR did not require that detail to be shown. An actual visible gap, contradictory crossing, '
+        'false silhouette, count error or missing requested object remains a fault. If the contact is '
+        'unresolved do not clear it. State the precise visible contour that distinguishes the cases. '
+        'Author brief: '+brief,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    result['verification']=check
+    result['disproved']=check['basis']=='only_unseen_internal_hardware' and bool(check['trace'].strip())
+    return result
 
 
 ABSENCE_CLAIM=re.compile(r'\b(?:missing|absent|cropped|cut off|out of frame|extend the canvas|feet are (?:not|never) visible|'
@@ -711,6 +756,15 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                             record['part_identity']=identity
                             if identity['disproved']:
                                 second=dict(second,decision='clear',operation='none',target='',fix='',evidence=identity['verification']['trace'])
+                                record['independent_context']=second
+                if second['decision']!='clear':
+                    bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
+                    if second['decision'] in ('uncertain','local') and second.get('operation')=='redraw':
+                        contact=verify_depicted_connection(url,image,bounds,second['evidence'],brief)
+                        if contact:
+                            record['visible_connection']=contact
+                            if contact['disproved']:
+                                second=dict(second,decision='clear',operation='none',target='',fix='',evidence=contact['verification']['trace'])
                                 record['independent_context']=second
                 if second['decision']!='clear':
                     bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
