@@ -16,7 +16,7 @@ from illustration import instruction_edit, reference_draft
 from masks import structural_composite
 from print_judge import actionable_edit, crop_brief, disputed_action_resolved, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity
 from page_layout import retry_direction
-from production import earlier_local_version, repeated_rejection, same_repair_region
+from production import earlier_local_version, previous_scene_candidate, repeated_rejection, same_repair_region
 from review import inspection_key
 from structure import inspect_small_figure_support
 
@@ -212,6 +212,20 @@ class LocalRepairTests(unittest.TestCase):
             new.putpixel((1, 511), (0, 0, 0))
             new.save(current)
             self.assertIsNone(find_version())
+
+    def test_previous_scene_requires_matching_renderer_review_and_file(self):
+        from print_judge import fingerprint
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            folder = root/'round'; folder.mkdir()
+            image = folder/'scene.png'; Image.new('RGB',(40, 20)).save(image)
+            digest = fingerprint(image)
+            row = {'stage':'scene','file':image.name,'hash':digest,'review':{'status':'uncertain'}}
+            receipt = {'renderer':'ComfyUI','model_files':['local-editor'],'output_sha256':{'round/scene.png':digest}}
+            (folder/'scene-task.json').write_text(json.dumps(receipt))
+            self.assertEqual(previous_scene_candidate(folder, 'scene', [row], root)[0], image)
+            Image.new('RGB',(40, 20),'red').save(image)
+            self.assertIsNone(previous_scene_candidate(folder, 'scene', [row], root))
 
     def test_unrelated_or_accepted_edits_do_not_trigger_escalation(self):
         with TemporaryDirectory() as tmp:

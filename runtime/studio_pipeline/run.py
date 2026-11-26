@@ -858,6 +858,19 @@ def main():
         if not editor:return None
         scene_tried=True
         guided=bool(args.reviewed_image or args.from_image or args.candidate_image)
+        if not guided:
+            # A previously generated complete scene can be a valid fresh text
+            # composition. Reassess its actual pixels before allocating another render.
+            from production import previous_scene_candidate
+            previous_scene=previous_scene_candidate(job,stage,rec['reviews'],OUTPUT)
+            if previous_scene:
+                existing,weights=previous_scene
+                reassessed=check_draft_structure(existing,check(existing,stage+'-rescreen'))
+                if usable(reassessed):
+                    rec['高清底图返工']={'源图':str(source),'重绘':str(existing),'依据':issue['fix'],'模型':weights,
+                                     '保留原构图':False,'目标范围':None}
+                    save(manifest,rec)
+                    return existing
         with Image.open(source) as canvas:
             scale=min(1,(1536*1024/(canvas.width*canvas.height))**.5)
             size=tuple(max(32,round(n*scale/16)*16) for n in canvas.size)
