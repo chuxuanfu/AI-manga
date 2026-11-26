@@ -738,6 +738,53 @@ ABSENCE_CLAIM=re.compile(r'\b(?:missing|absent|cropped|cut off|out of frame|exte
 FORM_DEPTH=re.compile(r'\b(?:flat(?:ness)?|flattened|thickness|depth|3d|three.dimensional|volume|volumetric)\b|扁平|立体感|厚度|体积',re.I)
 
 
+def intact_description(finding):
+    """A suggested redraw needs an observed fault even when the target is identified."""
+    if finding.get('operation')!='redraw':
+        return False
+    description=finding.get('evidence') or finding.get('symptom','')
+    return bool(re.search(r'\b(?:not (?:fused|merged|broken|a malformation|malformed|detached)|'
+                          r'(?:normal|natural) (?:sleeve )?occlusion|no (?:visible |anatomical |structural )*'
+                          r'(?:malformation|deformity|fault|break)|coherent,? (?:three.dimensional )?grip)\b',
+                          description,re.I))
+
+
+def check_disputed_redraw(url,image,box,finding,previous,brief):
+    """Verify the disputed defect before spending a new diffusion pass on an intact part."""
+    from construction_review import LARGE
+    if not box or not intact_description(finding) or not model_identity(LARGE):
+        return None
+    pixels=tuple(round(v*n/1000) for v,n in zip(box,image.size*2))
+    field=expanded(pixels,image.size)
+    site=image.crop(field)
+    site.thumbnail((1024,1024),Image.Resampling.LANCZOS)
+    props={'first_endpoint':{'type':'string'},'second_endpoint':{'type':'string'},
+           'visible_fault':{'type':'string'},'condition':{'enum':['intact','fault','unresolved']}}
+    reading=json.loads(ask(url,[site],
+        'Inspect this actual local illustration. Trace the visible anatomy or object edges through '
+        'any overlap. Name both endpoints separately. Check silhouette, joint shape, count and which '
+        'surface goes in front. Describe a concrete fault if one exists. If the target cannot be seen '
+        'or the attachment cannot be traced choose unresolved. Target: '+str(finding.get('target','')),
+        {'type':'object','properties':props,'required':list(props)},tag=LARGE))
+    result={'inspection':reading,'disproved':False}
+    if (reading['condition']!='intact' or not reading['first_endpoint'].strip()
+            or not reading['second_endpoint'].strip() or reading['first_endpoint']==reading['second_endpoint']):
+        return result
+    fields={'decision':{'enum':['disproves_all_claims','visible_fault','uncertain']},
+            'trace':{'type':'string'},'other_fault':{'type':'boolean'}}
+    check=json.loads(ask(url,[site],
+        'Evaluate each proposed structural complaint against the pixels. Only choose disproves_all_claims '
+        'if this field contains the disputed part and its visible connections directly disprove every '
+        'complaint. Inspect for a displaced or extra part, broken contour or impossible overlap as well. '
+        'Explain exactly what crosses or joins where. Unresolved or partly offscreen evidence remains '
+        'uncertain. Initial claim: '+previous+'. Later reading: '+str(finding.get('evidence'))+
+        '. Proposed edit: '+str(finding.get('fix'))+'. Desired scene: '+brief,
+        {'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    result.update(verification=check,disproved=(check['decision']=='disproves_all_claims'
+                  and check['other_fault'] is False and bool(check['trace'].strip())))
+    return result
+
+
 def verify_part_identity(url, image, box, finding, earlier_claim=''):
     """Avoid repainting an intact neighboring object mistaken for the alleged part."""
     from construction_review import LARGE
@@ -1202,6 +1249,15 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             else:
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
                 result.pop('issue',None)
+    if result.get('status')=='local' and result.get('views'):
+        held=result['views'][-1]
+        if (intact_description(held.get('independent_context') or {})
+                and 'disputed_redraw' not in held):
+            report=report.with_name(report.stem+'-visible-fault.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
+                result.pop('issue',None)
     if result['status'] in ('pass','local','global','uncertain'):return result
     with ExitStack() as resources:
         with Image.open(path) as source:image=source.convert('RGB')
@@ -1643,6 +1699,14 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                             if contact['disproved']:
                                 second=dict(second,decision='clear',operation='none',target='',fix='',evidence=contact['verification']['trace'])
                                 record['independent_context']=second
+                if second['decision']=='local' and intact_description(second):
+                    bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
+                    redraw_check=check_disputed_redraw(url,image,bounds,second,row['evidence'],brief)
+                    if redraw_check:
+                        record['disputed_redraw']=redraw_check
+                        if redraw_check['disproved']:
+                            second=dict(second,decision='clear',operation='none',target='',fix='',evidence=redraw_check['verification']['trace'])
+                            record['independent_context']=second
                 if second['decision']=='uncertain' and kind in ('whole','construction','contacts','subject','comparison','draft-comparison'):
                     offscreen=verify_outside_crop(url,image,brief,second['evidence'])
                     if offscreen:

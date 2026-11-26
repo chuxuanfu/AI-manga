@@ -31,6 +31,19 @@ class LocalRepairTests(unittest.TestCase):
             dashboard(job,{'prompt':'A coastal scene','rounds':[],'status':'本轮未达标，自动重试'})
             self.assertNotIn('href="4K.png"',(job/'proofs.html').read_text())
 
+    def test_confirmed_extra_part_keeps_redraw_despite_an_intact_wrist(self):
+        from print_judge import check_disputed_redraw,intact_description
+        art=Image.new('RGB',(256,256),'tan')
+        finding={'operation':'redraw','target':'hand','evidence':'The wrist is not fused to the beam.',
+                 'fix':'Separate the doubled thumb.'}
+        self.assertTrue(intact_description(finding))
+        still_broken={'condition':'fault','first_endpoint':'wrist','second_endpoint':'rail',
+                      'visible_fault':'two thumbs'}
+        with patch('print_judge.model_identity',return_value='weights'), patch('print_judge.ask',return_value=json.dumps(still_broken)) as judge:
+            result=check_disputed_redraw('local',art,[250,400,520,620],finding,'Extra thumb.','A hand on a rail.')
+            self.assertFalse(result['disproved'])
+            self.assertEqual(judge.call_count,1)
+
     def test_repaired_print_layout_keeps_local_edits_and_rejects_missing_subject(self):
         from print_judge import reviewed_print_layout
         with TemporaryDirectory() as tmp:
