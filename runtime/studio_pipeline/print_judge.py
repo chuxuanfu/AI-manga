@@ -414,19 +414,50 @@ def inspect_disputed_action(url, image, box, brief):
          'hardware. Set visible_fault only for a concrete shape contradiction, and insufficient only when the '
          'part cannot be traced. Requested image: '+brief)
     reading=json.loads(ask(url,[whole,middle,detail],cue,{'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+    if reading['condition']=='physically_plausible':
+        # A wide view can establish the action without resolving the shape of
+        # its individual parts. Inspect only the actual disputed site first.
+        tight=image.crop(pixels)
+        if min(tight.size)>0:
+            from PIL import ImageOps
+            tight=ImageOps.contain(tight,(832,832),Image.Resampling.LANCZOS)
+            props={'part':{'type':'string'},'visible_ends':{'type':'array','items':{'type':'string'}},
+                   'base_and_branches':{'type':'string'},'occlusion_evidence':{'type':'string'},
+                   'contradiction':{'type':'string'},'condition':{'enum':['fully_traced','malformed','unresolved']}}
+            check=json.loads(ask(url,[tight],
+                'Look only at the visible shape in this single close-up. Do not infer a normal shape from '
+                'the apparent intention of the artist. Trace its outer silhouette clockwise, listing each '
+                'separate visible terminal part by position and the base it returns to. Check taper, '
+                'spacing, joins and dimensional shape. For a hand trace which digit is the thumb, '
+                'which other digits are actually drawn, and where any hidden digits could pass behind '
+                'a specific contour. A missing span of the palm, two spike-like rays with no plausible '
+                'remaining knuckles, or digits terminating in a stump require a concrete explanation. '
+                'For a simple, unbranched object describe its boundaries and connection. Visibly '
+                'stylized yet coherent shapes qualify. Mark unresolved if the crop alone cannot establish '
+                'the branch structure. Leave contradiction empty when no error is visible.',
+                {'type':'object','properties':props,'required':list(props)},tag=MODEL,reason=True))
+            reading['silhouette_inventory']=check
+            if check['condition']=='malformed' and check['contradiction'].strip():
+                reading.update(condition='visible_fault',problem=check['contradiction'])
+            elif check['condition']!='fully_traced' or not check['visible_ends'] or not check['base_and_branches'].strip():
+                # A different pose or a plausible grip elsewhere in the
+                # scene cannot supply missing articulations in this silhouette.
+                reading.update(condition='insufficient',problem=check['occlusion_evidence'] or check['base_and_branches'])
+                return reading
     if reading['condition']=='insufficient':
         # The close-up removes the depth cues that distinguish a background
         # from a support. Obtain the pose without showing either the close-up
         # or the first reader's proposed action.
         planes={'parent':{'type':'string'},'location_on_parent':{'type':'string'},
                 'adjacent_surface':{'type':'string'},'plane_evidence':{'type':'string'},
-                'relation':{'enum':['contact','overlap_at_different_depths','undetermined']}}
+                'relation':{'enum':['contact','overlap_at_different_depths','separated_in_space','undetermined']}}
         scene=json.loads(ask(url,[edit_locator(image,pixels)],
             'Only inspect the marked location in the original illustration. Locate the small part '
             'relative to its parent: for a person name the nearest body landmark and the posture; '
             'for an object identify its mounting or suspension. Compare the height and position with '
             'nearby surfaces IN THREE DIMENSIONS. Give a drawing cue which demonstrates contact or '
-            'occlusion at different depths. If neither relation is established, say undetermined.',
+            'occlusion at different depths, or separation in free space. Use separated_in_space when the '
+            'part clearly hangs or floats away from nearby surfaces. Use undetermined only when the depth is unreadable.',
             {'type':'object','properties':planes,'required':list(planes)},tag=MODEL,reason=True))
         reading['depth_inventory']=scene
         if scene['relation']!='undetermined' and all(scene[k].strip() for k in planes if k!='relation'):
@@ -528,7 +559,9 @@ def inspect_located_attachment(url, image, point, brief):
 
 
 def disputed_action_resolved(reading):
+    silhouette=reading.get('silhouette_inventory',{})
     return (reading.get('condition')=='physically_plausible' and
+            (not silhouette or silhouette.get('condition')=='fully_traced') and
             all(str(reading.get(key) or '').strip() for key in ('visible_shapes','depicted_action')))
 
 
@@ -857,19 +890,57 @@ def independent_detail_check(url, images, overview, brief):
         return json.loads(ask(url, views, prompt, schema, tag=MODEL, reason=reason))
     finding = read([low,high,overview],question,fields,True)
     report['trace'] = finding
-    if (finding['resolvability']!='resolved' or finding['defined_finer_forms'] is not True or
-            finding['new_artifact'] is not False or not finding['trace'].strip() or not finding['improvement'].strip()):
+    if finding['new_artifact'] is not False or not finding['trace'].strip():
         return report
+    resolved=(finding['resolvability']=='resolved' and finding['defined_finer_forms'] is True
+              and bool(finding['improvement'].strip()))
     fields = {'finer_version':{'enum':['first','second','equivalent','ambiguous']},
               'location':{'type':'string'},'evidence':{'type':'string'}}
-    question = ('Treat these as two anonymous print proofs of the same region. The last image shows the scene. '
-                'Which of the first two contains a more clearly resolved plausible material feature or contour? '
+    question = ('Treat these as two anonymous print proofs of the same region. '
+                'Which contains a more clearly resolved plausible material feature or contour? '
                 'A sharper halo, noise, added random strokes or a contrast change is insufficient. Choose equivalent '
                 'when no concrete additional legible structure can be located. Name the feature and its exact '
                 'location in one short sentence. Brief: '+brief)
-    reverse = read([high,low,overview],question,fields)
-    report['reverse'] = reverse
-    report['confirmed'] = reverse['finer_version']=='first' and bool(reverse['location'].strip() and reverse['evidence'].strip())
+    if resolved:
+        reverse = read([high,low,overview],question+' The last image locates the feature.',fields)
+        report['reverse'] = reverse
+        report['confirmed'] = reverse['finer_version']=='first' and bool(reverse['location'].strip() and reverse['evidence'].strip())
+        return report
+    # Sometimes the feature already exists in both versions. Resolve the ink
+    # edge, stitch or vein itself at optical zoom before concluding equivalence.
+    if resize_only(images)['condition']!='distinct_signal' or min(high.size)<96:
+        return report
+    source=np.asarray(low.convert('L'),dtype=np.float32)
+    gx=cv2.Sobel(source,-1,1,0);gy=cv2.Sobel(source,-1,0,1)
+    # Select connected source contours independently of the new drawing. New
+    # paper noise or ringing cannot choose its own most flattering field.
+    size=min(144,min(high.size)//2)
+    signal=cv2.GaussianBlur(cv2.magnitude(gx,gy).clip(0,140),(0,0),size/5)
+    margin=size//2
+    y,x=np.unravel_index(np.argmax(signal[margin:high.height-margin,margin:high.width-margin]),
+                         (high.height-2*margin,high.width-2*margin))
+    rect=(int(x),int(y),int(x)+size,int(y)+size)
+    def loupe(im):
+        return im.crop(rect).resize((size*3,size*3),Image.Resampling.NEAREST)
+    low_site,high_site=loupe(low),loupe(high)
+    props={**fields,'kind':{'enum':['resolved_material_or_contour','contrast_or_texture_only','artifact','indeterminate']}}
+    instruction=(question+' Both samples are shown with identical nearest-pixel magnification. '
+                 'Find a recognizable ink edge, grouping of fibers, bevel, or crease. A turn or separation '
+                 'on an existing form can be clearer without changing what is depicted. Describe a '
+                 'specific difference in the shape of that feature. Coarser digital pixels from this '
+                 'display magnification occur in both images. Ignore differences limited to grain or '
+                 'increased contrast, sharpened halos and paper noise.')
+    forward=read([low_site,high_site],instruction,props)
+    evidence={'pixels_in_field':list(rect),'forward':forward}
+    report['contour_magnification']=evidence
+    if (forward['finer_version']=='second' and forward['kind']=='resolved_material_or_contour'
+            and forward['location'].strip() and forward['evidence'].strip()):
+        reverse=read([high_site,low_site],instruction,props)
+        evidence['reverse']=reverse
+        if (reverse['finer_version']=='first' and reverse['kind']=='resolved_material_or_contour'
+                and reverse['location'].strip() and reverse['evidence'].strip()):
+            report['confirmed']=True
+            report['trace']={**finding,'overview_improvement':finding['improvement'],'improvement':reverse['evidence']}
     return report
 
 
@@ -940,6 +1011,29 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             result=dict(model=MODEL,model_id=model_id,revision=REVISION,sha256=digest,source=str(path),
                         brief=brief,views=[],status='running',report=str(report.relative_to(root)),
                         perspective_review=True,comparison_sha256=prior_id,draft_sha256=draft_id)
+    if result.get('status')=='uncertain' and result.get('views'):
+        check=result['views'][-1].get('independent_action_check',{})
+        if check.get('depth_inventory',{}).get('relation')=='undetermined' and 'depth_verification' not in check:
+            report=report.with_name(report.stem+'-free-space.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
+                result.pop('issue',None)
+    if result.get('status')=='uncertain' and result.get('views'):
+        held=result['views'][-1]
+        prior=held.get('blind_detail_check',{})
+        fields=prior.get('fine_97') or [0,0]
+        if (held.get('view') in ('comparison','draft-comparison') and prior.get('trace')
+                and not prior.get('confirmed') and not prior['trace'].get('new_artifact',True)
+                and 'contour_magnification' not in prior and fields[1]>=max(3,fields[0]*1.08)):
+            report=report.with_name(report.stem+'-optical-zoom.json')
+            if report.is_file():result=json.loads(report.read_text())
+            else:
+                # Retain the original window plan and all unchallenged views
+                # for this exact source, master, brief, model and dimensions.
+                result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],
+                            status='running',optical_reinspection=True)
+                result.pop('issue',None)
     if result['status'] in ('pass','local','global','uncertain'):return result
     with ExitStack() as resources:
         with Image.open(path) as source:image=source.convert('RGB')

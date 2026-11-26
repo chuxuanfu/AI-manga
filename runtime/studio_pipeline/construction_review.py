@@ -194,6 +194,31 @@ def edit_locator(image, bounds):
     return overview
 
 
+def overpainted_rectangle(before, after, target, changed):
+    """Detect a flat rectangular fill extending outside a recolor and erasing existing linework."""
+    import cv2
+    import numpy as np
+    original=np.asarray(before.crop(changed))
+    result=np.asarray(after.crop(changed))
+    # Only completely level plateaus with a measurable color displacement can
+    # constitute a rectangular fill. Ordinary pigment gradients do not qualify.
+    high=cv2.dilate(result,np.ones((3,3),np.uint8))
+    low=cv2.erode(result,np.ones((3,3),np.uint8))
+    flat=np.max(high-low,axis=2)<=2
+    displacement=np.max(np.abs(result.astype(np.int16)-original),axis=2)
+    count,labels,stats,_=cv2.connectedComponentsWithStats((flat & (displacement>20)).astype(np.uint8))
+    for component in range(1,count):
+        x,y,w,h,area=map(int,stats[component])
+        if min(w,h)<20 or area<1600 or area<.97*w*h:continue
+        left,top=changed[0]+x,changed[1]+y
+        outside=w*h-max(0,min(left+w,target[2])-max(left,target[0]))*max(0,min(top+h,target[3])-max(top,target[1]))
+        if outside<.15*w*h:continue
+        edges=cv2.Canny(original[y:y+h,x:x+w],42,100)
+        if np.count_nonzero(edges)<max(40,.022*area):continue
+        return [left,top,left+w,top+h]
+    return None
+
+
 def assess_edit_boundary(before, after, box, correction=None):
     """Follow connections outside the planned box on the actual composited before/after images."""
     from PIL import ImageChops
@@ -253,6 +278,10 @@ def assess_edit_boundary(before, after, box, correction=None):
     from illustration import pigment_edit
     recolor=pigment_edit(correction or '')
     if recolor:
+        rect=overpainted_rectangle(old,new,target,changed)
+        if rect:
+            return {'status':'new_damage','trace':'A flat rectangle crosses the requested recoloring area and erases prior linework.',
+                    'overpaint_pixels':rect,'changed_pixels':list(changed),'field_pixels':list(field),'transition_sites':sites}
         text+=(' The requested change to this illustration is: '+correction+
                ' A marking inside the recolored object can end sharply or completely replace the original '
                'pattern. Trace the EXTERIOR silhouette against the background, continuity of nearby '
@@ -264,7 +293,7 @@ def assess_edit_boundary(before, after, box, correction=None):
                         {'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
     winner=answer['transition']
     status='uncertain'
-    if answer.get('trace','').strip():
+    if answer.get('trace','').strip() and not re.search(r'\bI (?:will|shall|intend to|am going to)\b',answer['trace'],re.I):
         if winner in (candidate,'both_intact'):status='intact'
         elif winner in ('A','B'):status='new_damage'
     if recolor and status!='intact' and available(LARGE):

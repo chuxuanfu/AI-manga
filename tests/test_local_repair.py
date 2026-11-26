@@ -602,6 +602,9 @@ class LocalRepairTests(unittest.TestCase):
             self.assertEqual(disputed_action_resolved(dict(reading, condition=condition)),
                              condition == 'physically_plausible')
         self.assertFalse(disputed_action_resolved({'condition':'physically_plausible'}))
+        scene=dict(reading,condition='physically_plausible',depth_verification={'matches_pose':True})
+        self.assertFalse(disputed_action_resolved(dict(scene,silhouette_inventory={'condition':'unresolved'})))
+        self.assertTrue(disputed_action_resolved(dict(scene,silhouette_inventory={'condition':'fully_traced'})))
 
     def test_retry_brief_cannot_copy_objects_from_a_discarded_composition(self):
         for note, unexpected in [('The strands around the unrequested cleat have tangled crossings.', 'cleat'),
@@ -684,6 +687,22 @@ class LocalRepairTests(unittest.TestCase):
         self.assertEqual({forward['status'], reverse['status']}, {'intact', 'new_damage'})
         self.assertEqual(len(forward['transition_sites']), 4)
 
+    def test_flat_color_spill_must_cross_the_target_and_destroy_existing_lines(self):
+        from construction_review import overpainted_rectangle
+        src=Image.new('RGB',(240,160),'#235742')
+        for x in range(0,240,7):
+            ImageDraw.Draw(src).line((x,0,x-20,159),fill='white')
+        dst=src.copy()
+        ImageDraw.Draw(dst).rectangle((60,52,185,105),fill='orange')
+        field=(0,0,*src.size)
+        self.assertIsNotNone(overpainted_rectangle(src,dst,(64,45,127,123),field))
+        self.assertIsNone(overpainted_rectangle(src,dst,(50,42,200,120),field))
+        self.assertIsNone(overpainted_rectangle(src,src,(64,45,127,123),field))
+        plain=Image.new('RGB',src.size,'navy')
+        overlay=plain.copy()
+        ImageDraw.Draw(overlay).rectangle((60,52,185,105),fill='yellow')
+        self.assertIsNone(overpainted_rectangle(plain,overlay,(64,45,127,123),field))
+
     def test_disputed_pigmentation_checks_the_exterior_surface_and_shading(self):
         before=Image.new('RGB',(300,180),'gray')
         after=before.copy()
@@ -721,10 +740,16 @@ class LocalRepairTests(unittest.TestCase):
         canvas=Image.new('RGB',(1440,810),'gray')
         observation={'visible_shapes':'A lowered limb.','depicted_action':'Hangs free.',
                      'problem':'','condition':'physically_plausible'}
-        with patch('print_judge.model_identity',return_value='fixture'), \
-                patch('print_judge.ask',return_value=json.dumps(observation)) as reader:
-            self.assertEqual(inspect_disputed_action(None,canvas,[450,850,520,999],'A figure standing.'),observation)
-        full,middle,native=reader.call_args.args[1]
+        traced={'part':'limb','visible_ends':['free toe'],'base_and_branches':'Ankle continues into foot.',
+                'occlusion_evidence':'','contradiction':'','condition':'fully_traced'}
+        for expected,outcome in [('physically_plausible',traced),('visible_fault',
+                dict(traced,condition='malformed',contradiction='Two long spikes attach where the palm must branch.'))]:
+            with patch('print_judge.model_identity',return_value='fixture'), \
+                    patch('print_judge.ask',side_effect=map(json.dumps,(observation,outcome))) as reader:
+                actual=inspect_disputed_action(None,canvas,[450,850,520,999],'A figure standing.')
+                self.assertEqual(actual['condition'],expected)
+                self.assertEqual(len(reader.call_args_list[1].args[1]),1)
+        full,middle,native=reader.call_args_list[0].args[1]
         self.assertGreater(full.width,middle.width)
         self.assertGreater(middle.width,native.width)
         self.assertIn((190,54,116),[color for _,color in middle.getcolors()])
