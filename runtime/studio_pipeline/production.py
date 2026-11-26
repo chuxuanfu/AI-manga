@@ -100,6 +100,29 @@ def save(job,state):
         except OSError as exc:print('图片库刷新失败',exc,flush=True)
 
 
+def local_retry_source(previous, brief):
+    """Resume only a localized 4K rejection whose image and baseline still match the review."""
+    record_file=previous/'review.json'
+    if not record_file.is_file():return None
+    record=json.loads(record_file.read_text())
+    if (record.get('delivery_edge')!=3840 or record.get('prompt')!=brief
+            or not record.get('status','').startswith('未达标') or not record.get('4K') or not record.get('底图')):
+        return None
+    entry=record.get('逐块终审',{})
+    if entry.get('状态') not in ('local','uncertain') or not entry.get('报告'):return None
+    report_file=previous/entry['报告']
+    if not report_file.is_file():return None
+    report=json.loads(report_file.read_text())
+    image=previous/record['4K']
+    draft=Path(record['底图'])
+    issue=report.get('issue',{})
+    if (report.get('brief')!=brief or report.get('status')!=entry['状态'] or issue.get('operation')!='redraw'
+            or not issue.get('fix') or not issue.get('box') or not image.is_file() or not draft.is_file()
+            or fingerprint(image)!=report.get('sha256') or fingerprint(draft)!=report.get('comparison_sha256')):
+        return None
+    return image,draft,issue
+
+
 def run(args,job,entry):
     """Each round has its own graph cache and seed; an interrupted round resumes in place."""
     job.mkdir(parents=True,exist_ok=True)
@@ -165,6 +188,8 @@ def run(args,job,entry):
             command=[sys.executable,str(entry),'--round-worker','--job',str(folder),'--prompt',state['prompt'],
                      '--port',str(state['port']),'--seed',str(row['seed']),*options]
             if state.get('delivery_edge',7680)==7680:command.append('--8k')
+            if len(rounds)>1 and state.get('delivery_edge')==3840 and not edit:
+                command+=['--retry-round',str(job/rounds[-2]['directory'])]
             if len(rounds)>1 and rounds[-2].get('原因'):
                 command+=['--retry-observation',rounds[-2]['原因'][:700]]
             if 'skip_focus' in row:command+=['--skip-focus',*map(str,row['skip_focus'])]

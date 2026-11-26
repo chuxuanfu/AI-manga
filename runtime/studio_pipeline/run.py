@@ -214,6 +214,7 @@ def main():
     parser.add_argument('--from-image',type=Path,action='append',default=[],help='先检查已有底图，可重复')
     parser.add_argument('--candidates',type=int,choices=range(1,9),default=None)
     parser.add_argument('--max-rounds',type=int,default=0,help='完整出片的最大轮数，默认 0 表示持续至通过')
+    parser.add_argument('--retry-round',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--retry-observation',default='',help=argparse.SUPPRESS)
     parser.add_argument('--round-worker',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--port',type=int,choices=(8193,8194),default=8193)
@@ -470,7 +471,13 @@ def main():
             if usable(checked):return repaired,checked
         return path,result
 
-    if args.candidate_image:
+    retry_source=None
+    if args.round_worker and args.retry_round and four_only:
+        from production import local_retry_source
+        retry_source=local_retry_source(args.retry_round,prompt)
+    if retry_source:
+        approved=retry_source[1]
+    elif args.candidate_image:
         if not args.from_image:parser.error('选区合成需要 --from-image 提供原图')
         with Image.open(args.from_image[0]) as before, Image.open(args.candidate_image) as candidate, Image.open(args.selection_mask) as selection:
             if before.size!=candidate.size or selection.size!=before.size:parser.error('原图、候选和遮罩必须具有相同尺寸')
@@ -667,11 +674,43 @@ def main():
         deliver_file(source_path,master)
         temp=dest/(uuid.uuid4().hex+'.png');scaled.save(temp);temp.replace(small)
         return master,small
-    master,small=native_pair(approved,'native-repair') if args.keep_native else render(approved,'refine')
+    def correct_shape(source,issue,box,stage,edit_seed):
+        from construction_review import assess_local_edit
+        instruction=issue['fix']
+        with Image.open(source) as original:
+            before=original.convert('RGB')
+        for variant in range(3):
+            name=stage if variant==0 else f'{stage}-variant-{variant+1}'
+            revised=repaint(before,box,instruction,rec['positive'],edit_seed+variant*1753,args.port,
+                            job,name,issue.get('target'),[o for o,_ in rec['parts']],reference_style,rebuild_shape=True)
+            release_idle_renderer(args.port)
+            with Image.open(revised) as proposed:
+                verdict=assess_local_edit(before,proposed,box,issue['fix'],issue.get('symptom'))
+            save(job/(name+'-patch-review.json'),verdict)
+            if verdict['verdict']=='resolved':
+                return revised
+            instruction=(issue['fix']+' Recompose the faulty local forms and their contact within the same framing. '
+                         +str(verdict.get('next_edit') or 'Redraw the silhouette and its point of support.'))
+        return None
+
+    repair_check=None
+    if retry_source:
+        last,_,issue=retry_source
+        focus=region(issue,{})
+        repaired=correct_shape(last,issue,focus,'continued-repair',seed+820) if focus else None
+        if repaired:
+            master,small=repaired,None
+            repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
+            rec['续修来源']=str(last)
+        else:
+            # Re-evaluate the retained image normally, with the prior finding included.
+            master,small=last,None
+            if focus:repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
+    else:
+        master,small=native_pair(approved,'native-repair') if args.keep_native else render(approved,'refine')
     from print_judge import fingerprint, inspect as print_inspect, MODEL
     from production import publish
     detail_rebuilt=False
-    repair_check=None
     # The model inspects the exact finished files, including every replacement.
     for attempt in range(3):
         label='final-art' if attempt==0 else f'revision-{attempt}-final-art'
@@ -707,7 +746,15 @@ def main():
             rec['status']='已通过离线终审'
             if not args.round_worker:publish(job,job,rec)
             save(manifest,rec);print(rec['status'],flush=True);return 0
-        candidates=([judged['issue']] if judged['status']=='local' else final['issues'] if final['status']=='local' and judged['status']=='pass' else [])
+        # A localized, actionable suspicion can produce a *candidate*; it still has
+        # to beat the source on the native crop and pass the full review to be released.
+        finding=judged.get('issue',{})
+        if judged['status']=='local' or (judged['status']=='uncertain' and finding.get('operation')=='redraw'):
+            candidates=[finding]
+        elif final['status']=='local' and judged['status']=='pass':
+            candidates=final['issues']
+        else:
+            candidates=[]
         issue=next((item for item in candidates if region(item,final) and item.get('fix')),None)
         rec['终审退回原因']=judged.get('issue',{}).get('symptom') or final.get('note','')
         repeated=False
@@ -717,16 +764,17 @@ def main():
             repeated=(min(old[2],new[2])>max(old[0],new[0]) and min(old[3],new[3])>max(old[1],new[1]))
         with Image.open(approved) as original:
             low_resolution=max(original.size)<1024
+            rebuild_size=detail_canvas(original.size)
         if (reference_style and not args.keep_native and not detail_rebuilt and attempt<2 and
-                judged.get('issue',{}).get('category')=='unresolved_focus' and (not issue or repeated or low_resolution)):
+                judged.get('issue',{}).get('category')=='unresolved_focus' and (not issue or repeated or low_resolution)
+                and rebuild_size is not None):
             # A verified focus failure across the picture, or one that survived a local repair,
             # needs a higher-resolution drawing of the scene before another print pass.
             detail_rebuilt=True
             repair_check=None
             stage=f'detail-source-{attempt+1}'
             with Image.open(approved) as original:
-                size=detail_canvas(original.size)
-                if size is None:break
+                size=rebuild_size
                 reference=local_image(original.convert('RGB'))
             fix=judged['issue'].get('fix') or judged['issue']['symptom']
             caption=('Reconstruct the same composition in its original medium. Keep subject identity, count, pose, placement, palette and light. '
@@ -755,6 +803,9 @@ def main():
                 corrected=masked_candidate(original.convert('RGB'),focus)
                 temp=revised.with_suffix('.partial.png')
                 corrected.save(temp);temp.replace(revised)
+            elif reference_style and issue.get('operation')=='redraw':
+                revised=correct_shape(source,issue,focus,stage,seed+650+attempt)
+                if revised is None:break
             else:
                 revised=repaint(original.convert('RGB'),focus,issue['fix'],rec['positive'],seed+650+attempt,args.port,
                                 job,stage,issue.get('target'),[o for o,_ in rec['parts']],reference_style,

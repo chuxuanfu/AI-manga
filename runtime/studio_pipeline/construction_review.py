@@ -155,6 +155,51 @@ def review(im,brief,regions,path,detected=(),observed_people=0):
     except (OSError,ValueError,KeyError,RuntimeError) as exc:
         return {'model':tag,'verdict':'unclear','observation':str(exc)[:160]}
 
+def assess_local_edit(before, after, box, correction, symptom=None):
+    """Screen the composited native patch, including its connection to the unchanged surroundings."""
+    from PIL import ImageChops
+    from print_judge import MODEL
+    width,height=before.size
+    l,t,r,b=[round(v*n/1000) for v,n in zip(box,before.size*2)]
+    pad=max(36,round(.30*max(r-l,b-t)))
+    bounds=(max(0,l-pad),max(0,t-pad),min(width,r+pad),min(height,b+pad))
+    old,new=before.crop(bounds).convert('RGB'),after.crop(bounds).convert('RGB')
+    if not ImageChops.difference(old,new).getbbox():
+        return {'verdict':'unchanged','evidence':'Identical source and proposed region.'}
+    for image in (old,new):image.thumbnail((960,960),Image.Resampling.LANCZOS)
+    props={'verdict':{'enum':['resolved','still_present','new_defect','uncertain']},
+           'evidence':{'type':'string'},'next_edit':{'type':'string'}}
+    question=('Inspect this single candidate crop in isolation. An earlier version had this reported defect: '
+              +str(symptom or 'see correction')+'. The intended result is: '+correction+
+              '. Trace the actual visible boundaries, attachments, contact shadows, material and repair seam. '
+              'Resolved requires visible evidence for the requested result and no new defect. '
+              'Choose still_present if the unwanted shape is visible, uncertain if you cannot locate it. '
+              'A revision can make the defect worse. For failure, give a specific alternative local edit.')
+    with backend(MODEL) as url:
+        result=json.loads(ask(url,[new],question,
+                    {'type':'object','properties':props,'required':list(props)},tag=MODEL,reason=True))
+        if result.get('verdict')=='resolved':
+            # The model must also identify the better image with the source/candidate
+            # order hidden. Assign by content, not by which side the caller generated.
+            import hashlib
+            if hashlib.sha256(new.tobytes()).digest()<hashlib.sha256(old.tobytes()).digest():
+                pair,expected=[new,old],'A'
+            else:
+                pair,expected=[old,new],'B'
+            pair_fields={'evidence':{'type':'string'},'better':{'enum':['A','B','equal','uncertain']}}
+            choice=json.loads(ask(url,pair,'Two independent samples of the same detail. Trace the actual '
+                'structure in each image separately. Which better satisfies this goal: '+correction+
+                '? Do not infer the order in which the samples were made. Return equal for indistinguishable '
+                'samples and uncertain if neither demonstrates the requested improvement.',
+                {'type':'object','properties':pair_fields,'required':list(pair_fields)},tag=MODEL))
+            result['blind_comparison']={**choice,'candidate':expected}
+            if choice['better']!=expected or not choice['evidence'].strip():
+                result.update(verdict='uncertain',next_edit='Make the corrected structure legible at the final pixel scale.')
+    if result.get('verdict')=='resolved' and not str(result.get('evidence') or '').strip():
+        result['verdict']='uncertain'
+    return result
+
+
 def plan_local_repair(image, box, target, instruction, medium, directory, stage):
     """Locate the complete local attachment when a review box describes only a damaged tip."""
     import hashlib

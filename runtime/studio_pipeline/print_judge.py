@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-22'
+REVISION = 'print-inspection-24'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -218,6 +218,34 @@ def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
     return dict(corroboration,decision=outcome,target=read['part'],evidence=read['evidence'])
 
 
+FRAME_CLAIM=re.compile(r'frame|framing|cropp?ed|cut off|out of (?:the )?(?:view|picture)|extend the canvas|画框|出框|裁切|画幅|截断',re.I)
+
+def verify_frame_exit(url,image,overview,box,claim,brief):
+    """Check an alleged truncation against the physical edge and the requested framing."""
+    if not box or not FRAME_CLAIM.search(claim):return None
+    edges=[name for name,touches in zip(('left','top','right','bottom'),
+           (box[0]<=12,box[1]<=12,box[2]>=988,box[3]>=988)) if touches]
+    if not edges:return None
+    pixels=tuple(round(v*n/1000) for v,n in zip(box,image.size*2))
+    crop=image.crop(expanded(pixels,image.size));crop.thumbnail((960,960),Image.Resampling.LANCZOS)
+    locator=overview.copy()
+    ImageDraw.Draw(locator).rectangle(tuple(round(v*n/1000) for v,n in zip(box,locator.size*2)),outline='#ec407a',width=2)
+    fields={'trace':{'type':'string'},'edge':{'enum':['left','top','right','bottom','none']},
+            'outcome':{'enum':['continuous_at_border','broken_inside','unresolved','other_defect']},
+            'brief_requires_missing_part':{'type':'boolean'}}
+    result=json.loads(ask(url,[locator,crop],
+        'Image 1 is the COMPLETE composition; image 2 enlarges the marked location near its actual '
+        +', '.join(edges)+' edge(s). Determine whether the sole alleged defect is ordinary framing. '
+        'Trace the contour to the PHYSICAL outer border of image 1. A subject may extend out of frame. '
+        'Check the brief for an expressly required visible full figure or missing part. A limb or object '
+        'ending or melting inside the picture counts as broken_inside. Other visible problems with this '
+        'connection are other_defect. If the exact crossing cannot be traced, choose unresolved. '
+        'Claim: '+claim+' Brief: '+brief,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL,reason=True))
+    result['explained']=(result['outcome']=='continuous_at_border' and result['edge'] in edges
+                         and result['brief_requires_missing_part'] is False and bool(result['trace'].strip()))
+    return result
+
+
 def issue_category(url, region, evidence, brief):
     schema={'type':'object','properties':{'issue':{'enum':['unresolved_focus','other']}},'required':['issue']}
     task=('Classify the confirmed defect. Choose unresolved_focus only if an intended focal feature is visibly smeared, lacks separable detail or has been enlarged beyond its useful resolution. '
@@ -408,7 +436,18 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 claim=row['evidence']
                 verify=GUIDE+'\nRe-examine the pixels in this view. An earlier view proposed: '+claim+'. Trace the visible contour or texture. If contradicted or only ordinary depth of field is visible, clear it. '+guidance
                 overview=None
-                if kind in ('comparison','draft-comparison','palette'):
+                if kind=='palette' and tentative and row['decision'] in ('local','uncertain'):
+                    # A thumbnail is adequate for broad palette drift, not the construction
+                    # of a small part. Compare this location on the actual source and master.
+                    baseline = before if source_comparison else draft_image
+                    pair = compare_pixels(baseline,image,context,image.size)
+                    for sample in pair:sample.thumbnail((1280,1280),Image.Resampling.LANCZOS)
+                    region = pair
+                    verify = (GUIDE+' These are matching close-ups from the source (first) and the finished image '
+                              '(second). Verify the alleged defect on the second image. Trace the local boundaries, '
+                              'attachments and colour relationships using the actual pixels. Coordinates refer '
+                              'to the second image. Finding: '+claim+' '+crop_brief(brief))
+                elif kind in ('comparison','draft-comparison','palette'):
                     # Recheck both original pixel fields for this claim, including during arbitration.
                     region=view
                     context=rect
@@ -472,6 +511,15 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     if intent.get('outcome')=='intentional' and requested_handling(intent.get('phrase'),brief) and str(intent.get('evidence') or '').strip():
                         second=dict(second,decision='clear',evidence=intent['evidence'],operation='none',fix='',target='')
                         record['independent_context']=second
+                if second['decision']!='clear':
+                    bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
+                    framing=verify_frame_exit(url,image,overview_image,bounds,
+                        row['evidence']+' '+second['evidence']+' '+second['fix'],brief)
+                    if framing:
+                        record['physical_border_check']=framing
+                        if framing['explained']:
+                            second=dict(second,decision='clear',operation='none',target='',fix='',evidence=framing['trace'])
+                            record['independent_context']=second
                 if second['decision']!='clear':
                     box=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     verdict=second['decision']
