@@ -313,6 +313,7 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
 
 
 def dimensions(prompt):
+    if '3:2' in prompt.replace('：',':'):return (1248,832)
     if any(s in prompt.lower() for s in ('16:9','16：9','横屏','横幅','landscape format','landscape orientation','widescreen')):
         return (1280,720)
     if any(s in prompt.lower() for s in ('9:16','9：16','手机屏','phone wallpaper')):
@@ -326,7 +327,7 @@ def main():
     parser = argparse.ArgumentParser(description='本地漫画壁纸选片、纠错、精绘')
     parser.add_argument('-p','--prompt',help='中文或英文画面描述')
     parser.add_argument('-o','--output-dir',type=Path,help='将选中的校样或通过终审的成品复制到此目录')
-    parser.add_argument('--aspect',choices=('auto','2:3','9:16','16:9','1:1'),default='auto',help='画幅比例，默认从描述判断，未指定时为 2:3')
+    parser.add_argument('--aspect',choices=('auto','2:3','3:2','9:16','16:9','1:1'),default='auto',help='画幅比例，默认从描述判断，未指定时为 2:3')
     parser.add_argument('--base-model',choices=('auto','qwen-image-2512'),default='auto',help='纯文字底图绘制模型，默认自动搭配候选')
     parser.add_argument('--style',help='可选画材或画风，例如透明水彩')
     parser.add_argument('--accept-final',metavar='SHA256',help='目检后，按当前母版指纹标记定稿')
@@ -486,10 +487,10 @@ def main():
         if not any(v in prompt.lower() for v in ('分镜','分格','多格','四格','多联','双联','三联','两联','二联','分幅','拼贴','拼图','对照图','连环画','分屏','漫画页','panel','diptych','triptych','collage','contact sheet','comic page','storyboard','split screen','split view')):
             caption='Compose one continuous scene in an uninterrupted frame. '+caption
         aspect=rec.get('aspect','auto')
-        width,height={'2:3':(832,1248),'9:16':(720,1280),'16:9':(1280,720),'1:1':(1024,1024)}.get(aspect,dimensions(prompt))
+        width,height={'2:3':(832,1248),'3:2':(1248,832),'9:16':(720,1280),'16:9':(1280,720),'1:1':(1024,1024)}.get(aspect,dimensions(prompt))
         name=prefix+'/candidates/'+label
         if not reference_style:return draft(caption,draw_seed,width,height,name)
-        size={(832,1248):(1248,1872),(720,1280):(1152,2048),(1280,720):(2048,1152),(1024,1024):(1536,1536)}[width,height]
+        size={(832,1248):(1248,1872),(1248,832):(1872,1248),(720,1280):(1152,2048),(1280,720):(2048,1152),(1024,1024):(1536,1536)}[width,height]
         if rec.get('原生4K'):
             size=tuple(round(v*3840/max(size)/16)*16 for v in size)
         if not prompt.isascii():
@@ -503,7 +504,7 @@ def main():
         if rec.get('base_model')=='qwen-image-2512' or (automatic_text and has_drawing_model(RUNTIME/'ComfyUI/models')):
             # The text generator can reconstruct the relationships directly from the
             # brief, independently of any earlier image or rejected silhouette.
-            native={(832,1248):(1088,1632),(720,1280):(1008,1792),(1280,720):(1792,1008),
+            native={(832,1248):(1088,1632),(1248,832):(1632,1088),(720,1280):(1008,1792),(1280,720):(1792,1008),
                     (1024,1024):(1328,1328)}[width,height]
             direction=('Draw the finished illustration in the medium and palette specified by the author. '
                        'When unspecified, use a Japanese storybook illustration style. ')
