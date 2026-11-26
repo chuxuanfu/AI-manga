@@ -1055,6 +1055,30 @@ class LocalRepairTests(unittest.TestCase):
                           'A Japanese spitz and a cockatiel.']:
             self.assertIsNone(identity_reference(unrelated))
 
+    def test_repair_plan_reuse_is_bound_to_pixels_instruction_and_model(self):
+        import tempfile
+        from pathlib import Path
+        from contextlib import nullcontext
+        from construction_review import plan_local_repair
+        im=Image.new('RGB',(240,300),'navy')
+        response=json.dumps(dict(part='wrist',corrected_view='Join the wrist to the sleeve.',box=[200,200,800,800]))
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            with patch('evidence.RUNTIME',root),patch('evidence.model_identity',return_value='weights-A') as model, \
+                 patch('construction_review.backend',return_value=nullcontext('local')), \
+                 patch('construction_review.ask',return_value=response) as read:
+                def plan(stage,request='Repair the sleeve'):
+                    return plan_local_repair(im,[330,350,540,580],'wrist',request,'ink',root,stage,'Portrait')
+                first=plan('a')
+                self.assertEqual(first,plan('b'))
+                self.assertEqual(read.call_count,1)
+                plan('c','Repair the glove')
+                model.return_value='weights-B'
+                plan('d')
+                im.paste('red',(70,90,120,140))
+                plan('e')
+                self.assertEqual(read.call_count,4)
+
     def test_rotating_a_face_preserves_height_and_allows_perspective_width(self):
         import numpy as np
         from masks import frame_neutral_guide, unintended_portrait_scale

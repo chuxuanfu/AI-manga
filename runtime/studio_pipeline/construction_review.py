@@ -512,52 +512,67 @@ def plan_local_repair(image, box, target, instruction, medium, directory, stage,
     view.thumbnail((960,960),Image.Resampling.LANCZOS)
     bbox=[round(1000*(v-origin)/length) for v,origin,length in zip((l,t,r,b),(x,y,x,y),(width,height,width,height))]
     locator=edit_locator(image,(x,y,x+width,y+height))
-    key=hashlib.sha256(view.tobytes()+locator.tobytes()+json.dumps(['art-direction-v3',bbox,target,instruction,medium,brief,model]).encode()).hexdigest()
+    from evidence import RUNTIME,model_identity
+    from print_judge import store
+    import fcntl
+    signature=['art-direction-v4',model_identity(model),image.size,view.size,locator.size,
+               box,bbox,target,instruction,medium,brief,model]
+    key=hashlib.sha256(view.tobytes()+locator.tobytes()+json.dumps(signature).encode()).hexdigest()
     path=directory/(stage+'-repair-plan.json')
     cached=json.loads(path.read_text()) if path.is_file() else {}
     if cached.get('key')==key:return cached['box'],cached['part'],cached['instruction']
-    props={'part':{'type':'string'},'corrected_view':{'type':'string'},
-           'box':{'type':'array','items':{'type':'integer'},'minItems':4,'maxItems':4}}
-    prompt=('This is an actual cropped region of an illustration. The reported defect is near normalized '
-            'left,top,right,bottom '+str(bbox)+'. Locate the smallest COMPLETE structure needed to '
-            'reconstruct the damaged part with its attachment. For a malformed iris or muzzle, include '
-            'the eye pair and muzzle of that same face; for fingers, include the hand and wrist; for '
-            'a spoke or handle, include its immediate mounting contour. Exclude unrelated people, '
-            'entire bodies and background objects. Return a box in 0..1000 RELATIVE TO THIS CROP and '
-            'name the complete part. Image 2 locates image 1 in the whole scene. Trace the part to its parent '
-            'there and establish whether it touches the apparent surface or is in front of it. Describe the '
-            'actual connection or separation. Translate the request into a physically possible repair. '
-            'Treat guesses by previous readers as hypotheses. Follow the ORIGINAL REQUEST for named colors, '
-            'materials, style and actions. The broken surface is not authoritative about what the intended '
-            'material looks like. If its repeated shapes are ambiguous, specify an identifiable construction '
-            'appropriate to the request, including the scale, direction and grouping of marks. When the '
-            'construction is unspecified, choose a simple physically credible one. Trace intact lines '
-            'entering and leaving the proposed edit and keep their positions. Preserve deliberate softness. '
-            'In corrected_view describe the correct local pose, material, '
-            'orientation, color and connection visible in this framing for an illustrator. Use under '
-            '45 English words, phrased positively. Target: '+str(target)+'. Repair: '+instruction+
-            '. Medium: '+medium+('. Original scene: '+brief if brief else ''))
-    with backend(model) as addr:
-        result=json.loads(ask(addr,[view,locator],prompt,{'type':'object','properties':props,'required':list(props)},tag=model))
-    coords=result.get('box')
-    part=result.get('part')
-    corrected=result.get('corrected_view')
-    if not isinstance(coords,list) or len(coords)!=4 or any(type(v) is not int for v in coords):
-        return box,target,instruction
-    if not (0<=coords[0]<coords[2]<=1000 and 0<=coords[1]<coords[3]<=1000):
-        return box,target,instruction
-    if not isinstance(part,str) or not part.strip() or not isinstance(corrected,str) or not corrected.strip():
-        return box,target,instruction
-    local=[x+width*coords[0]/1000,y+height*coords[1]/1000,x+width*coords[2]/1000,y+height*coords[3]/1000]
-    if min(local[2],r)<=max(local[0],l) or min(local[3],b)<=max(local[1],t):return box,target,instruction
-    combined=[min(local[0],l),min(local[1],t),max(local[2],r),max(local[3],b)]
-    bounds=[max(0,min(1000,round(v*1000/n))) for v,n in zip(combined,image.size*2)]
-    name=part.strip()
-    # Preserve the repair objective as well as the planner's drawable description.
-    correction=scoped_repair_direction(corrected,instruction)
-    data={'key':key,'box':bounds,'part':name,'instruction':correction}
-    temp=path.with_suffix('.tmp')
-    temp.write_text(json.dumps(data,ensure_ascii=False,indent=2));temp.replace(path)
+    cache=RUNTIME/'cache/repair-plans'
+    cache.mkdir(parents=True,exist_ok=True)
+    saved=cache/(key+'.json')
+    with (cache/(key+'.lock')).open('a') as guard:
+        fcntl.flock(guard,fcntl.LOCK_EX)
+        if saved.is_file() and signature[1]:
+            cached=json.loads(saved.read_text())
+            if cached.get('key')==key:
+                store(path,cached)
+                return cached['box'],cached['part'],cached['instruction']
+        props={'part':{'type':'string'},'corrected_view':{'type':'string'},
+               'box':{'type':'array','items':{'type':'integer'},'minItems':4,'maxItems':4}}
+        prompt=('This is an actual cropped region of an illustration. The reported defect is near normalized '
+                'left,top,right,bottom '+str(bbox)+'. Locate the smallest COMPLETE structure needed to '
+                'reconstruct the damaged part with its attachment. For a malformed iris or muzzle, include '
+                'the eye pair and muzzle of that same face; for fingers, include the hand and wrist; for '
+                'a spoke or handle, include its immediate mounting contour. Exclude unrelated people, '
+                'entire bodies and background objects. Return a box in 0..1000 RELATIVE TO THIS CROP and '
+                'name the complete part. Image 2 locates image 1 in the whole scene. Trace the part to its parent '
+                'there and establish whether it touches the apparent surface or is in front of it. Describe the '
+                'actual connection or separation. Translate the request into a physically possible repair. '
+                'Treat guesses by previous readers as hypotheses. Follow the ORIGINAL REQUEST for named colors, '
+                'materials, style and actions. The broken surface is not authoritative about what the intended '
+                'material looks like. If its repeated shapes are ambiguous, specify an identifiable construction '
+                'appropriate to the request, including the scale, direction and grouping of marks. When the '
+                'construction is unspecified, choose a simple physically credible one. Trace intact lines '
+                'entering and leaving the proposed edit and keep their positions. Preserve deliberate softness. '
+                'In corrected_view describe the correct local pose, material, '
+                'orientation, color and connection visible in this framing for an illustrator. Use under '
+                '45 English words, phrased positively. Target: '+str(target)+'. Repair: '+instruction+
+                '. Medium: '+medium+('. Original scene: '+brief if brief else ''))
+        with backend(model) as addr:
+            result=json.loads(ask(addr,[view,locator],prompt,{'type':'object','properties':props,'required':list(props)},tag=model))
+        coords=result.get('box')
+        part=result.get('part')
+        corrected=result.get('corrected_view')
+        if not isinstance(coords,list) or len(coords)!=4 or any(type(v) is not int for v in coords):
+            return box,target,instruction
+        if not (0<=coords[0]<coords[2]<=1000 and 0<=coords[1]<coords[3]<=1000):
+            return box,target,instruction
+        if not isinstance(part,str) or not part.strip() or not isinstance(corrected,str) or not corrected.strip():
+            return box,target,instruction
+        local=[x+width*coords[0]/1000,y+height*coords[1]/1000,x+width*coords[2]/1000,y+height*coords[3]/1000]
+        if min(local[2],r)<=max(local[0],l) or min(local[3],b)<=max(local[1],t):return box,target,instruction
+        combined=[min(local[0],l),min(local[1],t),max(local[2],r),max(local[3],b)]
+        bounds=[max(0,min(1000,round(v*1000/n))) for v,n in zip(combined,image.size*2)]
+        name=part.strip()
+        # Preserve the repair objective as well as the planner's drawable description.
+        correction=scoped_repair_direction(corrected,instruction)
+        data={'key':key,'box':bounds,'part':name,'instruction':correction}
+        if signature[1]:store(saved,data)
+    store(path,data)
     return bounds,name,correction
 
 
