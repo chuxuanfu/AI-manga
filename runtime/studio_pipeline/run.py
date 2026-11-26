@@ -17,7 +17,7 @@ import torch
 
 from gallery import write_gallery, write_focus_proof
 from graphs import UP, draft, finish
-from illustration import NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
+from illustration import detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
 from reference_review import compare
 from structure import inspect_structure
 from construction_review import review as review_construction
@@ -561,7 +561,7 @@ def main():
                 composition.thumbnail((3840,3840),Image.Resampling.LANCZOS)
             else:
                 rebuilt_source=rec.get('高清底图返工',{}).get('重绘')==str(source_path)
-                bound=3072 if rebuilt_source else (2304 if reference_style else 1536)
+                bound=3840 if rebuilt_source else (2304 if reference_style else 1536)
                 composition.thumbnail((bound,bound),Image.Resampling.LANCZOS)
             source=local_image(composition)
         focus_mode=rec.get('输出模式')=='全幅4K扩散与8K焦点精修'
@@ -685,8 +685,8 @@ def main():
             detail_rebuilt=True
             stage=f'detail-source-{attempt+1}'
             with Image.open(approved) as original:
-                scale=min(3840/max(original.size),max(1,min(3072/max(original.size),2304/(original.width*original.height)**.5)))
-                size=tuple(max(64,round(n*scale/16)*16) for n in original.size)
+                size=detail_canvas(original.size)
+                if size is None:break
                 reference=local_image(original.convert('RGB'))
             fix=judged['issue'].get('fix') or judged['issue']['symptom']
             caption=('Reconstruct the same composition in its original medium. Keep subject identity, count, pose, placement, palette and light. '

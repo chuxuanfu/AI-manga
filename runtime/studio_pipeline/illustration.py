@@ -131,6 +131,16 @@ def flux_canvas(g,positive,negative,vae,seed,width,height,prefix):
     return g
 
 
+def detail_canvas(size):
+    """Increase sampling density on a rejected draft within the native 4K budget."""
+    longest = max(size)
+    if longest >= 3840:
+        return None
+    usual = min(3072 / longest, 2304 / (size[0] * size[1])**.5)
+    scale = min(3840 / longest, max(4/3, usual))
+    return tuple(max(64, round(n * scale / 16) * 16) for n in size)
+
+
 NATURAL_UP = 'RealESRGAN_x2plus.pth'
 
 def continuous_tone(medium):
