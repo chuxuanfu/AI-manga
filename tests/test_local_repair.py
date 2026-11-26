@@ -191,6 +191,22 @@ class LocalRepairTests(unittest.TestCase):
             self.assertEqual(query.call_count,3)
             self.assertEqual(len(list(Path(directory).rglob('*.json'))),3)
 
+    def test_named_animal_evidence_distinguishes_related_species_and_preserves_aliases(self):
+        from animal_identity import named_animal_conflict
+        vocabulary={'barn owl':{'1'},'tyto alba':{'1'},'horned owl':{'2'},'great horned owl':{'3'},
+                    'red fox':{'5'},'arctic fox':{'6'}}
+        parents={'1':{'4'},'2':{'4'},'3':{'2'},'5':{'7'},'6':{'7'}}
+        with TemporaryDirectory() as scratch:
+            dictionary=Path(scratch)/'wordnet.zip'
+            dictionary.touch()
+            with patch('animal_identity.DICTIONARY',dictionary),patch('animal_identity.animal_names',return_value=(vocabulary,parents)):
+                self.assertEqual(named_animal_conflict('A barn owl','A great horned owl with ear tufts.')['observed'],'great horned owl')
+                self.assertEqual(named_animal_conflict('A red fox','An arctic fox.')['observed'],'arctic fox')
+                self.assertIsNone(named_animal_conflict('Barn owl','A Tyto alba.'))
+                self.assertIsNone(named_animal_conflict('Horned owl','A great horned owl.'))
+                self.assertIsNone(named_animal_conflict('Barn owl','Possibly a great horned owl.'))
+                self.assertIsNone(named_animal_conflict('Barn owl','A great horned owl and an arctic fox.'))
+
     def test_existing_print_requires_a_smaller_matching_baseline(self):
         from focus_print import validate_print_pair
         from tempfile import TemporaryDirectory

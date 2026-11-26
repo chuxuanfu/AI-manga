@@ -96,7 +96,11 @@ def subject_witness(url, image, overview, brief, tag):
             n['evidence_comparison']=reading
             words=reading['incompatible_words'].strip()
             if reading['relation']!='explicit_incompatibility' or len(words)<5 or words.casefold() not in neutral.casefold():
-                continue
+                from animal_identity import named_animal_conflict
+                conflict=named_animal_conflict(n['quote'],neutral)
+                if not conflict:continue
+                n['named_animal_conflict']=conflict
+                fix='Depict the requested '+conflict['requested']+' in this position. '+fix
             issue={'decision':'local','operation':'redraw','target':n['quote'],'fix':fix,
                    'evidence':f"The requested detail {n['quote']!r}: {neutral}",**dict(zip(position,n['box']))}
     return notes,issue

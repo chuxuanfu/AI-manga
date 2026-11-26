@@ -293,5 +293,11 @@
     "size": 501324814,
     "sha256": "20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1",
     "profile": "large-edit"
+  },
+  {
+    "path": "runtime/models/lexicon/wordnet.zip",
+    "url": "https://raw.githubusercontent.com/nltk/nltk_data/96f9b3252457a2b97e52aec64c3dfceeb5c312d5/packages/corpora/wordnet.zip",
+    "size": 10775600,
+    "sha256": "cbda5ea6eef7f36a97a43d4a75f85e07fccbb4f23657d27b4ccbc93e2646ab59"
   }
 ]
