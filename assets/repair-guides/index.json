@@ -1,5 +1,29 @@
 [
   {
+    "file": "rope-on-horn-cleat.png",
+    "requires": [
+      [
+        "cleat",
+        "cleat hitch",
+        "系缆角",
+        "羊角桩"
+      ],
+      [
+        "rope",
+        "line",
+        "hawser",
+        "hitch",
+        "绳",
+        "缆"
+      ]
+    ],
+    "construction": "Two tapered horns rise from one fixed base. A single rope wraps the waist and crosses between the horns, with one strand continuing outward. Follow the mounting surface and the existing rope direction in the artwork.",
+    "source": "https://commons.wikimedia.org/wiki/File:Knot_cleat.jpg",
+    "author": "Jazzmanian",
+    "license": "Public domain (released by the author)",
+    "modifications": "Cropped the completed hitch at right, rotated it and added a white margin."
+  },
+  {
     "file": "rope-through-mooring-ring.jpg",
     "requires": [
       [

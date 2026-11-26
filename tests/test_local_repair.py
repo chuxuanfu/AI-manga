@@ -961,6 +961,13 @@ class LocalRepairTests(unittest.TestCase):
         self.assertIsNone(changed_clipped_field(proposal,proposal.copy()))
         self.assertEqual(changed_clipped_field(ImageOps.invert(source),ImageOps.invert(proposal))['tone'],'white')
 
+    def test_boat_hitch_and_dock_ring_select_distinct_construction_guides(self):
+        from illustration import construction_guide
+        cleat=construction_guide('Tie the rope to a cleat on the bow. Preserve the mooring ring on the dock.')
+        ring=construction_guide('Tie the mooring rope to the iron ring on the pier. Keep the boat cleat.')
+        self.assertEqual(cleat[0].name,'rope-on-horn-cleat.png')
+        self.assertEqual(ring[0].name,'rope-through-mooring-ring.jpg')
+
     def test_head_and_seated_profile_guides_follow_the_requested_subject(self):
         from illustration import construction_guide
         self.assertEqual(construction_guide("Turn the woman's face to three-quarter view.")[0].name,
