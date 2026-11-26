@@ -857,16 +857,27 @@ def main():
         editor=installed_editor(RUNTIME/'ComfyUI/models')
         if not editor:return None
         scene_tried=True
+        guided=bool(args.reviewed_image or args.from_image or args.candidate_image)
         with Image.open(source) as canvas:
             scale=min(1,(1536*1024/(canvas.width*canvas.height))**.5)
             size=tuple(max(32,round(n*scale/16)*16) for n in canvas.size)
             rgb=canvas.convert('RGB')
-            reference=local_image(rgb.resize(size,Image.Resampling.LANCZOS))
+            full=rgb.resize(size,Image.Resampling.LANCZOS)
             # The editor internally reduces its semantic view to roughly 384x384.
             # Supply native neighboring contours for small defects in a wide composition.
             from print_judge import expanded
             pixels=tuple(round(v*n/1000) for v,n in zip(box,rgb.size*2))
-            detail=rgb.crop(expanded(pixels,rgb.size))
+            field=expanded(pixels,rgb.size)
+            if guided:
+                # A loose mask allows rerouting the attachment at scene scale while
+                # anchoring the selected composition outside its surrounding field.
+                field_px=tuple(round(v*target/origin) for v,target,origin in zip(field,size*2,rgb.size*2))
+                feather=max(2,round(min(field_px[2]-field_px[0],field_px[3]-field_px[1])*.055))
+                mask=Image.new('L',size)
+                ImageDraw.Draw(mask).rounded_rectangle(field_px,radius=feather*2,fill=255)
+                full.putalpha(ImageOps.invert(mask.filter(ImageFilter.GaussianBlur(feather))))
+            reference=local_image(full)
+            detail=rgb.crop(field)
             detail.thumbnail((1152,1152),Image.Resampling.LANCZOS)
             detail_reference=local_image(detail)
         center=((box[0]+box[2])/20,(box[1]+box[3])/20)
@@ -878,7 +889,8 @@ def main():
               'surroundings. Redraw the part together with its connected structures in the full composition. '
               f'Location about {center[0]:.0f}% of width from left and {center[1]:.0f}% of height from top. '
               'Required correction: '+issue['fix']+' Original art direction: '+prompt)
-        graph=instruction_edit(text,seed+1621,reference,prefix+'/'+stage,editor,detail_reference=detail_reference)
+        graph=instruction_edit(text,seed+1621,reference,prefix+'/'+stage,editor,masked=guided,
+                               detail_reference=detail_reference)
         try:
             history=post_graph(graph.api,args.port,job,stage,graph.ui())
         except RuntimeError as exc:
@@ -888,7 +900,7 @@ def main():
         release_idle_renderer(args.port)
         from print_judge import same_composition
         aligned=same_composition(source,candidate,prompt)
-        if not aligned and (args.reviewed_image or args.from_image or args.candidate_image):return None
+        if not aligned and guided:return None
         # An unconstrained text brief may legitimately change layout. Evaluate it
         # like a new draft and locate its subjects afresh; old coordinates no longer apply.
         screened=check_draft_structure(candidate,check(candidate,stage,box if aligned else None))
