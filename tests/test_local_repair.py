@@ -671,6 +671,21 @@ class LocalRepairTests(unittest.TestCase):
                 self.assertIn('EXTERIOR',reader.call_args_list[0].args[2])
                 self.assertEqual(reader.call_args_list[1].kwargs['tag'],LARGE)
 
+    def test_depth_review_uses_the_observed_fault_instead_of_parsing_a_negative_description(self):
+        from print_judge import inspect_disputed_action
+        first={'visible_shapes':'hand','depicted_action':'contact with platform','problem':'unclear','condition':'insufficient'}
+        scene={'parent':'person','location_on_parent':'beside thigh','adjacent_surface':'jacket hem',
+               'plane_evidence':'hand occludes hem','relation':'overlap_at_different_depths'}
+        for fault,result,expected in [(False,'coherent','physically_plausible'),(True,'malformed','visible_fault'),
+                                       (True,'coherent','insufficient')]:
+            witness={'part':'hand','endpoints_and_edges':'traced the outline from wrist to fingertip',
+                     'specific_fault':'Fused digits' if fault else 'No missing or fused part.',
+                     'visible_fault':fault,'matches_pose':True,'result':result}
+            with patch('print_judge.model_identity',return_value='local'),patch('print_judge.ask',side_effect=[
+                    json.dumps(first),json.dumps(scene),json.dumps(witness)]):
+                read=inspect_disputed_action(None,Image.new('RGB',(900,520)),[430,770,500,990],'A person standing.')
+            self.assertEqual(read['condition'],expected)
+
     def test_visual_action_reading_includes_a_located_body_scale_view(self):
         from print_judge import inspect_disputed_action
         canvas=Image.new('RGB',(1440,810),'gray')

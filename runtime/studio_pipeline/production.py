@@ -133,10 +133,16 @@ def local_retry_source(previous, brief, *, interrupted=False, review_upgrade=Fal
     image=previous/record['4K']
     candidates=[record['底图'],record.get('高清底图返工',{}).get('重绘')]
     issue=report.get('issue',{})
-    from print_judge import REVISION, actionable_edit, boxes_agree, map_box
+    from print_judge import REVISION, actionable_edit, boxes_agree, map_box, needs_perspective_review
     recheck=(review_upgrade and report.get('revision') and report['revision']!=REVISION
              and entry['状态']=='uncertain' and (issue.get('operation') not in ('redraw','remove_forbidden')
              or not actionable_edit(issue.get('fix'))))
+    if review_upgrade and needs_perspective_review(report):
+        recheck=True
+        if not issue.get('box'):
+            rect=report['views'][-1].get('pixels')
+            if rect and report.get('size'):
+                issue=dict(issue,box=[round(1000*v/n) for v,n in zip(rect,report['size']*2)])
     if (review_upgrade and report.get('revision') and report['revision']!=REVISION
             and entry['状态']=='local' and issue.get('operation')=='redraw' and not recheck):
         issue=dict(issue,verify_part_identity=True)

@@ -431,7 +431,7 @@ def inspect_disputed_action(url, image, box, brief):
         reading['depth_inventory']=scene
         if scene['relation']!='undetermined' and all(scene[k].strip() for k in planes if k!='relation'):
             facts={'part':{'type':'string'},'endpoints_and_edges':{'type':'string'},
-                   'specific_fault':{'type':'string'},'matches_pose':{'type':'boolean'},
+                   'specific_fault':{'type':'string'},'visible_fault':{'type':'boolean'},'matches_pose':{'type':'boolean'},
                    'result':{'enum':['coherent','malformed','unresolved']}}
             check=json.loads(ask(url,[detail,middle],
                 'Trace the shape in image 1 independently from its base to every visible end. Image 2 '
@@ -445,10 +445,10 @@ def inspect_disputed_action(url, image, box, brief):
                 {'type':'object','properties':facts,'required':list(facts)},tag=MODEL,reason=True))
             reading['depth_verification']=check
             if check['matches_pose'] and check['part'].strip() and check['endpoints_and_edges'].strip():
-                if check['result']=='coherent' and not actionable_edit(check['specific_fault']):
+                if check['result']=='coherent' and check['visible_fault'] is False:
                     reading.update(condition='physically_plausible',visible_shapes=check['endpoints_and_edges'],
                                    depicted_action=scene['location_on_parent']+' '+scene['plane_evidence'],problem='')
-                elif check['result']=='malformed' and actionable_edit(check['specific_fault']):
+                elif check['result']=='malformed' and check['visible_fault'] is True and check['specific_fault'].strip():
                     reading.update(condition='visible_fault',problem=check['specific_fault'])
     if reading['condition']=='visible_fault' and re.search(
             r'\bno (?:visible |physical |anatomical |structural )*(?:faults?|defects?|deformit(?:y|ies)|contradictions?|errors?|issues?)\b',
@@ -870,6 +870,16 @@ def inspect_focal_definition(url, master, baseline, brief):
     return {**proof,'location':aim,'pixels':list(rect)}
 
 
+def needs_perspective_review(result):
+    if result.get('status')!='uncertain' or not result.get('views'):
+        return False
+    last=result['views'][-1]
+    return (not result.get('perspective_review') and (
+        last.get('independent_action_check',{}).get('condition')=='insufficient' and
+        'depth_inventory' not in last['independent_action_check'] or
+        last.get('style_intent',{}).get('outcome')=='unresolved' and 'focal_definition' not in result))
+
+
 def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None, source_comparison=False, construction_draft=False):
     digest=fingerprint(path)
     model_id=model_identity(MODEL)
@@ -891,21 +901,17 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
     directory.mkdir(exist_ok=True)
     report=directory/(digest+'-'+key+'.json')
     result=json.loads(report.read_text()) if report.exists() else dict(
-        model=MODEL,model_id=model_id,revision=REVISION,sha256=digest,source=str(path),
+        model=MODEL,model_id=model_id,revision=REVISION,sha256=digest,source=str(path),perspective_review=True,
         brief=brief,views=[],status='running',report=str(report.relative_to(root)),comparison_sha256=prior_id,draft_sha256=draft_id)
-    if result['status']=='uncertain' and result.get('views'):
-        last=result['views'][-1]
-        old_depth=last.get('independent_action_check',{}).get('condition')=='insufficient'
-        old_style=last.get('style_intent',{}).get('outcome')=='unresolved'
-        if old_depth or old_style:
-            report=report.with_name(report.stem+'-perspective-2.json')
-            if report.is_file():result=json.loads(report.read_text())
-            else:
-                # Rebuild the window plan for the same signed image. All previous
-                # evidence remains in the original report for comparison.
-                result=dict(model=MODEL,model_id=model_id,revision=REVISION,sha256=digest,source=str(path),
-                            brief=brief,views=[],status='running',report=str(report.relative_to(root)),
-                            comparison_sha256=prior_id,draft_sha256=draft_id)
+    if needs_perspective_review(result):
+        report=report.with_name(report.stem+'-perspective-2.json')
+        if report.is_file():result=json.loads(report.read_text())
+        else:
+            # Rebuild the window plan for the same signed image. All previous
+            # evidence remains in the original report for comparison.
+            result=dict(model=MODEL,model_id=model_id,revision=REVISION,sha256=digest,source=str(path),
+                        brief=brief,views=[],status='running',report=str(report.relative_to(root)),
+                        perspective_review=True,comparison_sha256=prior_id,draft_sha256=draft_id)
     if result['status'] in ('pass','local','global','uncertain'):return result
     with ExitStack() as resources:
         with Image.open(path) as source:image=source.convert('RGB')
