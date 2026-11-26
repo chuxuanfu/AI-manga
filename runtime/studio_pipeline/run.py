@@ -108,6 +108,13 @@ def _post_graph(api, port, directory, stage, workflow=None):
     digest = hashlib.sha256(payload).hexdigest()
     job = json.loads(cache.read_text()) if cache.exists() else {}
     if job.get('digest') != digest:
+        if (job.get('renderer')=='ComfyUI' and job.get('output_sha256')
+                and output_fingerprints(job.get('outputs',{}))==job['output_sha256']):
+            # Another local graph may reuse the stage name. Its older pictures
+            # remain eligible for later assessment only with a matching receipt.
+            archive=directory/'render-history'
+            archive.mkdir(exist_ok=True)
+            save(archive/(stage+'-'+job['digest']+'.json'),job)
         job = {}
     cached=job.get('outputs')
     if isinstance(cached,dict) and job.get('output_sha256') and output_fingerprints(cached)==job['output_sha256']:

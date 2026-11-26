@@ -176,17 +176,17 @@ def failed_scene_connection(directory, record, finding):
 
 def previous_scene_candidate(folder, stage, reviews, output_root):
     """Reopen a locally generated scene only when the render and review hashes agree."""
-    receipt=folder/(stage+'-task.json')
-    if not receipt.is_file():return None
-    task=json.loads(receipt.read_text())
-    if task.get('renderer')!='ComfyUI' or not task.get('model_files'):return None
+    receipts=[folder/(stage+'-task.json'),*sorted((folder/'render-history').glob(stage+'-*.json'))]
+    tasks=[json.loads(p.read_text()) for p in receipts if p.is_file()]
     for row in reversed(reviews):
         if row.get('stage')!=stage or row.get('review',{}).get('status')!='uncertain':continue
         path=(folder/row['file']).resolve()
         if path.parent!=folder.resolve() or not path.is_relative_to(output_root.resolve()) or not path.is_file():continue
         key=path.relative_to(output_root.resolve()).as_posix()
-        if task.get('output_sha256',{}).get(key)==row.get('hash')==fingerprint(path):
-            return path,task['model_files']
+        for task in tasks:
+            if task.get('renderer')!='ComfyUI' or not task.get('model_files'):continue
+            if task.get('output_sha256',{}).get(key)==row.get('hash')==fingerprint(path):
+                return path,task['model_files']
     return None
 
 

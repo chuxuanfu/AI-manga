@@ -275,6 +275,9 @@ class LocalRepairTests(unittest.TestCase):
             receipt = {'renderer':'ComfyUI','model_files':['local-editor'],'output_sha256':{'round/scene.png':digest}}
             (folder/'scene-task.json').write_text(json.dumps(receipt))
             self.assertEqual(previous_scene_candidate(folder, 'scene', [row], root)[0], image)
+            (folder/'render-history').mkdir()
+            (folder/'scene-task.json').rename(folder/'render-history/scene-previous.json')
+            self.assertEqual(previous_scene_candidate(folder, 'scene', [row], root)[0], image)
             Image.new('RGB',(40, 20),'red').save(image)
             self.assertIsNone(previous_scene_candidate(folder, 'scene', [row], root))
 
