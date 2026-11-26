@@ -203,6 +203,21 @@ def identity_reference(quote):
     return guides[0] if len(guides)==1 else None
 
 
+def drawing_identity_details(brief):
+    """Give a named animal the same anatomical landmarks at layout time as at review time."""
+    chosen={}
+    for sentence in re.split(r'[.!?。！？;；\n]',brief):
+        item=identity_reference(sentence)
+        if item:
+            file,guide=item
+            name=next(term for term in guide['identity_terms'] if term.casefold() in sentence.casefold())
+            chosen[file.name]=(name,guide['construction'])
+    if not chosen:return ''
+    marks=' '.join(name+': '+details for name,details in chosen.values())
+    return ('Visible identity landmarks for the requested subjects, within the author’s palette '
+            'and any expressly requested variation. '+marks)
+
+
 CONTACT_ACTION=re.compile(r'\b(?:turn(?:s|ing)?|press(?:es|ing)?|pinch(?:es|ing)?|'
                           r'grip(?:s|ping)?|touch(?:es|ing)?|grasps?|holding|holds?|'
                           r'tying|fasten(?:s|ing)?|plug(?:s|ging)?|steps? on|slid(?:es|ing)|insert(?:s|ing)?)\b|旋转|拧动|握住|捏住|按下|触碰|踏在|插入|滑入|抵住|贴在|推入',re.I)

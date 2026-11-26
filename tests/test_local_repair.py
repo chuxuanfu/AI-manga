@@ -1055,6 +1055,14 @@ class LocalRepairTests(unittest.TestCase):
                           'A Japanese spitz and a cockatiel.']:
             self.assertIsNone(identity_reference(unrelated))
 
+    def test_drawing_gets_requested_animal_features_before_the_first_print(self):
+        from brief_check import drawing_identity_details
+        details=drawing_identity_details('A barn owl sits on the rail. No second telescope.')
+        self.assertIn('heart-shaped facial disc',details)
+        self.assertIn('crest',drawing_identity_details('A cockatiel perches on a branch.'))
+        self.assertEqual(drawing_identity_details('A girl sitting on a rail. No barn owl.'),'')
+        self.assertEqual(drawing_identity_details('One unidentified bird.'),'')
+
     def test_repair_plan_reuse_is_bound_to_pixels_instruction_and_model(self):
         import tempfile
         from pathlib import Path

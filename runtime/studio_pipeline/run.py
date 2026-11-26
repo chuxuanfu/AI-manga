@@ -609,6 +609,9 @@ def main():
             earlier=args.retry_round/'review.json'
             if earlier.is_file():direction=last_finish_direction(json.loads(earlier.read_text()))
         if direction:caption+=' '+direction
+        from brief_check import drawing_identity_details
+        landmarks=drawing_identity_details(prompt)
+        if landmarks:caption=caption+' '+landmarks
         if not any(v in prompt.lower() for v in ('分镜','分格','多格','四格','多联','双联','三联','两联','二联','分幅','拼贴','拼图','对照图','连环画','分屏','漫画页','panel','diptych','triptych','collage','contact sheet','comic page','storyboard','split screen','split view')):
             caption='Compose one continuous scene in an uninterrupted frame. '+caption
         aspect=rec.get('aspect','auto')
