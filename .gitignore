@@ -6,6 +6,9 @@
 /assets/*
 !/assets/illustration-reference.webp
 !/scripts/
+!/tests/
+/tests/*
+!/tests/test_local_repair.py
 !/extensions/
 !/runtime/
 /runtime/*
