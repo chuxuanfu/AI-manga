@@ -47,3 +47,26 @@ class ContradictoryActionTests(unittest.TestCase):
         self.assertNotIn(claim,review.call_args_list[0].args[2])
         self.assertIn(claim,review.call_args_list[-1].args[2])
         self.assertEqual(result['consistency_check']['tested_claim'],claim)
+
+
+class OpticalTieBreakTests(unittest.TestCase):
+    def test_disputed_panel_requires_two_independent_optical_observations(self):
+        from PIL import ImageDraw,ImageFilter
+        from print_judge import independent_detail_check
+        from construction_review import LARGE
+        sharp=Image.new('RGB',(192,192),'white')
+        pen=ImageDraw.Draw(sharp)
+        for x in range(7,170,9):pen.line((x,10,x+13,180),width=2,fill='black')
+        weak=sharp.filter(ImageFilter.GaussianBlur(2))
+        first=dict(trace='Twin ink strokes',improvement='Ends separately visible.',resolvability='resolved',
+                   defined_finer_forms=True,new_artifact=False)
+        vote=dict(finer='B',location='middle',evidence='Separated tips.',new_artifact=False)
+        loupe=dict(finer_version='second',kind='resolved_material_or_contour',location='tips',evidence='Separated outlined mark.')
+        for damaged in [False,True]:
+            calls=[first,dict(vote,new_artifact=damaged),loupe,dict(loupe,finer_version='first')]
+            with patch('print_judge.ask',side_effect=map(json.dumps,calls)) as judge,patch('print_judge.model_identity',return_value='local'),patch('print_judge.resize_only',return_value={'condition':'distinct_signal'}):
+                result=independent_detail_check(None,[weak,sharp],sharp,'ink illustration')
+            self.assertEqual(result['confirmed'],not damaged)
+            self.assertEqual(judge.call_count,2 if damaged else 4)
+            if not damaged:
+                self.assertEqual([c.kwargs['tag'] for c in judge.call_args_list[-2:]],[LARGE,LARGE])

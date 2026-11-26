@@ -1044,9 +1044,9 @@ def independent_detail_check(url, images, overview, brief):
                 'must follow a recognizable form; noise, halos and interpolation count against it. If both are soft, '
                 'unchanged or implausible, do not claim finer forms. Separate optical focus from deliberate ink bleed '
                 'and paper texture. Cite a position in the crop and concrete evidence. Brief: '+brief)
-    def read(views,prompt,properties,reason=False):
+    def read(views,prompt,properties,reason=False,tag=MODEL):
         schema={'type':'object','properties':properties,'required':list(properties)}
-        return json.loads(ask(url, views, prompt, schema, tag=MODEL, reason=reason))
+        return json.loads(ask(url, views, prompt, schema, tag=tag, reason=reason))
     finding = read([low,high,overview],question,fields,True)
     report['trace'] = finding
     if finding['new_artifact'] is not False or not finding['trace'].strip():
@@ -1082,7 +1082,8 @@ def independent_detail_check(url, images, overview, brief):
         report['confirmed']=(len(controls)==2 and all(
             v['finer']==wanted and v['new_artifact'] is False and v['location'].strip() and v['evidence'].strip()
             for v,wanted in zip(controls,('A','B'))))
-        return report
+        if report['confirmed'] or any(v['new_artifact'] is not False for v in controls):
+            return report
     # Sometimes the feature already exists in both versions. Resolve the ink
     # edge, stitch or vein itself at optical zoom before concluding equivalence.
     if resize_only(images)['condition']!='distinct_signal' or min(high.size)<96:
@@ -1117,13 +1118,18 @@ def independent_detail_check(url, images, overview, brief):
                  'specific difference in the shape of that feature. Coarser digital pixels from this '
                  'display magnification occur in both images. Ignore differences limited to grain or '
                  'increased contrast, sharpened halos and paper noise.')
-    forward=read([low_site,high_site],instruction,props)
-    evidence={'pixels_in_field':list(rect),'forward':forward,'line_pair':measured}
+    reader=MODEL
+    if report.get('paired_panels'):
+        from construction_review import LARGE
+        if not model_identity(LARGE):return report
+        reader=LARGE
+    forward=read([low_site,high_site],instruction,props,tag=reader)
+    evidence={'pixels_in_field':list(rect),'forward':forward,'line_pair':measured,'model':reader}
     report['contour_magnification']=evidence
     if (forward['finer_version']=='second' and (forward['kind']=='resolved_material_or_contour'
             or measured and forward['kind']=='contrast_or_texture_only')
             and forward['location'].strip() and forward['evidence'].strip()):
-        reverse=read([high_site,low_site],instruction,props)
+        reverse=read([high_site,low_site],instruction,props,tag=reader)
         evidence['reverse']=reverse
         if (reverse['finer_version']=='first' and reverse['kind']=='resolved_material_or_contour'
                 and reverse['location'].strip() and reverse['evidence'].strip()):
