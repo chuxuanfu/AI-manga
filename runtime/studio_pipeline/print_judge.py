@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-18'
+REVISION = 'print-inspection-19'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -180,6 +180,27 @@ def compare_pixels(low,high,rect,master_size):
     right=high.crop(bounds)
     left=low.resize(right.size,Image.Resampling.LANCZOS,box=mapped(low.size))
     return left,right
+
+
+def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
+    """Adjudicate one claim without substituting a different nearby feature or its coordinates."""
+    props={'evidence':{'type':'string'}, 'outcome':{'enum':['confirmed','disproved','insufficient']},
+           'part':{'type':'string'}}
+    schema={'type':'object','properties':props,'required':list(props)}
+    question=('The FIRST image is a crop containing a disputed feature. The SECOND only locates the '
+              'crop in the original composition. Resolve exactly the proposed finding below. Trace the '
+              'named part in the FIRST image and give visible evidence for or against that specific '
+              'claim. A different feature cannot confirm or disprove this finding. Use insufficient '
+              'when the named part or connection is unresolved. For part, name only the physical '
+              'subject of this claim. Independent description of the pixels: '+json.dumps(inventory)+
+              '. Proposed finding: '+original['evidence']+' Second reading: '+corroboration['evidence'])
+    read=json.loads(ask(url,[detail,locator],question,schema,tag=MODEL,reason=True))
+    if read['outcome']=='disproved':
+        return dict(corroboration,decision='clear',operation='none',target='',fix='',evidence=read['evidence'])
+    outcome='uncertain'
+    if read['outcome']=='confirmed':
+        outcome='global' if original['decision']=='global' else 'local'
+    return dict(corroboration,decision=outcome,target=read['part'],evidence=read['evidence'])
 
 
 def issue_category(url, region, evidence, brief):
@@ -390,9 +411,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     draw=ImageDraw.Draw(overview)
                     draw.rectangle(tuple(round(v*n/k) for v,n,k in zip(context,overview.size*2,image.size*2)),outline='#f04b73',width=2)
                     zoom=image.crop(context);zoom.thumbnail((720,660),Image.Resampling.LANCZOS)
-                    board=Image.new('RGB',(overview.width+zoom.width+8,max(overview.height,zoom.height)), '#eceae6')
-                    board.paste(overview,(0,0));board.paste(zoom,(overview.width+8,0))
-                    third=judge_view(url,board,GUIDE+' On the left is the whole image with a locator; on the right are the marked pixels. Independently judge the right detail in the context of the scene and intended depth of field. Identify only a concrete visible defect, or clear this view if appropriate. Coordinates refer only to the right panel. A prior strictly visual inventory of these pixels reads: '+json.dumps(observation)+'. A concrete excluded person or animal must have identifiable body parts. Optical resemblance alone does not demonstrate a violation. Brief: '+guidance,reason=True)
+                    third=arbitrate_finding(url,zoom,overview,row,second,observation)
                     record['independent_context']=third
                     second=third
                 if second['decision']=='uncertain' and kind in ('comparison','draft-comparison'):
