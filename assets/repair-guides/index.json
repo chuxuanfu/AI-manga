@@ -371,5 +371,22 @@
     "license": "CC BY-SA 4.0, including this resized reference",
     "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
     "modifications": "Resized the original photograph and placed the transparent area on a light grey background."
+  },
+  {
+    "file": "portable-turntable-tonearm.jpg",
+    "requires": [
+      [
+        "tonearm",
+        "tone arm",
+        "唱臂",
+        "拾音臂"
+      ]
+    ],
+    "construction": "One playback arm has a fixed pivot on the deck, a continuous arm and a small cartridge at its free end. The pivot is on the case floor, separate from the lid hinge. Swing its free end over the disc or onto its rest according to the requested action. Retain the drawing’s perspective and material.",
+    "source": "https://commons.wikimedia.org/wiki/File:Portable_record_player,_1965,_Emerson_-_Museum_of_Science_and_Industry_(Chicago)_-_DSC06675.JPG",
+    "author": "Daderot",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "modifications": "Cropped the deck and resized the photograph."
   }
 ]
