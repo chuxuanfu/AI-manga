@@ -49,6 +49,29 @@ class ContradictoryActionTests(unittest.TestCase):
         self.assertEqual(result['consistency_check']['tested_claim'],claim)
 
 
+class PairedContourTests(unittest.TestCase):
+    def test_only_reopens_a_disavowed_fusion_claim_about_the_named_parts(self):
+        from paired_contours import needs_pair_trace
+        check=dict(tested_claim='The fawn forelegs are fused.',verdict='specific_visible_error',
+                   disputed_parts_in_view=True,repair='No correction needed; separate joints.',first_landmark='Hoof A',
+                   second_landmark='Hoof B',connection='Distinct outlines reach the body.')
+        self.assertTrue(needs_pair_trace(dict(condition='insufficient',consistency_check=check)))
+        self.assertFalse(needs_pair_trace(dict(condition='insufficient',consistency_check=dict(check,repair='Separate the broken legs.'))))
+
+    def test_independent_attachments_and_mirrored_tip_locations_must_agree(self):
+        from paired_contours import inspect_pair
+        original=dict(first_tip=[220,810],second_tip=[410,820],
+                      first_trace='The left outline joins the shoulder.',second_trace='The far outline continues to the chest.',
+                      between='A narrow grass interval separates them.',both_named_parts_visible=True,
+                      separate_attachments_visible=True,shared_or_broken_interval=False)
+        reverse=dict(original,first_tip=[589,820],second_tip=[782,810])
+        for second,expected in ((reverse,True),(dict(reverse,first_tip=[300,650]),False),
+                                (dict(reverse,shared_or_broken_interval=True),False),(dict(reverse,separate_attachments_visible=False),False)):
+            with patch('paired_contours.ask',side_effect=map(json.dumps,(original,second))):
+                result=inspect_pair(None,Image.new('RGB',(1000,900)),[550,500,800,900],'fused forelegs',('one','two'))
+            self.assertEqual(result['confirmed'],expected)
+
+
 class OpticalTieBreakTests(unittest.TestCase):
     def test_disputed_panel_requires_two_independent_optical_observations(self):
         from PIL import ImageDraw,ImageFilter

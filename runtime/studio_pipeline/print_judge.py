@@ -551,6 +551,14 @@ def inspect_disputed_action(url, image, box, brief, claim=None):
             reading['problem']=check['connection']+' '+check['repair']
         else:
             reading['condition']='insufficient'
+    from paired_contours import needs_pair_trace,inspect_pair
+    if claim and needs_pair_trace(reading):
+        pair=inspect_pair(url,image,box,claim,(LARGE,MODEL))
+        reading['registered_pair']=pair
+        if pair['confirmed']:
+            traced=pair['orders'][0]
+            reading.update(condition='physically_plausible',problem='',visible_shapes=traced['first_trace']+' '+traced['second_trace'],
+                           depicted_action=traced['between'])
     if reading['condition']=='insufficient' and claim:
         from palm_review import hand_attachment,inspect_attachments
         if hand_attachment(claim):
@@ -1419,9 +1427,11 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
         from palm_review import WEIGHTS as palm_weights,hand_attachment
         missing_wrist_crop=(disputed.get('condition')=='insufficient' and 'palm_attachment_review' not in disputed
                             and palm_weights.is_file() and hand_attachment(result.get('issue',{}).get('symptom','')))
-        if ((disavowed_action_fault(disputed) and not trace) or missing_wrist_crop
+        from paired_contours import needs_pair_trace
+        missing_pair=needs_pair_trace(disputed) and 'registered_pair' not in disputed
+        if ((disavowed_action_fault(disputed) and not trace) or missing_wrist_crop or missing_pair
                 or (trace.get('verdict')=='cannot_trace' and not trace.get('tested_claim'))):
-            report=report.with_name(report.stem+('-wrist-crops.json' if missing_wrist_crop else '-action-trace-targeted.json'))
+            report=report.with_name(report.stem+('-registered-pair.json' if missing_pair else '-wrist-crops.json' if missing_wrist_crop else '-action-trace-targeted.json'))
             if report.is_file():result=json.loads(report.read_text())
             else:
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
