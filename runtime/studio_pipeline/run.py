@@ -17,7 +17,7 @@ import torch
 
 from gallery import write_gallery, write_focus_proof
 from graphs import UP, draft, finish
-from illustration import EDIT_UNET, EDIT_CLIP, EDIT_LORA, instruction_edit, detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
+from illustration import installed_editor, instruction_edit, detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
 from reference_review import compare
 from structure import inspect_structure
 from construction_review import review as review_construction
@@ -173,14 +173,13 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     prepared.putalpha(ImageOps.invert(mask.resize(size,Image.Resampling.BILINEAR)))
     prefix = (directory.relative_to(OUTPUT)/stage).as_posix()
     model_root=RUNTIME/'ComfyUI/models'
-    specialist=(allow_specialist and reference_style and rebuild_shape and reconstruction_attempt>=2 and
-                all((model_root/folder/filename).is_file() for folder,filename in (
-                    ('diffusion_models',EDIT_UNET),('text_encoders',EDIT_CLIP),('loras',EDIT_LORA))))
+    specialist=(installed_editor(model_root) if allow_specialist and reference_style and rebuild_shape
+                and reconstruction_attempt>=2 else None)
     if specialist:
         source=local_image(crop.resize(size,Image.Resampling.LANCZOS))
         edit=instruction_edit('Edit this same illustration close-up. Preserve the original edge alignment, '
                               'colors, light and medium. Reconstruct '+str(target or 'the damaged structure')+
-                              ' as follows: '+description,seed,source,prefix)
+                              ' as follows: '+description,seed,source,prefix,specialist)
         graph=edit.api
         output=str(len(edit.nodes))
     elif reference_style:
@@ -223,7 +222,7 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
         except RuntimeError as error:
             # The baseline editor can still run on a device/operator combination
             # that rejects the specialist graph. Its result receives the same review.
-            save(directory/(stage+'-editor-fallback.json'),{'model':EDIT_UNET,'reason':str(error)[:1500]})
+            save(directory/(stage+'-editor-fallback.json'),{'model':specialist,'reason':str(error)[:1500]})
             original_box,original_description,original_target=original_request
             return repaint(im,original_box,original_description,caption,seed,port,directory,stage,
                            original_target,neighbours,reference_style,rebuild_shape,reconstruction_attempt,False)

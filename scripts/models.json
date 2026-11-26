@@ -234,10 +234,10 @@
     "size": 67061725
   },
   {
-    "path": "runtime/ComfyUI/models/diffusion_models/qwen_image_edit_2511_bf16.safetensors",
-    "url": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit/resolve/f68ace85e60b4a02a323e394253731947657b7d2/split_files/diffusion_models/qwen_image_edit_2511_bf16.safetensors",
-    "sha256": "ae42d927b5fac4f278b9a894554c727e619727a63622976f2d95625be4bce08c",
-    "size": 40861031560,
+    "path": "runtime/ComfyUI/models/diffusion_models/qwen_image_edit_2511_int8_convrot.safetensors",
+    "url": "https://huggingface.co/Comfy-Org/Qwen-Image-Edit/resolve/f68ace85e60b4a02a323e394253731947657b7d2/split_files/diffusion_models/qwen_image_edit_2511_int8_convrot.safetensors",
+    "sha256": "11b5af5ac601821d73930c84846c9a158e67177356daf927ce1c8d10f3963829",
+    "size": 20499083824,
     "profile": "large-edit"
   },
   {

@@ -30,16 +30,24 @@ def encode_brief(graph, clip, brief, direction, title, position):
                      widgets=[''],widget_links=['text'])
 
 
-EDIT_UNET='qwen_image_edit_2511_bf16.safetensors'
+EDIT_UNET='qwen_image_edit_2511_int8_convrot.safetensors'
 EDIT_CLIP='qwen_2.5_vl_7b.safetensors'
 EDIT_LORA='Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors'
 
 
-def instruction_edit(text, seed, reference, prefix):
+def installed_editor(model_root):
+    if not (model_root/'text_encoders'/EDIT_CLIP).is_file() or not (model_root/'loras'/EDIT_LORA).is_file():
+        return None
+    for name in (EDIT_UNET,'qwen_image_edit_2511_bf16.safetensors'):
+        if (model_root/'diffusion_models'/name).is_file():return name
+    return None
+
+
+def instruction_edit(text, seed, reference, prefix, unet_name=EDIT_UNET):
     """Comfy's Qwen-Image-Edit-2511 Lightning graph for a local repair crop."""
     g=Graph('studio-instruction-edit')
     source=g.add('LoadImage','Source crop',(0,0),['IMAGE','MASK'],values={'image':reference})
-    unet=g.add('UNETLoader','Edit model',(0,300),['MODEL'],values={'unet_name':EDIT_UNET,'weight_dtype':'default'})
+    unet=g.add('UNETLoader','Edit model',(0,300),['MODEL'],values={'unet_name':unet_name,'weight_dtype':'default'})
     clip=g.add('CLIPLoader','Instruction encoder',(0,450),['CLIP'],values={'clip_name':EDIT_CLIP,'type':'qwen_image','device':'default'})
     vae=g.add('VAELoader','Image codec',(0,580),['VAE'],values={'vae_name':'qwen_image_vae.safetensors'})
     model=g.add('LoraLoaderModelOnly','Four-step edit',(350,300),['MODEL'],[('model',(unet,0))],
