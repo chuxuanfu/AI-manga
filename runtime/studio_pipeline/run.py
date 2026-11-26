@@ -668,6 +668,11 @@ def main():
         context_key=inspection_key(rubric,prompt,rec['parts'],focus,rec.get('画法参考'),inspection_environment())
         from construction_review import held_pocket_reading
         def match(row):
+            detail=row['review'].get('局部连接复审') or {}
+            if detail.get('verdict')=='unclear' and 'palm_attachment_review' not in detail:
+                from palm_review import WEIGHTS,hand_attachment
+                disputed=(detail.get('proposed_finding') or {}).get('observation','')
+                if WEIGHTS.is_file() and hand_attachment(disputed):return False
             return row.get('hash')==key and row.get('inspection_key')==context_key and not held_pocket_reading(row['review'])
         prior=next((row for row in rec['reviews'] if match(row) and row['stage']==stage),None)
         if prior:return prior['review']

@@ -323,5 +323,11 @@
     "url": "https://huggingface.co/facebook/sam2.1-hiera-tiny/resolve/de431c4043854a71d8101e17995dfe596bf101a5/model.safetensors",
     "sha256": "48c14467e5cf9e51870511feb72c89688e82dd74523142c0538b663e193ac2a7",
     "size": 155908064
+  },
+  {
+    "path": "runtime/models/object_detector/palm-locator.onnx",
+    "url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/palm_detection_mediapipe/palm_detection_mediapipe_2023feb.onnx",
+    "sha256": "78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c",
+    "size": 3905734
   }
 ]

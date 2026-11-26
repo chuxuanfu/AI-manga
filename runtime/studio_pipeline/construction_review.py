@@ -128,6 +128,16 @@ def verify_repair_location(url,im,result,tag,indicated=None):
         except (KeyError,ValueError):
             state=None
     result['location_verification']=evidence
+    if state is None:
+        from palm_review import hand_attachment,inspect_attachments
+        if hand_attachment(target):
+            readings=inspect_attachments(url,im,box or indicated,target,('qwen3.8:27b',LARGE))
+            result['palm_attachment_review']=readings
+            if readings['decision']=='coherent':
+                traces=readings['readings'][0]['result']['hands']
+                result.update(verdict='coherent',box=[0,0,0,0],fix='',target='',
+                              observation=' '.join(hand['visible_contour'] for hand in traces))
+                return
     if state=='defect_visible':result['box']=box
     elif state=='target_is_coherent':
         last=evidence[-1]
