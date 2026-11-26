@@ -361,6 +361,15 @@ def assess_local_edit(before, after, box, correction, symptom=None, brief=None):
     old,new=before.crop(bounds).convert('RGB'),after.crop(bounds).convert('RGB')
     if not ImageChops.difference(old,new).getbbox():
         return {'verdict':'unchanged','evidence':'Identical source and proposed region.'}
+    from illustration import construction_guide
+    face_guide=construction_guide(correction)
+    if face_guide and face_guide[1].get('neutral_plate_subject')=='face':
+        from masks import unintended_portrait_scale
+        drift=unintended_portrait_scale(old,new,correction)
+        if drift:
+            return {'verdict':'new_defect','relative_part_size':drift,
+                    'evidence':'The visible face changed both its vertical span and its area in a fixed framing.',
+                    'next_edit':'Preserve the original face height from brow to chin, neck position and head-to-shoulder proportions. Rotate the features within that face.'}
     # A tiny crop otherwise occupies only a handful of vision-encoder patches.
     # Use identical optical zoom for both samples, without synthesizing pixels.
     edge=max(old.size)

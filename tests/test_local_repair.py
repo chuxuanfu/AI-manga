@@ -1042,6 +1042,29 @@ class LocalRepairTests(unittest.TestCase):
                           'A Japanese spitz and a cockatiel.']:
             self.assertIsNone(identity_reference(unrelated))
 
+    def test_rotating_a_face_preserves_height_and_allows_perspective_width(self):
+        import numpy as np
+        from masks import frame_neutral_guide, unintended_portrait_scale
+        im=Image.new('RGB',(300,300),'white')
+        original=np.zeros((1,352,352),np.float32)
+        original[:,112:216,125:215]=.89
+        excessive=np.zeros_like(original)
+        excessive[:,70:260,88:252]=.90
+        wider=np.zeros_like(original)
+        wider[:,111:217,96:245]=.90
+        with patch('masks.probabilities',side_effect=[original,excessive]):
+            drift=unintended_portrait_scale(im,im,'Rotate the face to three-quarter view')
+            self.assertGreater(drift['height_ratio'],1.5)
+        with patch('masks.probabilities',side_effect=[original,wider]):
+            self.assertIsNone(unintended_portrait_scale(im,im,'Turn the head horizontally'))
+        with patch('masks.probabilities') as net:
+            self.assertIsNone(unintended_portrait_scale(im,im,'Enlarge the face'))
+            net.assert_not_called()
+        with patch('masks.probabilities',return_value=original):
+            plate,extent=frame_neutral_guide(Image.new('RGB',(60,90),'gray'),im,'face')
+            self.assertEqual(plate.size,im.size)
+            self.assertLess(extent['height'],im.height*.4)
+
     def test_shoelace_reference_requires_an_actual_lace_interaction(self):
         from illustration import construction_guide
         selected=construction_guide('Draw the fingers pinching the boot lace.')

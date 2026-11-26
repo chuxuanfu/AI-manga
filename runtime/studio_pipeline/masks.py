@@ -66,6 +66,56 @@ def focal_subject_mask(image, area, label, feature):
     return limited,focus.point(lambda x:255 if x>=128 else 0).getbbox()
 
 
+def visible_part_extent(image, label):
+    """Measure one confidently isolated subject in the current crop's coordinates."""
+    score=probabilities(image,[label])[0]
+    if score.max()<.65:return None
+    parts,count=ndimage.label(score>max(.38,.56*float(score.max())))
+    if not count:return None
+    sizes=np.bincount(parts.ravel())[1:]
+    dominant=int(sizes.argmax())+1
+    if sizes[dominant-1]<.80*sizes.sum():return None
+    ys,xs=np.nonzero(parts==dominant)
+    extent=np.quantile(xs,[.03,.97])*image.width/score.shape[1]
+    vertical=np.quantile(ys,[.03,.97])*image.height/score.shape[0]
+    if min(extent[1]-extent[0],vertical[1]-vertical[0])<12:return None
+    if (extent[0]<1 or vertical[0]<1 or extent[1]>image.width-2 or vertical[1]>image.height-2):
+        return None
+    return dict(center=[float(extent.mean()),float(vertical.mean())],width=float(extent[1]-extent[0]),
+                height=float(vertical[1]-vertical[0]),area=float(len(xs))/score.size)
+
+
+def unintended_portrait_scale(before, after, instruction):
+    import re
+    # A commissioned change of scale or vertical head tilt may intentionally
+    # change the projected height. Horizontal rotations mostly change width.
+    if re.search(r'\b(?:enlarge|shrink|resize|zoom|bigger|smaller|larger|taller|shorter|'
+                 r'(?:looking|tilt(?:ed)?) (?:up|down)(?:ward)?)\b|放大|缩小|仰头|低头',
+                 instruction,re.I):return None
+    source=visible_part_extent(before,'face')
+    revised=visible_part_extent(after,'face')
+    if not source or not revised:return None
+    height=revised['height']/source['height']
+    area=revised['area']/source['area']
+    if (height>1.5 and area>1.8) or (height<.65 and area<.55):
+        return dict(source=source,revised=revised,height_ratio=height,area_ratio=area)
+    return None
+
+
+def frame_neutral_guide(guide, crop, label):
+    """Put a studio geometry plate at the original part's size and position."""
+    extent=visible_part_extent(crop,label)
+    if extent is None:return guide,None
+    # This optional metadata is used only on neutral plates whose subject fills
+    # the image. Ordinary documentary photographs keep their original framing.
+    size=tuple(max(1,round(v*extent['height']/guide.height)) for v in guide.size)
+    center=extent['center']
+    canvas=Image.new('RGB',crop.size,guide.convert('RGB').getpixel((0,0)))
+    canvas.paste(guide.resize(size,Image.Resampling.LANCZOS),
+                 (round(center[0]-size[0]/2),round(center[1]-size[1]/2)))
+    return canvas,extent
+
+
 def structural_composite(before, after, area, canvas_edges):
     """Place a rebuilt shape intact, joining the two drawings through agreeing surroundings."""
     import cv2

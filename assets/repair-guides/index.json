@@ -213,7 +213,8 @@
     "author": "Google MediaPipe authors",
     "license": "Apache License 2.0",
     "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
-    "changes": "Locally rotated the canonical face surface, rendered a grayscale orthographic view and projected the eyelid landmarks. See mediapipe-license.txt."
+    "changes": "Locally rotated the canonical face surface, rendered a grayscale orthographic view and projected the eyelid landmarks. See mediapipe-license.txt.",
+    "neutral_plate_subject": "face"
   },
   {
     "file": "cockatiel-crest.jpg",

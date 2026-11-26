@@ -268,8 +268,17 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
         reference_record={}
         if guide:
             file,credit=guide
-            with Image.open(file) as photo:reference=local_image(photo.convert('RGB'))
+            with Image.open(file) as photo:guide_image=photo.convert('RGB')
+            framing=None
+            if credit.get('neutral_plate_subject'):
+                from masks import frame_neutral_guide
+                guide_image,framing=frame_neutral_guide(guide_image,crop,credit['neutral_plate_subject'])
+            reference=local_image(guide_image)
             reference_record={**credit,'input':reference}
+            if framing:
+                reference_record['source_part_extent']=framing
+                direction+=('The neutral plate is registered to the source crop. Draw the corrected '
+                            'part at that size and location relative to the surrounding anatomy. ')
             construction=credit['construction']
             direction+=('Image 2 shows only a physical relationship: '+construction+
                         ' Orient that relationship to the perspective and physical contact in image 1. '
