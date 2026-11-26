@@ -1204,11 +1204,30 @@ def main():
             new=region(issue,final)
             repeated=(min(old[2],new[2])>max(old[0],new[0]) and min(old[3],new[3])>max(old[1],new[1]))
         with Image.open(approved) as original:
-            low_resolution=max(original.size)<1024
+            native_edge=max(original.size)
+            low_resolution=native_edge<1024
             rebuild_size=detail_canvas(original.size)
         if four_only and attempt<2 and not (args.keep_native or args.selection_mask or args.repair_box):
             from focal_edit import failed_focus, print_constraints, repaint_definition
             pixels=failed_focus(judged)
+            from restoration import available as restoration_available, restoration_graph
+            needs_detail=pixels or finding.get('category')=='unresolved_focus'
+            if (attempt==0 and needs_detail and not repair_check and not args.candidate_image
+                    and native_edge<3840 and restoration_available(RUNTIME/'ComfyUI/models')):
+                # Compare against the actual selected drawing. A final with a later structural
+                # repair must not be replaced by an earlier, uncorrected source.
+                stage='source-restoration'
+                with Image.open(approved) as src:
+                    input_name=local_image(src.convert('RGB'))
+                graph,node=restoration_graph(input_name,prefix+'/pending-review/'+stage,3840,seed+28601)
+                save(job/(stage+'-workflow.json'),graph.ui())
+                restored=post_graph(graph.api,args.port,job,stage,graph.ui())
+                prior_master=master
+                master=preserve_source_marks(approved,output_image(restored[node]))
+                small=None
+                rec['4K源图重建']={'底图':str(approved),'前一版本':str(prior_master),'模型任务':stage+'-task.json'}
+                save(manifest,rec)
+                continue
             if pixels and pixels not in tried_focus_fields:
                 tried_focus_fields.add(pixels)
                 stage=f'print-definition-{attempt+1}'

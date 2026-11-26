@@ -144,11 +144,20 @@ def glyph_mask(image, proposal):
     return full
 
 
+def denies_lettering(observation):
+    """A vote cannot authorize removal when its own pixel description rules out writing."""
+    words=r'(?:letters?|lettering|words?|text|writing|glyphs?|inscriptions?|characters?)'
+    adjectives=r'(?:(?:tiny|small|actual|printed|written|handwritten|visible|clear|alphabetic)\s+)*'
+    return bool(re.search(r'\b(?:rather than|instead of|without(?: any)?|contains? no|shows? no|not(?: any)?|no)\s+'
+                          +adjectives+words+r'\b|\bdo(?:es)? not (?:form|represent|resemble) (?:any )?'+adjectives+words+r'\b'
+                          +r'|(?:没有|并非|不构成|而非|未见)(?:任何|可辨的?|可见的?)?(?:字母|文字|字样)', observation, re.I))
+
+
 def clean_lettering(path, brief, folder, stage):
     if not blank_surfaces_requested(brief) or not DETECTOR.is_file() or not INPAINTER.is_file():
         return path
     source_id = fingerprint(path)
-    key = hashlib.sha256(json.dumps(['lettering-v6', RECOGNIZER.is_file(), source_id, brief, model_identity(MODEL)],
+    key = hashlib.sha256(json.dumps(['lettering-v7', RECOGNIZER.is_file(), source_id, brief, model_identity(MODEL)],
                                      ensure_ascii=False).encode()).hexdigest()
     report = folder / (stage + '-lettering.json')
     candidate = folder / (stage + '-plain-surfaces.png')
@@ -157,7 +166,9 @@ def clean_lettering(path, brief, folder, stage):
         previous = json.loads(report.read_text())
         old_key = hashlib.sha256(json.dumps(['lettering-v5', source_id, brief, model_identity(MODEL)],
                                             ensure_ascii=False).encode()).hexdigest()
-        if previous.get('key') == old_key:
+        old_ocr_key = hashlib.sha256(json.dumps(['lettering-v6',RECOGNIZER.is_file(),source_id,brief,model_identity(MODEL)],
+                                                ensure_ascii=False).encode()).hexdigest()
+        if previous.get('key') in (old_key,old_ocr_key):
             prior_readings = {tuple(v['box']):v for v in previous['observations'] if 'box' in v}
         if previous.get('key') == key:
             if not previous.get('candidate_sha256'):
@@ -234,6 +245,9 @@ def clean_lettering(path, brief, folder, stage):
                         {'type':'object','properties':{'feature':fields['feature']},'required':['feature']},tag=MODEL))
                     result={'appearance':evidence,'feature':vote['feature']}
                     record['observations'][-1]['independent_reading']=result
+            if result['feature']=='printed_or_handwritten_marks' and denies_lettering(result['appearance']):
+                record['observations'][-1]['preserved']='pixel description rules out writing'
+                continue
             if result['feature']=='printed_or_handwritten_marks' and result['appearance'].strip():
                 # Mask each word separately. Neighbouring lines can have different ink
                 # polarity or be printed on opposite sides of an object boundary.

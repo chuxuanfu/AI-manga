@@ -108,6 +108,31 @@ class LocalRepairTests(unittest.TestCase):
             self.assertEqual(result,fit_print_aspect(result,'16:9',384))
             self.assertEqual(source,fit_print_aspect(source,'auto',384))
 
+    def test_source_restoration_conditions_sampling_and_color_on_same_selected_artwork(self):
+        from restoration import restoration_graph
+        graph,node=restoration_graph('selected.png','job/pending-review/restored',3840,19)
+        ops=graph.api
+        saved=ops[node]['inputs']['images'][0]
+        post=ops[saved]
+        self.assertEqual(post['inputs']['color_correction_method'],'wavelet')
+        guide=post['inputs']['original_resized_images'][0]
+        self.assertEqual(ops[guide]['inputs']['largest_size'],3840)
+        self.assertEqual(ops[ops[guide]['inputs']['image'][0]]['inputs']['image'],'selected.png')
+        sampler=next(x['inputs'] for x in ops.values() if x['class_type']=='KSampler')
+        condition=ops[sampler['positive'][0]]['inputs']
+        self.assertEqual(condition['vae_conditioning'],sampler['latent_image'])
+        encoder=ops[sampler['latent_image'][0]]['inputs']
+        self.assertEqual(ops[encoder['pixels'][0]]['inputs']['resized_images'][0],guide)
+        self.assertEqual(sampler['steps'],1)
+
+    def test_lettering_vote_cannot_erase_a_depicted_contour_when_evidence_rules_out_writing(self):
+        from lettering import denies_lettering
+        self.assertTrue(denies_lettering('Mustard-yellow brushstrokes rather than tiny writing.'))
+        self.assertTrue(denies_lettering('These strokes do not form any letters.'))
+        self.assertFalse(denies_lettering('Four small painted letters rather than animal contours.'))
+        self.assertFalse(denies_lettering('A line of illegible printed glyphs is visible.'))
+        self.assertFalse(denies_lettering('A row of printed glyphs with no readable words.'))
+
     def test_ctc_word_decoder_preserves_double_letters_separated_by_blanks(self):
         import numpy as np
         from lettering import decode_word
