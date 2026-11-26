@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-16'
+REVISION = 'print-inspection-17'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -39,6 +39,16 @@ SOFT_HANDLING=re.compile(r'blur(?:red|ry)?|out[- ]of[- ]focus|defocus|bokeh|shal
 def requested_handling(phrase,brief):
     return bool(isinstance(phrase,str) and phrase.strip() and phrase.strip().casefold() in brief.casefold()
                 and SOFT_HANDLING.search(phrase))
+
+def crop_brief(brief):
+    """A pixel sample can show one object even when the requested scene contains many."""
+    scene, sep, style = brief.partition(' · ')
+    handling = [s.strip() for s in re.split(r'[.;。；!?，,]',scene) if SOFT_HANDLING.search(s)]
+    return ('Evaluate the material and contours actually visible inside this regional crop. '
+            'The composition is inspected separately in full. '
+            + ('Medium and finish: '+style+'. ' if sep else 'Respect the visible artwork medium. ')
+            + ('Local focus instructions: '+'. '.join(handling) if handling else ''))
+
 
 def fingerprint(path):
     with Path(path).open('rb') as src:
@@ -251,6 +261,22 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
         overview_image=image.copy()
         overview_image.thumbnail((1152,1152),Image.Resampling.LANCZOS)
         windows=list(print_windows(image.size,regions))
+        prior_rects=set()
+        for saved in sorted(directory.glob(digest+'-*.json')):
+            if saved == report:continue
+            old=json.loads(saved.read_text())
+            if old.get('status')!='local' or old.get('brief')!=brief or old.get('model_id')!=model_id:continue
+            found=old.get('issue',{}).get('box')
+            if not found or not old.get('views'):continue
+            last=old['views'][-1]
+            original_box=map_box(last['observation'],last['pixels'],image.size)
+            found=repair_extent(found,[original_box])
+            candidate=tuple(round(v*k/1000) for v,k in zip(found,image.size*2))
+            prior_rects.add(expanded(candidate,image.size))
+        if 'previous_regions' not in result:
+            result['previous_regions']=sorted(prior_rects)
+        for area in reversed(result['previous_regions']):
+            windows.insert(1,('previous_local',tuple(area)))
         if small:
             with Image.open(small) as fp:before=fp.convert('RGB')
             w,h=image.size
@@ -268,7 +294,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 if max(draft_image.size)<max(before.size):
                     comparisons+=[('draft-comparison',centered_crop(image.size,site,896)) for site in sites]
                 comparisons.append(('palette',(0,0,w,h)))
-            windows[1:1]=list(dict.fromkeys(comparisons))
+            position=1+len(result['previous_regions'])
+            windows[position:position]=list(dict.fromkeys(comparisons))
         result.update(size=list(image.size),planned=len(windows),planned_native=sum(k=='native' for k,_ in windows))
         print(f'本机逐块终审 {len(result["views"])}/{len(windows)}，原像素 {result["planned_native"]} 块',flush=True)
         for i,(kind,rect) in enumerate(windows):
@@ -310,7 +337,9 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             else:
                 question=('Inspect this actual detail from the same artwork. Apply explicit exclusions to anything actually visible here, including small background figures. A requested subject outside this crop is not missing. '
                           'Trace the physical connections visible here and inspect print quality.')
-            guidance=brief+'\n'+constraints
+            local=kind not in ('whole','construction','palette')
+            inspection_brief=crop_brief(brief) if local else brief
+            guidance=inspection_brief+'\n'+constraints
             prompt=GUIDE+'\n'+question+' A quiet or intentionally blurred surface can pass on its own. Never guess what is outside the crop.\n'+guidance
             row=inspect_native(url,view,prompt) if kind=='native' else judge_view(url,view,prompt)
             record={'view':kind,'pixels':list(rect),'observation':row}
@@ -334,7 +363,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     overview.thumbnail((800,800),Image.Resampling.LANCZOS)
                     draw=ImageDraw.Draw(overview)
                     draw.rectangle(tuple(round(v*n/k) for v,n,k in zip(rect,overview.size*2,image.size*2)),outline='#ec407a',width=2)
-                    verify=GUIDE+' '+question+' The last image locates the inspected area in the full composition. Use it to identify deliberate softness. Previous claim: '+claim+' Brief: '+brief
+                    verify=GUIDE+' '+question+' The last image locates the inspected area in the full composition. Use it to identify deliberate softness. Previous claim: '+claim+' Brief: '+inspection_brief
                 second=judge_view(url,region,verify,overview=overview)
                 record['context_pixels']=list(context)
                 record['corroboration']=second
@@ -353,13 +382,13 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     zoom=image.crop(context);zoom.thumbnail((720,660),Image.Resampling.LANCZOS)
                     board=Image.new('RGB',(overview.width+zoom.width+8,max(overview.height,zoom.height)), '#eceae6')
                     board.paste(overview,(0,0));board.paste(zoom,(overview.width+8,0))
-                    third=judge_view(url,board,GUIDE+' On the left is the whole image with a locator; on the right are the marked pixels. Independently judge the right detail in the context of the scene and intended depth of field. Identify only a concrete visible defect, or clear this view if appropriate. Coordinates refer only to the right panel. A prior strictly visual inventory of these pixels reads: '+json.dumps(observation)+'. A concrete excluded person or animal must have identifiable body parts. Optical resemblance alone does not demonstrate a violation. Brief: '+brief,reason=True)
+                    third=judge_view(url,board,GUIDE+' On the left is the whole image with a locator; on the right are the marked pixels. Independently judge the right detail in the context of the scene and intended depth of field. Identify only a concrete visible defect, or clear this view if appropriate. Coordinates refer only to the right panel. A prior strictly visual inventory of these pixels reads: '+json.dumps(observation)+'. A concrete excluded person or animal must have identifiable body parts. Optical resemblance alone does not demonstrate a violation. Brief: '+guidance,reason=True)
                     record['independent_context']=third
                     second=third
                 if second['decision']=='uncertain' and kind in ('comparison','draft-comparison'):
-                    record['issue_category']=issue_category(url,region,second['evidence'],brief)
+                    record['issue_category']=issue_category(url,region,second['evidence'],inspection_brief)
                     if record['issue_category']=='unresolved_focus':
-                        check=independent_detail_check(url,view,overview,brief)
+                        check=independent_detail_check(url,view,overview,inspection_brief)
                         record['blind_detail_check']=check
                         if check['confirmed']:
                             second=dict(second,decision='clear',evidence=check['trace']['improvement'],operation='none',fix='',target='')
@@ -396,7 +425,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     result.update(status=verdict,issue={'box':box,'operation':second.get('operation','redraw'),'fix':second['fix'],'target':second['target'],
                                                         'symptom':second['evidence']})
                     if small and second.get('operation')!='remove_forbidden':
-                        result['issue']['category']=record.get('issue_category') or issue_category(url,region,second['evidence'],brief)
+                        result['issue']['category']=record.get('issue_category') or issue_category(url,region,second['evidence'],inspection_brief)
             record['elapsed_seconds']=round(time.monotonic()-started,2)
             result['views'].append(record)
             store(report,result)
