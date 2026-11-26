@@ -1149,6 +1149,28 @@ def needs_perspective_review(result):
         last.get('style_intent',{}).get('outcome')=='unresolved' and 'focal_definition' not in result))
 
 
+def needs_brief_after_clearance(view):
+    final = view.get('independent_context') or view.get('corroboration') or {}
+    return (view.get('view') == 'whole' and view.get('observation', {}).get('decision') != 'clear'
+            and final.get('decision') == 'clear' and not view.get('brief_checked')
+            and not view.get('brief_witnesses'))
+
+
+def check_brief_after_clearance(url, image, overview, brief, view):
+    from brief_check import subject_witness
+    notes, contradiction = subject_witness(url, image, overview, brief, MODEL)
+    view.update(brief_checked=True, brief_witnesses=notes)
+    if not contradiction:
+        return None
+    # The rebuttal cleared only the original complaint. Preserve it and record the
+    # separate evidence for the newly observed discrepancy in the requested scene.
+    view['cleared_initial_concern'] = view.get('independent_context') or view.get('corroboration')
+    view['independent_context'] = contradiction
+    return {'category': 'other', 'symptom': contradiction['evidence'], 'target': contradiction['target'],
+            'operation': contradiction['operation'], 'fix': contradiction['fix'],
+            'box': [contradiction[k] for k in ('left', 'top', 'right', 'bottom')]}
+
+
 def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None, source_comparison=False, construction_draft=False):
     digest=fingerprint(path)
     directory=root/'print-review'
@@ -1270,6 +1292,18 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
             else:
                 result=dict(result,report=str(report.relative_to(root)),views=result['views'][:-1],status='running')
                 result.pop('issue',None)
+    if result['status'] in ('pass','running'):
+        whole = next((v for v in result['views'] if needs_brief_after_clearance(v)), None)
+        if whole:
+            with Image.open(path) as fp:
+                master = fp.convert('RGB')
+            overview = master.copy()
+            overview.thumbnail((1152,1152), Image.Resampling.LANCZOS)
+            with backend(MODEL) as address:
+                missing = check_brief_after_clearance(address, master, overview, brief, whole)
+            if missing:
+                result.update(status='local', issue=missing)
+            store(report,result)
     if result['status'] in ('pass','local','global','uncertain'):return result
     with ExitStack() as resources:
         with Image.open(path) as source:image=source.convert('RGB')
@@ -1780,6 +1814,10 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
                             result['issue'].update(operation=operation,target=plan['part'],fix=plan['edit'],category='other')
                     if small and result['issue']['operation']!='remove_forbidden' and 'category' not in result['issue']:
                         result['issue']['category']=record.get('issue_category') or issue_category(url,region,second['evidence'],inspection_brief)
+            if result['status']=='running' and needs_brief_after_clearance(record):
+                missing=check_brief_after_clearance(url,image,overview_image,brief,record)
+                if missing:
+                    result.update(status='local',issue=missing)
             record['elapsed_seconds']=round(time.monotonic()-started,2)
             result['views'].append(record)
             store(report,result)

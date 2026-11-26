@@ -617,6 +617,25 @@ class LocalRepairTests(unittest.TestCase):
         self.assertNotIn('LoadImage', nodes)
         self.assertEqual(graph[nodes['KSampler']['latent_image'][0]]['class_type'], 'EmptySD3LatentImage')
 
+    def test_disproving_one_composition_complaint_still_checks_requested_actions(self):
+        from print_judge import needs_brief_after_clearance, check_brief_after_clearance
+        original = {'decision':'local', 'evidence':'Are the paws fused?'}
+        intact = {'decision':'clear', 'evidence':'Two separate forepaws.'}
+        view = {'view':'whole', 'observation':original, 'independent_context':intact}
+        self.assertTrue(needs_brief_after_clearance(view))
+        self.assertFalse(needs_brief_after_clearance(dict(view, view='native')))
+        self.assertFalse(needs_brief_after_clearance(dict(view, independent_context=original)))
+        issue = dict(decision='local', evidence='Fingers rest on bare desk.', target='knob',
+                     operation='redraw', fix='Place the fingertips on the knob.',
+                     left=360, top=420, right=490, bottom=500)
+        with patch('brief_check.subject_witness', return_value=([{'quote':'turns one knob'}],issue)):
+            finding = check_brief_after_clearance('local',None,None,'Turn a knob',view)
+        self.assertEqual(finding['box'],[360,420,490,500])
+        self.assertEqual(view['cleared_initial_concern'],intact)
+        self.assertEqual(view['observation'],original)
+        self.assertEqual(view['independent_context'],issue)
+        self.assertFalse(needs_brief_after_clearance(view))
+
     def test_full_edit_uses_original_denoiser_with_mask_and_both_images(self):
         from illustration import instruction_edit
         graph=instruction_edit('Connect the post to its foot',11,'region.png','test',masked=True,
