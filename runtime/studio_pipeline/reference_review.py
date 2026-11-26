@@ -107,6 +107,48 @@ def order_verdict(forward,backward,axes,*,sided=False):
                 consistent_deficits=deficits,unresolved_axes=ambiguous)
 
 
+FINISH_EDITS={
+    'form_and_contact':'Clarify silhouettes, joins, weight and the visible edge where each focal part meets its support.',
+    'material_construction':'Give the focal surfaces identifiable edges, folds or joints using the marks of the requested medium.',
+    'lighting':'Establish one legible light direction and use contact shadows and selective highlights consistent with the chosen medium.',
+    'depth_and_finish':'Separate foreground, middle distance and far shapes by overlap, scale and value. Reserve the clearest detail for the focus.',
+}
+
+
+def redraw_direction(assessment,brief,*,address=None,tag=TAG):
+    """Only the candidate's visible marks and the author brief enter the next drawing prompt."""
+    if assessment.get('decision')!='below':return ''
+    axes=[axis for axis in AXES if axis in assessment.get('consistent_deficits',[])]
+    if not axes:return ''
+    general=' '.join(FINISH_EDITS[axis] for axis in axes)
+    if address is None:return general
+    observations=[]
+    for axis in axes:
+        for side,field in (('reference_on_left','right_detail'),('reference_on_right','left_detail')):
+            detail=assessment.get(side,{}).get(axis,{}).get(field)
+            if detail:observations.append(detail)
+    schema={'type':'object','properties':{'edit':{'type':'string'}},'required':['edit']}
+    question=('Write one positive drawing instruction under 95 words for a local illustration model. '
+              'Preserve the exact composition, subjects, counts, palette, design and physical medium the author requested. '
+              'Name concrete changes to existing parts to improve the following issues. A simple medium can show '
+              'craft through deliberate joins, cut layers or shadows without imitating a different style. '
+              'Include only objects from the author brief or observations of this same candidate. '
+              'Author brief: '+brief+' Required improvements: '+general+' Observed candidate features: '+' '.join(observations))
+    try:
+        answer=json.loads(ask(address,[],question,schema,tag=tag))['edit'].strip()
+    except (OSError,RuntimeError,ValueError,KeyError,AttributeError):
+        return general
+    return answer if 8<=len(answer.split())<=120 else general
+
+
+def last_finish_direction(record):
+    for row in reversed(record.get('reviews',[])):
+        assessment=row.get('review',{}).get('参考比较') or {}
+        if assessment:
+            return (assessment.get('redraw_direction') or redraw_direction(assessment,'')) if assessment.get('decision')=='below' else ''
+    return ''
+
+
 def confirmed_final_comparison(review):
     from construction_review import LARGE
     from print_judge import MODEL
@@ -158,6 +200,9 @@ def compare(im,regions,path,brief='',*,final=False):
                               independent_review=independent)
                 if independent.get('consistent_deficits'):
                     result['consistent_deficits']=independent['consistent_deficits']
-        return dict(result,assessment_model=tag,separate_material_evidence=final,reference_on_left=forward,reference_on_right=backward)
+            result.update(assessment_model=tag,separate_material_evidence=final,reference_on_left=forward,reference_on_right=backward)
+            if result['decision']=='below':
+                result['redraw_direction']=redraw_direction(result,brief,address=url if brief else None,tag=tag)
+        return result
     except (RuntimeError,OSError,ValueError,KeyError) as exc:
         return {'decision':'review','reason':str(exc)[:180]}

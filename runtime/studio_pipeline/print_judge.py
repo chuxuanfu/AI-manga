@@ -1452,7 +1452,7 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
                     pair=inspect_pair(address,fp.convert('RGB'),box,disputed['consistency_check']['tested_claim'],(LARGE,MODEL))
                 disputed['registered_pair']=pair
                 result['report']=str(report.relative_to(root))
-                if pair['confirmed']:
+                if pair['confirmed'] and (not disputed.get('silhouette_inventory') or disputed['silhouette_inventory'].get('condition')=='fully_traced'):
                     points=pair['orders'][0]
                     disputed.update(condition='physically_plausible',problem='',visible_shapes=points['first_trace']+' '+points['second_trace'],
                                     depicted_action=points['between'])

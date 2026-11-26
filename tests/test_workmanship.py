@@ -38,6 +38,24 @@ class WorkmanshipTests(unittest.TestCase):
                     self.assertIn('left_detail',reader.call_args.args[3]['properties']['lighting']['required'])
                 reader.reset_mock()
 
+    def test_repaint_uses_both_candidate_observations_and_excludes_reference_subjects(self):
+        from reference_review import redraw_direction,last_finish_direction
+        grade=dict(decision='below',consistent_deficits=['material_construction'],
+                   reference_on_left={'material_construction':{'left_detail':'A robot paw','right_detail':'A flat yellow cape'}},
+                   reference_on_right={'material_construction':{'right_detail':'The umbrella ribs','left_detail':'A yellow collar'}})
+        edit='Fold the cape collar from a distinct layer of yellow paper.'
+        with patch('reference_review.ask',return_value=json.dumps({'edit':edit})) as writer:
+            grade['redraw_direction']=redraw_direction(grade,'A girl watches a lamb.',address='local')
+            prompt=writer.call_args.args[2]
+            self.assertIn('flat yellow cape',prompt)
+            self.assertIn('yellow collar',prompt)
+            self.assertNotIn('robot',prompt)
+            self.assertNotIn('umbrella',prompt)
+        record={'reviews':[{'review':{'参考比较':grade}}]}
+        self.assertEqual(last_finish_direction(record),edit)
+        record['reviews'].append({'review':{'参考比较':{'decision':'candidate'}}})
+        self.assertEqual(last_finish_direction(record),'')
+
     def test_shared_unlocated_reference_evidence_requires_another_reader(self):
         from reference_review import order_verdict
         weak=dict(level='tie',evidence='Both use paper.',left_detail='Both use layered paper.',right_detail='Both use layered paper.')
