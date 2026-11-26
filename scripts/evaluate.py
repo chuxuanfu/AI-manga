@@ -17,6 +17,17 @@ def read(path):
     return json.loads(path.read_text())
 
 
+def pipeline_identity():
+    digest=hashlib.sha256()
+    files=[ROOT/'Studio.command',ROOT/'scripts/studio.py',ROOT/'scripts/models.json']
+    for directory in ('runtime/studio_pipeline','extensions/manga_materials'):
+        files.extend(sorted((ROOT/directory).glob('*.py')))
+    for path in files:
+        digest.update(str(path.relative_to(ROOT)).encode()+b'\0')
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
 def verified_release(job, prompt):
     from PIL import Image
     from production import workmanship_confirmed
@@ -58,6 +69,9 @@ def run(suite, label, budget):
         result = read(report_file) if report_file.exists() else dict(suite_sha256=key,max_rounds=budget,cases={})
         if (result['suite_sha256'],result['max_rounds'])!=(key,budget):
             raise ValueError('Use a new run name when the suite or round budget changes.')
+        version=pipeline_identity()
+        if result.setdefault('pipeline_sha256',version)!=version:
+            raise ValueError('The workflow changed. Start a new named run for this version.')
         for case in cases:
             name=case['id']; prior=result['cases'].get(name,{})
             if prior.get('status') in ('passed','budget_exhausted'):
@@ -83,6 +97,10 @@ def run(suite, label, budget):
             result['cases'][name]=dict(status=status,job=name,started_at=started,elapsed_seconds=round(time.time()-started,1),
                                        rounds=len(state.get('rounds',[])),exit_code=rc,
                                        last_finding=(state.get('rounds') or [{}])[-1].get('原因',''))
+            if pipeline_identity()!=version:
+                result['cases'][name]['status']='workflow_changed'
+                store(report_file,result)
+                raise RuntimeError('Workflow source changed during execution. Use a new run for a clean comparison.')
             store(report_file,result)
     return report_file
 
