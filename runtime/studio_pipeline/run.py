@@ -733,7 +733,10 @@ def main():
     focus=args.repair_box
     def check_composition(path,label):
         if not args.from_image and not args.repair_box:
+            from framing import prepare_full_bleed
             from lettering import clean_lettering
+            if not rec.get('原生4K') and not args.native_only:
+                path=prepare_full_bleed(path,prompt)
             path=clean_lettering(path,prompt,job,label)
         result=check(path,label)
         duplicate=duplicate_box(result) if rec.get('画法自适应') and not args.repair_box and ERASE_MODEL.exists() else None
