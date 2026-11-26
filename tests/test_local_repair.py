@@ -22,6 +22,26 @@ from structure import inspect_small_figure_support
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_sequential_review_models_share_one_service_until_the_image_is_graded(self):
+        from contextlib import contextmanager
+        from evidence import backend,review_session
+        events=[]
+        @contextmanager
+        def serve(tag,timings=None):
+            events.append(('open',tag))
+            try:yield 'local-address'
+            finally:events.append(('close',tag))
+        with patch('evidence._local_service',side_effect=serve),patch('evidence.model_identity',return_value='local'):
+            with self.assertRaises(ValueError):
+                with review_session():
+                    with backend('first') as address:self.assertEqual(address,'local-address')
+                    with review_session(),backend('second') as again:self.assertEqual(again,address)
+                    self.assertEqual(events,[('open','first')])
+                    raise ValueError('interrupted check')
+            self.assertEqual(events,[('open','first'),('close','first')])
+            with backend('next'):pass
+            self.assertEqual(events[-2:],[('open','next'),('close','next')])
+
     def test_unrelated_repair_does_not_erase_prior_local_evidence(self):
         from print_judge import same_defect_field
         initial=Image.new('RGB',(200,100),'white')

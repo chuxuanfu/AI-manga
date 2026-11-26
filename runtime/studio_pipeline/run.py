@@ -631,7 +631,8 @@ def main():
                             issues=[],regions={},layout=mismatch)
                 rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,inspection_key=context_key,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),review=result))
                 save(manifest,rec);return result
-        with Image.open(path) as image:
+        from evidence import review_session
+        with Image.open(path) as image, review_session() as timings:
             rgb=image.convert('RGB')
             result=audit(rgb,prompt,rec['parts'],job/(stage+'-inspection.jpg'),focus=focus)
             if reference_style:
@@ -662,7 +663,7 @@ def main():
                         result['note']+=' · 交换左右后仍发现画法差距'
                     elif comparison['decision']=='review':
                         result['note']+=' · 画法对照需目检'
-        rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,inspection_key=context_key,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),review=result))
+        rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,rubric=rubric,inspection_key=context_key,stage=stage,elapsed_seconds=round(time.monotonic()-started,2),device=timings,review=result))
         save(manifest,rec)
         print(stage,result['status'],result['note'],flush=True)
         return result
