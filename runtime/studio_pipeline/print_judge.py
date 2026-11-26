@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-19'
+REVISION = 'print-inspection-20'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -192,7 +192,7 @@ def arbitrate_finding(url, detail, locator, original, corroboration, inventory):
               'named part in the FIRST image and give visible evidence for or against that specific '
               'claim. A different feature cannot confirm or disprove this finding. Use insufficient '
               'when the named part or connection is unresolved. For part, name only the physical '
-              'subject of this claim. Independent description of the pixels: '+json.dumps(inventory)+
+              'part that must be reconstructed together with its attachment (for instance a hand for fused digits or a wheel for misaligned spokes). Independent description of the pixels: '+json.dumps(inventory)+
               '. Proposed finding: '+original['evidence']+' Second reading: '+corroboration['evidence'])
     read=json.loads(ask(url,[detail,locator],question,schema,tag=MODEL,reason=True))
     if read['outcome']=='disproved':
@@ -294,13 +294,13 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             original_box=map_box(last['observation'],last['pixels'],image.size)
             found=repair_extent(found,[original_box])
             candidate=tuple(round(v*k/1000) for v,k in zip(found,image.size*2))
-            prior_rects[expanded(candidate,image.size)]=old['issue'].get('symptom','')
+            prior_rects[expanded(candidate,image.size)]={'symptom':old['issue'].get('symptom',''),'box':found}
         if repair:
             candidate=tuple(round(v*k/1000) for v,k in zip(repair['box'],image.size*2))
-            prior_rects[expanded(candidate,image.size)]=repair['symptom']
+            prior_rects[expanded(candidate,image.size)]=repair
         if 'previous_regions' not in result:
             result['previous_regions']=[[list(area),prior_rects[area]] for area in sorted(prior_rects)]
-        known={tuple(area):symptom for area,symptom in result['previous_regions']}
+        known={tuple(area):finding for area,finding in result['previous_regions']}
         for area in reversed(known):
             windows.insert(1,('previous_local',area))
         if small:
@@ -349,7 +349,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                           'When there are no figures, trace object edges and supports through overlaps. Judge the physical construction you actually see.')
             elif kind=='previous_local':
                 question=('Inspect the actual part in this enlargement. A previous pass identified this concrete '
-                          'problem here: '+known[rect]+'. Trace the part independently. Clear a corrected or '
+                          'problem here: '+known[rect]['symptom']+'. Trace the part independently. Clear a corrected or '
                           'visibly disproved finding. If the defect is still visible, describe and locate the '
                           'whole affected part including its attachment. Use the surrounding edge as context.')
             elif kind=='contacts':
@@ -444,7 +444,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     if verdict=='local' and box:
                         first_box=map_box(row,rect,image.size)
                         corroborating_box=map_box(record['corroboration'],context,image.size)
-                        box=repair_extent(box,[first_box,corroborating_box])
+                        prior_box=known[rect]['box'] if kind=='previous_local' else None
+                        box=repair_extent(box,[first_box,corroborating_box,prior_box])
                         for axis in (0,1):
                             if box[axis+2]-box[axis]<12:
                                 box[axis]=min(988,max(0,(box[axis]+box[axis+2])//2-6))
