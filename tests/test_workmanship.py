@@ -9,6 +9,21 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'runtime/studio_pipeli
 
 
 class WorkmanshipTests(unittest.TestCase):
+    def test_replacement_geometry_is_grounded_in_its_repair_field(self):
+        from illustration import construction_guide
+        from masks import frame_supported_object
+        guide=construction_guide('Draw wound thread between the two ends of the sewing spool.')
+        self.assertEqual(guide[1]['placement'],'supported_object')
+        with Image.open(guide[0]) as source:
+            plate,box=frame_supported_object(source,(256,192),(55,78,145,140))
+            self.assertEqual(plate.size,(256,192))
+            self.assertEqual(plate.getchannel('A').getbbox(),box)
+            self.assertEqual(box[3],140)
+            self.assertLessEqual(abs((box[0]+box[2])/2-100),1)
+            with self.assertRaises(ValueError):
+                frame_supported_object(source,(256,192),(400,100,425,120))
+        self.assertIsNone(construction_guide('Preserve the sewing spool and the wound thread.'))
+
     def test_paper_relief_preserves_surface_tones_in_the_print_pass(self):
         from illustration import continuous_tone
         for medium in ('layered cut-paper diorama', 'paper relief', '立体剪纸'):

@@ -160,6 +160,25 @@ def frame_neutral_guide(guide, crop, label):
     return canvas,extent
 
 
+def frame_supported_object(plate, size, bounds):
+    """Register a cutout to the actual repair box and the bottom of its support."""
+    if 'A' not in plate.getbands() or not plate.getchannel('A').getbbox():
+        raise ValueError('A supported object guide needs a visible alpha cutout')
+    l,t,r,b=bounds
+    l,t=max(0,l),max(0,t)
+    r,b=min(size[0],r),min(size[1],b)
+    if r<=l or b<=t:
+        raise ValueError('Object guide falls outside the repair field')
+    shape=plate.convert('RGBA').crop(plate.getchannel('A').getbbox())
+    scale=min((r-l)/shape.width,(b-t)/shape.height)
+    shape=shape.resize((max(1,round(shape.width*scale)),max(1,round(shape.height*scale))),Image.Resampling.LANCZOS)
+    x=l+(r-l-shape.width)//2
+    y=b-shape.height
+    canvas=Image.new('RGBA',size)
+    canvas.alpha_composite(shape,(x,y))
+    return canvas,(x,y,x+shape.width,y+shape.height)
+
+
 def structural_composite(before, after, area, canvas_edges):
     """Place a rebuilt shape intact, joining the two drawings through agreeing surroundings."""
     import cv2

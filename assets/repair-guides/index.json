@@ -397,5 +397,34 @@
     "license": "CC0 1.0",
     "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
     "modifications": "Cropped the deck and resized the photograph."
+  },
+  {
+    "file": "wound-thread-spool.webp",
+    "requires": [
+      [
+        "spool",
+        "bobbin",
+        "线轴",
+        "線軸",
+        "糸巻き"
+      ],
+      [
+        "thread",
+        "threads",
+        "sewing",
+        "wound",
+        "cotton",
+        "windings",
+        "缝纫",
+        "线圈",
+        "糸"
+      ]
+    ],
+    "construction": "Wound sewing thread follows a single short hollow core between two larger disc-shaped wooden flanges. Show the axial bore on a visible end and the continuous helical windings between the rims. Orient the spool to the author brief and the supporting surface.",
+    "author": "AI Manga Studio",
+    "source": "Original studio geometry",
+    "license": "Original project asset",
+    "changes": "Orthographic render of a hollow revolved core and helical thread.",
+    "placement": "supported_object"
   }
 ]

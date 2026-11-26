@@ -276,8 +276,21 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
                         'of light, shading, and the intact surroundings from image 1. ')
         elif guide:
             file,credit=guide
-            with Image.open(file) as photo:guide_image=photo.convert('RGB')
             framing=None
+            with Image.open(file) as photo:
+                if credit.get('placement')=='supported_object':
+                    from masks import frame_supported_object
+                    placed,extent=frame_supported_object(photo,crop.size,(x0-x,y0-y,x1-x,y1-y))
+                    guide_image=(prepared.convert('RGB').resize(crop.size,Image.Resampling.LANCZOS)
+                                 if reconstruction_attempt>=3 and ERASE_MODEL.is_file()
+                                 else Image.new('RGB',crop.size,(232,228,217)))
+                    guide_image.paste(placed,mask=placed.getchannel('A'))
+                    framing={'pixels':list(extent),'crop_size':list(crop.size)}
+                    direction+=('Image 2 places the object in the selected field. Follow its physical '
+                                'construction at this scale, resting on the existing support. Orient it '
+                                'as requested and render all surfaces in the original medium. ')
+                else:
+                    guide_image=photo.convert('RGB')
             plate_subject=credit.get('neutral_plate_subject')
             if credit.get('pose_subject') and not recolor:
                 from masks import pose_outline
@@ -293,8 +306,9 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
                 reference_record={**credit,'input':reference}
                 if framing:
                     reference_record['source_part_extent']=framing
-                    direction+=('The neutral plate is registered to the source crop. Draw the corrected '
-                                'part at that size and location relative to the surrounding anatomy. ')
+                    if plate_subject:
+                        direction+=('The neutral plate is registered to the source crop. Draw the corrected '
+                                    'part at that size and location relative to the surrounding anatomy. ')
             construction=credit['construction']
             direction+=(('Image 2 shows only a physical relationship: ' if reference else 'Follow this construction: ')+construction+
                         ' Orient that relationship to the perspective and physical contact in image 1. '
