@@ -91,9 +91,16 @@ def fingerprint(path):
         return hashlib.file_digest(src, 'sha256').hexdigest()
 
 def store(path, value):
-    tmp = path.with_suffix('.tmp')
-    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2))
-    tmp.replace(path)
+    from tempfile import NamedTemporaryFile
+    with NamedTemporaryFile(dir=path.parent, prefix='.'+path.name+'-', suffix='.tmp',
+                            mode='w', encoding='utf-8', delete=False) as stream:
+        tmp = Path(stream.name)
+        try:
+            json.dump(value, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            tmp.replace(path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 def axes(length):
     span = min(length, SIDE)

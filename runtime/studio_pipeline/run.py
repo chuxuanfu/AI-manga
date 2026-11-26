@@ -35,9 +35,8 @@ Image.MAX_IMAGE_PIXELS = 180_000_000
 
 
 def save(path, obj):
-    tmp = path.with_suffix('.tmp')
-    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2))
-    tmp.replace(path)
+    from print_judge import store
+    store(path,obj)
     if path.name=="review.json":write_gallery(path.parent,obj,STUDIO)
 
 
