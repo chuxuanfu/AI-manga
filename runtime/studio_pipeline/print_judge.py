@@ -659,6 +659,9 @@ def verify_depicted_connection(url,image,box,claim,brief):
 ABSENCE_CLAIM=re.compile(r'\b(?:missing|absent|cropped|cut off|out of frame|extend the canvas|feet are (?:not|never) visible|'
                          r'lettering|spelling|inscription|duplicat\w*|extra|surplus|forbidden)\b|缺失|缺少|画幅|裁切|截断|多余|重复',re.I)
 
+FORM_DEPTH=re.compile(r'\b(?:flat(?:ness)?|flattened|thickness|depth|3d|three.dimensional|volume|volumetric)\b|扁平|立体感|厚度|体积',re.I)
+
+
 def verify_part_identity(url, image, box, finding, earlier_claim=''):
     """Avoid repainting an intact neighboring object mistaken for the alleged part."""
     from construction_review import LARGE
@@ -712,8 +715,28 @@ def verify_part_identity(url, image, box, finding, earlier_claim=''):
         +json.dumps(inventory,ensure_ascii=False)+' Set blind_identification_visible=true only for a '
         'visibly confirmed identity and attachment. Set intact_contour=true only for an intact actual form.',
         {'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    material=None
+    if (audit['is_claimed_part']=='yes' and audit['intact_contour'] and audit['blind_identification_visible']
+            and FORM_DEPTH.search(claim+' '+earlier_claim)):
+        fields={'natural_form':{'enum':['thin_sheet_or_layer','volumetric','unclear']},
+                'first_edge':{'type':'string'},'second_edge':{'type':'string'},'perspective':{'type':'string'},
+                'thickness_matches':{'type':'boolean'},'overlap_matches_action':{'type':'boolean'},
+                'other_geometry_error':{'type':'boolean'}}
+        material=json.loads(ask(url,[detail,wide],
+            'Identify the actual material at the marked location. What thickness would an object of '
+            'this material have at the depicted scale? Trace two different real edges through the '
+            'perspective or occlusion, and judge whether its outline, thickness, folds, and interaction '
+            'with neighboring shapes are credible. A thin object can still tear, turn inside out or '
+            'pass through a solid surface. Set other_geometry_error if any such defect is visible. '
+            'Use unclear if the edges or relevant overlap cannot be seen. Inspect pixels independently.',
+            {'type':'object','properties':fields,'required':list(fields)},tag=LARGE))
+    credible_sheet=bool(material and material['natural_form']=='thin_sheet_or_layer'
+            and material['thickness_matches'] is True and material['overlap_matches_action'] is True
+            and material['other_geometry_error'] is False and material['first_edge'].strip()
+            and material['second_edge'].strip() and material['perspective'].strip()
+            and material['first_edge'].strip().casefold()!=material['second_edge'].strip().casefold())
     return {'blind_model':LARGE,'blind_model_id':model_identity(LARGE),'inventory':inventory,'verification':audit,
-            'disproved':audit['is_claimed_part']=='no' and audit['blind_identification_visible'] is True
+            'material_condition':material,'disproved':credible_sheet or audit['is_claimed_part']=='no' and audit['blind_identification_visible'] is True
                         and audit['intact_contour'] is True
                         and all(str(value).strip() for value in inventory.values()) and bool(audit['trace'].strip())}
 
@@ -871,10 +894,15 @@ def inspect_focal_definition(url, master, baseline, brief):
 
 
 def needs_perspective_review(result):
-    if result.get('status')!='uncertain' or not result.get('views'):
+    if result.get('status') not in ('uncertain','local') or not result.get('views'):
         return False
     last=result['views'][-1]
-    return (not result.get('perspective_review') and (
+    identity=last.get('part_identity') or {}
+    if (result.get('status')=='local' and 'material_condition' not in identity and
+            identity.get('verification',{}).get('intact_contour') is True and
+            FORM_DEPTH.search(result.get('issue',{}).get('symptom',''))):
+        return True
+    return (result.get('status')=='uncertain' and not result.get('perspective_review') and (
         last.get('independent_action_check',{}).get('condition')=='insufficient' and
         'depth_inventory' not in last['independent_action_check'] or
         last.get('style_intent',{}).get('outcome')=='unresolved' and 'focal_definition' not in result))

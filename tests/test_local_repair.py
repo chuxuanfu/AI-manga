@@ -404,6 +404,20 @@ class LocalRepairTests(unittest.TestCase):
                      '手绘海报，不要文字气泡。', 'A sign with legible text.'):
             self.assertFalse(blank_surfaces_requested(text), text)
 
+    def test_blank_surface_restoration_requires_a_single_verified_material(self):
+        from lettering import finish_blank_surface
+        mask=Image.new('L',(180,110))
+        ImageDraw.Draw(mask).rectangle((48,46,131,67),fill=255)
+        clean=Image.new('RGB',mask.size,(24,37,35))
+        ghost=clean.copy()
+        ImageDraw.Draw(ghost).line((48,51,131,62),fill='#bbbbbb',width=4)
+        restored=finish_blank_surface(clean,ghost,mask)
+        self.assertLess(max(restored.getpixel((87,56))),45)
+        self.assertEqual(restored.getpixel((44,49)),ghost.getpixel((44,49)))
+        wood=clean.copy()
+        for x in range(0,wood.width,4):ImageDraw.Draw(wood).line((x,0,x,109),fill='white',width=2)
+        self.assertIs(finish_blank_surface(wood,ghost,mask),ghost)
+
     def test_glyph_masks_clean_both_polarities_and_leave_the_surface_edge_intact(self):
         from lettering import glyph_mask
         for paper, ink in (('white','black'),('black','white')):
@@ -556,6 +570,22 @@ class LocalRepairTests(unittest.TestCase):
             self.assertEqual(result['disproved'], expected)
             self.assertNotEqual(ask.call_args_list[0].kwargs['tag'], ask.call_args_list[1].kwargs['tag'])
             self.assertNotIn(finding['symptom'], ask.call_args_list[0].args[2])
+
+    def test_planar_material_must_have_plausible_thickness_and_unbroken_occlusion(self):
+        image=Image.new('RGB',(620,570))
+        obs=dict(feature='envelope',material='paper',attachment='slot',image_evidence='Paper edge enters slot.')
+        audit=dict(is_claimed_part='yes',blind_identification_visible=True,intact_contour=True,trace='Edges visible.')
+        suspected=dict(operation='redraw',target='envelope',evidence='The item is too flat and its thickness is incorrect.')
+        for natural,overlap,other,expected in [('thin_sheet_or_layer',True,False,True),
+                 ('thin_sheet_or_layer',False,False,False),('thin_sheet_or_layer',True,True,False),
+                 ('volumetric',True,False,False)]:
+            evidence=dict(natural_form=natural,first_edge='upper fold',second_edge='lower lip',
+                          perspective='Both edges converge at the slot.',thickness_matches=True,
+                          overlap_matches_action=overlap,other_geometry_error=other)
+            with patch('print_judge.model_identity',return_value='local'),patch('print_judge.ask',side_effect=[
+                    json.dumps(obs),json.dumps(audit),json.dumps(evidence)]):
+                result=verify_part_identity(None,image,[180,290,410,480],suspected)
+            self.assertEqual(result['disproved'],expected)
 
     def test_identifying_a_visible_neighbor_cannot_disprove_a_missing_required_subject(self):
         image = Image.new('RGB', (512, 288))

@@ -153,11 +153,42 @@ def denies_lettering(observation):
                           +r'|(?:没有|并非|不构成|而非|未见)(?:任何|可辨的?|可见的?)?(?:字母|文字|字样)', observation, re.I))
 
 
+def finish_blank_surface(original, inferred, mask):
+    """Suppress ghost glyphs only where the observed material around the verified label is uniform."""
+    bounds=mask.getbbox()
+    if bounds is None:return inferred
+    x,y,u,v=bounds
+    radius=max(3,min(12,round(min(u-x,v-y)*.12)))
+    rect=(max(0,x-radius-2),max(0,y-radius-2),min(original.width,u+radius+2),min(original.height,v+radius+2))
+    ink=np.asarray(mask.crop(rect))>0
+    grown=cv2.dilate(ink.astype(np.uint8),cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(2*radius+1,)*2))>0
+    ring=grown & ~ink
+    if np.count_nonzero(ring)<32:return inferred
+    raw=np.asarray(original.crop(rect),dtype=np.float32)
+    new=np.asarray(inferred.crop(rect),dtype=np.float32)
+    ref=raw[ring];median=np.median(ref,axis=0)
+    deviation=np.max(np.abs(raw-median),axis=2)
+    if np.percentile(deviation[ring],85)>18:return inferred
+    usable=ring & (deviation<22)
+    spread=float(np.percentile(deviation[usable],85))
+    if np.percentile(np.max(abs(new[ink]-median),axis=1),95)<max(6,2.4*spread):return inferred
+    width=max(5,min(48,min(u-x,v-y)*.65))
+    weight=cv2.GaussianBlur(usable.astype(np.float32),(0,0),width)
+    total=cv2.GaussianBlur(raw*usable[...,None],(0,0),width)
+    plane=np.where(weight[...,None]>.001,total/np.maximum(.001,weight[...,None]),median)
+    # Keep the predicted fine paper or paint variation within the measured
+    # range of its own clean surrounding surface.
+    texture=new-cv2.GaussianBlur(new,(0,0),1.2)
+    plane+=np.clip(texture,-max(1,spread*.35),max(1,spread*.35))
+    proposal=Image.fromarray(plane.clip(0,255).round().astype(np.uint8))
+    out=inferred.copy();out.paste(proposal,rect[:2],mask.crop(rect));return out
+
+
 def clean_lettering(path, brief, folder, stage):
     if not blank_surfaces_requested(brief) or not DETECTOR.is_file() or not INPAINTER.is_file():
         return path
     source_id = fingerprint(path)
-    key = hashlib.sha256(json.dumps(['lettering-v7', RECOGNIZER.is_file(), source_id, brief, model_identity(MODEL)],
+    key = hashlib.sha256(json.dumps(['lettering-v8', RECOGNIZER.is_file(), source_id, brief, model_identity(MODEL)],
                                      ensure_ascii=False).encode()).hexdigest()
     report = folder / (stage + '-lettering.json')
     candidate = folder / (stage + '-plain-surfaces.png')
@@ -168,7 +199,9 @@ def clean_lettering(path, brief, folder, stage):
                                             ensure_ascii=False).encode()).hexdigest()
         old_ocr_key = hashlib.sha256(json.dumps(['lettering-v6',RECOGNIZER.is_file(),source_id,brief,model_identity(MODEL)],
                                                 ensure_ascii=False).encode()).hexdigest()
-        if previous.get('key') in (old_key,old_ocr_key):
+        old_surface_key=hashlib.sha256(json.dumps(['lettering-v7',RECOGNIZER.is_file(),source_id,brief,model_identity(MODEL)],
+                                                  ensure_ascii=False).encode()).hexdigest()
+        if previous.get('key') in (old_key,old_ocr_key,old_surface_key):
             prior_readings = {tuple(v['box']):v for v in previous['observations'] if 'box' in v}
         if previous.get('key') == key:
             if not previous.get('candidate_sha256'):
@@ -263,7 +296,7 @@ def clean_lettering(path, brief, folder, stage):
     if confirmed:
         cleaned=image
         for mask in confirmed:
-            cleaned=erase_region(cleaned,mask)
+            cleaned=finish_blank_surface(cleaned,erase_region(cleaned,mask),mask)
         tmp = candidate.with_suffix('.tmp')
         cleaned.save(tmp,format='PNG')
         tmp.replace(candidate)
