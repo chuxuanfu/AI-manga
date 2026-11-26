@@ -301,11 +301,17 @@ def detail_canvas(size):
 NATURAL_UP = 'RealESRGAN_x2plus.pth'
 
 def continuous_tone(medium):
+    # The narrow shadows between actual layers of paper describe their depth.
+    # A line-art restorer can turn them into solid ink and erase the paper grain.
+    if re.search(r'layered[ -]+(?:cut[ -]+)?paper|paper[ -]+(?:relief|diorama|theat(?:er|re))|'
+                 r'(?:cut[ -]paper|papercut).{0,30}(?:relief|layer|diorama)|'
+                 r'立体剪纸|立體剪紙|纸雕|紙雕|重ね切り絵', medium or '', re.I):
+        return True
     terms = ('photograph', 'photogram', 'cyanotype', 'film grain', 'silver gelatin',
              'watercolor', 'watercolour', 'gouache', 'pastel', 'charcoal', 'graphite',
              'oil paint', 'textile', 'embroidery', 'tapestry', 'wool', 'acrylic',
              '摄影', '氰版', '蓝晒', '水彩', '水粉', '油画', '粉彩', '炭笔', '刺绣', '织物')
-    return any(term in medium.casefold() for term in terms)
+    return any(term in (medium or '').casefold() for term in terms)
 
 
 def continuous_tone_double(reference, prefix):

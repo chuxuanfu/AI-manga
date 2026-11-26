@@ -9,6 +9,13 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'runtime/studio_pipeli
 
 
 class WorkmanshipTests(unittest.TestCase):
+    def test_paper_relief_preserves_surface_tones_in_the_print_pass(self):
+        from illustration import continuous_tone
+        for medium in ('layered cut-paper diorama', 'paper relief', '立体剪纸'):
+            self.assertTrue(continuous_tone(medium))
+        for medium in ('flat black paper silhouette', 'manga line art on paper', ''):
+            self.assertFalse(continuous_tone(medium))
+
     def test_landscape_and_portrait_receive_the_same_full_picture_area(self):
         from reference_review import artwork_sheet
         areas=[]
