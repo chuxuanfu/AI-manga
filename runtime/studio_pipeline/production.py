@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 from urllib.parse import quote
-from print_judge import MODEL, fingerprint, model_identity, print_windows, store
+from print_judge import MODEL, REVISION, fingerprint, model_identity, print_windows, store
 
 
 def link(path,target):
@@ -64,6 +64,21 @@ def publish(job, source, record):
     for name in outputs:link(job/name,Path('final')/name)
 
 
+def previous_print_pair(job,source,record):
+    """Use an immutable release and the exact lower-resolution image it was judged against."""
+    receipt=record['自动定稿']
+    baseline=Path(record.get('底图') or '')
+    if not baseline.is_absolute():baseline=source/baseline
+    printed=(job/'final/4K.png').resolve()
+    if (not baseline.is_file() or not printed.is_file() or fingerprint(printed)!=receipt.get('sha256')
+            or fingerprint(baseline)!=receipt.get('对照指纹')):
+        return None
+    from focus_print import validate_print_pair
+    try:validate_print_pair(baseline,printed)
+    except (ValueError,OSError):return None
+    return [str(baseline.resolve()),str(printed)]
+
+
 def export_release(job,state):
     if state.get('output_dir'):
         from delivery import export_files
@@ -75,7 +90,7 @@ def dashboard(job,state):
     parts=['<!doctype html><meta charset="utf-8"><title>离线出片</title>',
            '<style>body{max-width:58rem;margin:4rem auto;padding:0 1rem;font:18px/1.65 system-ui;background:#f7f5ef;color:#272923}a{color:#305647}li{margin:1rem 0}</style>',
            '<h1>离线出片</h1><p>'+html.escape(state['prompt'])+'</p><strong>'+html.escape(state['status'])+'</strong>']
-    if (job/'final').exists():
+    if (job/'final').exists() and not state.get('rechecking_approved'):
         eight='<a href="8K.png">打开 8K</a>　' if (job/'final/8K.png').is_file() else ''
         parts.append('<p><a href="4K.png">打开 4K</a>　'+eight+'<a href="final/review-receipt.json">终审凭据</a>　<a href="final/tile-inspection.json">逐块目检记录</a></p>')
     parts.append('<ol>')
@@ -336,9 +351,17 @@ def run(args,job,entry):
         if state.get('status')=='已自动定稿' and not edit:
             folder=job/state['selected']
             record=json.loads((folder/'review.json').read_text())
-            publish(job,folder,record)
-            export_release(job,state);save(job,state)
-            print('已自动定稿',job/'final',flush=True);return 0
+            receipt=record['自动定稿']
+            stale=(state.get('delivery_edge')==3840 and
+                   (receipt.get('审图版本')!=REVISION or receipt.get('模型指纹')!=model_identity(MODEL)))
+            if not stale:
+                publish(job,folder,record)
+                export_release(job,state);save(job,state)
+                print('已自动定稿',job/'final',flush=True);return 0
+            state['retained_print_pair']=previous_print_pair(job,folder,record)
+            state['rechecking_approved']=True
+            state['status']='按新版标准重新审查'
+            save(job,state)
         print('离线出片目录',job,flush=True)
         attempts=0
         while args.max_rounds==0 or attempts<args.max_rounds:
@@ -355,6 +378,12 @@ def run(args,job,entry):
                 # After a genuine rejection, use the diagnosed repair or generate a new print.
                 previous=options.index('--review-print')
                 del options[previous:previous+2]
+            pending_pair=state.pop('retained_print_pair',None)
+            if pending_pair:row['reinspection_pair']=pending_pair
+            if row.get('reinspection_pair'):
+                baseline,printed=row['reinspection_pair']
+                aspect=options[options.index('--aspect')+1] if '--aspect' in options else 'auto'
+                options=['--reviewed-image',baseline,'--review-print',printed,'--aspect',aspect]
             if edit:row['skip_focus']=args.skip_focus
             row['status']='运行中';state['status']='离线审图与返修中'
             save(job,state)
@@ -384,6 +413,7 @@ def run(args,job,entry):
             if code==0:
                 publish(job,folder,record)
                 export_release(job,state)
+                state.pop('rechecking_approved',None)
                 state.update(status='已自动定稿',selected=row['directory'],sha256=record['自动定稿']['sha256'])
                 save(job,state);print('已自动定稿',job/'final',flush=True);return 0
             attempts+=1;edit=False

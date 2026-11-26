@@ -207,6 +207,19 @@ class LocalRepairTests(unittest.TestCase):
                 self.assertIsNone(named_animal_conflict('Barn owl','Possibly a great horned owl.'))
                 self.assertIsNone(named_animal_conflict('Barn owl','A great horned owl and an arctic fox.'))
 
+    def test_reinspection_uses_the_signed_release_and_its_actual_baseline(self):
+        from production import previous_print_pair
+        from print_judge import fingerprint
+        with TemporaryDirectory() as scratch:
+            root=Path(scratch);source=root/'round';source.mkdir();final=root/'final';final.mkdir()
+            base=source/'draft.png';printed=final/'4K.png'
+            Image.new('L',(1680,944)).save(base);Image.new('L',(3840,2160)).save(printed)
+            receipt={'sha256':fingerprint(printed),'对照指纹':fingerprint(base)}
+            record={'底图':'draft.png','自动定稿':receipt}
+            self.assertEqual(previous_print_pair(root,source,record),[str(base.resolve()),str(printed.resolve())])
+            Image.new('L',(1680,944),color=150).save(base)
+            self.assertIsNone(previous_print_pair(root,source,record))
+
     def test_existing_print_requires_a_smaller_matching_baseline(self):
         from focus_print import validate_print_pair
         from tempfile import TemporaryDirectory
