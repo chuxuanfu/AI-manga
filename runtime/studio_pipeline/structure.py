@@ -52,7 +52,36 @@ def context_boxes(im,detected):
     return boxes or [(0,0,im.width,im.height)]
 
 
-def inspect_structure(im,detected,proof,observed_counts=None):
+def inspect_small_figure_support(url, image, box, brief):
+    from print_judge import MODEL
+    w,h=image.size
+    l,t,r,b=(round(v*n/1000) for v,n in zip(box,image.size*2))
+    if r<=l or b<=t:return None
+    pad=max(32,round(max(r-l,b-t)*.48))
+    field=max(0,l-pad),max(0,t-pad),min(w,r+pad),min(h,b+pad)
+    crop=image.crop(field)
+    magnify=min(3,850/max(crop.size))
+    crop=crop.resize(tuple(max(1,round(v*magnify)) for v in crop.size),Image.Resampling.LANCZOS)
+    overview=ImageOps.contain(image,(960,960),Image.Resampling.LANCZOS)
+    ImageDraw.Draw(overview).rectangle(tuple(round(v*n/1000) for v,n in zip(box,overview.size*2)),
+                                      outline='#dd3974',width=2)
+    fields={'trace':{'type':'string'},'outcome':{'enum':['physically_supported','lower_body_occluded','broken','unresolved']},
+            'clear_visible_attachment':{'type':'boolean'},'requested_pose_visible':{'type':'boolean'}}
+    query=('Image one enlarges an entire small figure with its surroundings. The second marks its location in '
+           'the complete picture. Trace the figure from head and torso down to its LAST visible boundary. '
+           'Name any actual occluding surface and trace its upper edge across the figure, or trace a visible '
+           'support contact. Lower_body_occluded requires a foreground contour explaining the missing part. '
+           'A broken, detached, or melting lower body is broken even if it is near a surface. A tiny or '
+           'indistinct shape with no identifiable physical attachment is unresolved. Judge whether any '
+           'expressly required pose or visible body parts in the brief are satisfied. Brief: '+brief)
+    result=json.loads(ask(url,[crop,overview],query,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL))
+    result['confirmed']=(result['outcome'] in ('physically_supported','lower_body_occluded') and
+                         result['clear_visible_attachment'] is True and result['requested_pose_visible'] is True
+                         and bool(result['trace'].strip()))
+    return result
+
+
+def inspect_structure(im,detected,proof,observed_counts=None,brief=''):
     boxes=context_boxes(im,detected)
     width,height=620,660
     sheet=Image.new('RGB',(width*(1+len(boxes)),height),'#f4f2eb')
@@ -100,6 +129,17 @@ def inspect_structure(im,detected,proof,observed_counts=None):
                 if result['verdict']=='coherent':
                     result['verdict']='unclear'
                     result['support_or_occlusion']='独立读图见到人物，但检测器未定位到人物，结构审查也未确认人物画幅，需目检。'
+        people=[r['box'] for r in detected if r.get('name')=='person' and len(r.get('box',[]))==4]
+        if (result['verdict']=='unclear' and model_framing=='no_person' and people and len(people)==observed_people
+                and all(0<r-l<=230 and 0<b-t<=350 for l,t,r,b in people)):
+            # At overview scale a faraway person may occupy only a few pixels.
+            # The support-only crop can show just the hull, parapet or other foreground surface.
+            from print_judge import MODEL
+            with backend(MODEL) as address:
+                readings=[inspect_small_figure_support(address,im,box,brief) for box in people]
+            result['native_figure_support']=readings
+            if all(v and v['confirmed'] for v in readings):
+                result.update(verdict='coherent',support_or_occlusion=' '.join(v['trace'] for v in readings))
         if initial_verdict=='coherent' and result['verdict']=='unclear' and observed_people==1:
             # A three-quarter portrait can show hips while its feet are beyond the frame.
             # Resolve contradictions on the uncropped original instead of assuming support.

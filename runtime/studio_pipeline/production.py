@@ -149,6 +149,14 @@ def local_retry_source(previous, brief, *, interrupted=False, review_upgrade=Fal
     return None
 
 
+def same_repair_region(box, other):
+    if not box or not other or len(box)!=4 or len(other)!=4:return False
+    l,t,r,b=box
+    x,y,u,v=other
+    area=min((r-l)*(b-t),(u-x)*(v-y))
+    return area>0 and max(0,min(r,u)-max(l,x))*max(0,min(b,v)-max(t,y))>=.25*area
+
+
 def repeated_rejection(directory, box, *, minimum=2):
     """Choose a different editor first when multiple nearby repairs actually failed."""
     left,top,right,bottom=box

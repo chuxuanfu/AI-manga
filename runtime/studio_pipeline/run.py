@@ -526,7 +526,7 @@ def main():
             rgb=image.convert('RGB')
             result=audit(rgb,prompt,rec['parts'],job/(stage+'-inspection.jpg'),focus=focus)
             if reference_style:
-                geometry=inspect_structure(rgb,result.get('detector',[]),job/(stage+'-structure-and-support.jpg'),result.get('observed_counts'))
+                geometry=inspect_structure(rgb,result.get('detector',[]),job/(stage+'-structure-and-support.jpg'),result.get('observed_counts'),prompt)
                 result['结构审查']=geometry
                 verdict=geometry.get('verdict','unclear')
                 if verdict=='defective':
@@ -578,6 +578,17 @@ def main():
             if usable(checked):return repaired,checked
         return path,result
 
+    def check_draft_structure(path,result):
+        if not usable(result) or not args.round_worker or args.proof_only:return result
+        from print_judge import inspect
+        report=inspect(path,prompt,job,result,construction_draft=True)
+        rec.setdefault('底图结构终审',{})[os.path.relpath(path,job)]=report['report']
+        save(manifest,rec)
+        if report['status']=='pass':return result
+        finding=report.get('issue',{})
+        return dict(result,status=report['status'],issues=[finding] if finding else [],
+                    note=finding.get('symptom') or '底图结构需要返修')
+
     retry_source=None
     retry_origin=None
     if args.round_worker and four_only:
@@ -593,7 +604,8 @@ def main():
             # the previous rejected master, let new seeds try a fresh composition.
             # User-supplied source images always keep their original composition.
             retained=retry_source[0].resolve()
-            if not retained.is_relative_to(args.retry_round.resolve()):
+            if (not retained.is_relative_to(args.retry_round.resolve()) or
+                    json.loads((args.retry_round/'review.json').read_text()).get('整图重绘后仍需换构图')):
                 rec['重选构图原因']='上一轮局部重画未能改变被退回的母版'
                 retry_source=None
     if retry_source:
@@ -636,10 +648,15 @@ def main():
             if args.repair_box and i==0:
                 result={'status':'local','score':100,'issues':[{'box':args.repair_box,'fix':args.repair_text,'target':args.object}]}
             if usable(result) and not args.repair_box:
-                passing.append((result['score'],path))
+                passing.append((result,path,i))
             if result['status']=='local':
                 assessed.append((result,path,i))
-        if passing:approved=max(passing,key=lambda item:item[0])[1]
+        for result,path,i in sorted(passing,key=lambda item:-item[0]['score']):
+            result=check_draft_structure(path,result)
+            if usable(result):
+                approved=path
+                break
+            if result['status']=='local':assessed.append((result,path,i))
         if not approved:
             for result,path,i in sorted(assessed,key=lambda x:-x[0]['score']):
                 issue=next((j for j in result['issues'] if region(j,result) and j.get('fix')),None)
@@ -649,7 +666,7 @@ def main():
                     label=f'region-repair-{i+1}-{n+1}'
                     with Image.open(base_path) as original:
                         patched=repaint(original.convert('RGB'),region(issue,result),issue['fix'],rec['positive'],seed+100+i*3+n,args.port,job,label,issue.get('target'),[o for o,_ in rec['parts']],reference_style)
-                    next_review=check(patched,label,region(issue,result))
+                    next_review=check_draft_structure(patched,check(patched,label,region(issue,result)))
                     if usable(next_review):
                         approved=patched;break
                     if next_review['status']=='local' and next_review['score']>=result['score']:
@@ -674,7 +691,7 @@ def main():
                 new_path=output_image(hist[str(len(graph.nodes))])
                 new_path=color_candidate(new_path,label,seed+1173+i)
                 new_path,result=check_composition(new_path,label)
-                if usable(result):
+                if usable(check_draft_structure(new_path,result)):
                     approved=new_path;break
     if not approved:
         rec['终审退回原因']=next((v['review']['note'] for v in reversed(rec['reviews']) if v['review'].get('status')!='pass' and v['review'].get('note')), 'No draft cleared the composition review.')
@@ -852,9 +869,9 @@ def main():
         release_idle_renderer(args.port)
         from print_judge import same_composition
         if not same_composition(source,candidate,prompt):return None
-        screened=check(candidate,stage,box)
+        screened=check_draft_structure(candidate,check(candidate,stage,box))
         if not usable(screened):return None
-        rec['高清底图返工']={'源图':str(source),'重绘':str(candidate),'依据':issue['fix'],'模型':editor}
+        rec['高清底图返工']={'源图':str(source),'重绘':str(candidate),'依据':issue['fix'],'模型':editor,'目标范围':box}
         save(manifest,rec)
         return candidate
 
@@ -971,6 +988,16 @@ def main():
         # A localized, actionable suspicion can produce a *candidate*; it still has
         # to beat the source on the native crop and pass the full review to be released.
         finding=judged.get('issue',{})
+        from production import same_repair_region
+        scene_record=rec.get('高清底图返工',{})
+        if (args.round_worker and not any((args.reviewed_image,args.from_image,args.candidate_image,args.repair_box))
+                and scene_record.get('模型') and judged['status'] in ('local','uncertain')
+                and same_repair_region(scene_record.get('目标范围'),finding.get('box'))):
+            # A fully redrawn composition still defeats this same connection. A text
+            # brief can choose a new layout; preserve the intermediate for inspection.
+            rec['整图重绘后仍需换构图']=True
+            rec['终审退回原因']=finding.get('symptom') or finding.get('fix')
+            break
         if judged['status']=='local' or (judged['status']=='uncertain' and finding.get('operation') in ('redraw','remove_forbidden')):
             candidates=[finding]
         elif final['status']=='local' and judged['status']=='pass':

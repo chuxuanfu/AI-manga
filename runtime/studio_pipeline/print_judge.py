@@ -468,7 +468,7 @@ def independent_detail_check(url, images, overview, brief):
     return report
 
 
-def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None, source_comparison=False):
+def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=None, source_comparison=False, construction_draft=False):
     digest=fingerprint(path)
     model_id=model_identity(MODEL)
     if not model_id:raise RuntimeError('缺少已安装的 Qwen3.8-27B 终审模型')
@@ -484,6 +484,7 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
     key=hashlib.sha256(json.dumps([REVISION,model_id,brief,regions,dispute,prior_id,draft_id,focals,constraints,repair],sort_keys=True,
                                  ensure_ascii=False).encode()).hexdigest()[:16]
     if source_comparison:key+='-source'
+    if construction_draft:key+='-draft-structure'
     directory=root/'print-review'
     directory.mkdir(exist_ok=True)
     report=directory/(digest+'-'+key+'.json')
@@ -496,6 +497,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
         overview_image=image.copy()
         overview_image.thumbnail((1152,1152),Image.Resampling.LANCZOS)
         windows=list(print_windows(image.size,regions))
+        if construction_draft:
+            windows=[(kind,rect) for kind,rect in windows if kind in ('whole','construction','contacts')]
         prior_rects={}
         for saved in sorted(directory.glob(digest+'-*.json')):
             if saved == report:continue
@@ -585,6 +588,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
             local=kind not in ('whole','construction','palette')
             inspection_brief=crop_brief(brief) if local else brief
             guidance=inspection_brief+'\n'+constraints
+            if construction_draft:
+                question+=' This is the composition draft before print rendering. Check visible structure, declared material and contact at this drawing scale. Fine print resolution is evaluated on a later file.'
             prompt=GUIDE+'\n'+question+' A quiet or intentionally blurred surface can pass on its own. Never guess what is outside the crop.\n'+guidance
             if kind=='palette':
                 # These thumbnails carry color relationships, not reliable small contours.

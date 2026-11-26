@@ -15,11 +15,23 @@ from construction_review import LARGE, assess_local_edit, verify_interior_figure
 from illustration import instruction_edit, reference_draft
 from masks import structural_composite
 from print_judge import actionable_edit, inspect_repaired_region, issue_category, verify_part_identity
-from production import repeated_rejection
+from production import repeated_rejection, same_repair_region
 from review import inspection_key
+from structure import inspect_small_figure_support
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_occluded_figure_requires_a_traced_edge_and_the_requested_pose(self):
+        box = [610, 290, 655, 415]
+        for outcome, connection, pose, expected in [('lower_body_occluded', True, True, True),
+                ('lower_body_occluded', True, False, False), ('physically_supported', False, True, False),
+                ('unresolved', True, True, False), ('broken', True, True, False)]:
+            reading = {'trace': 'Torso continues to the upper lip of the hull.', 'outcome': outcome,
+                       'clear_visible_attachment': connection, 'requested_pose_visible': pose}
+            with patch('structure.ask', return_value=json.dumps(reading)):
+                result = inspect_small_figure_support(None, Image.new('RGB', (960, 540)), box, 'Sailor on deck')
+            self.assertEqual(result['confirmed'], expected)
+
     def test_reuse_of_composition_review_binds_the_brief_focus_and_models(self):
         args = ('rules', 'A bird', [['bird', 1]], [10, 20, 50, 60], 'ref', ['reader-a'])
         baseline = inspection_key(*args)
@@ -108,6 +120,11 @@ class LocalRepairTests(unittest.TestCase):
         diff = ImageChops.difference(original, result)
         self.assertIsNone(diff.crop((0, 0, 180, 1)).getbbox())
         self.assertIsNone(diff.crop((179, 0, 180, 128)).getbbox())
+
+    def test_new_layout_requires_failure_in_the_same_part_after_scene_reconstruction(self):
+        self.assertTrue(same_repair_region([588, 684, 693, 907], [647, 650, 750, 850]))
+        self.assertFalse(same_repair_region([588, 684, 693, 907], [300, 160, 400, 220]))
+        self.assertFalse(same_repair_region(None, [647, 650, 750, 850]))
 
     def test_unrelated_or_accepted_edits_do_not_trigger_escalation(self):
         with TemporaryDirectory() as tmp:
