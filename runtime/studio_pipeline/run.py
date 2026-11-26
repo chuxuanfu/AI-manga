@@ -378,21 +378,10 @@ def repair_placement(before,plan,brief,seed,port,directory,stage):
     path=directory/(stage+'-placement.png')
     candidate.save(path)
     save(directory/(stage+'-placement.json'),dict(plan=plan,regions=regions))
-    instruction=('Restore the now unoccupied background at this site. '+plan['revealed_surface']+
-                 ' Continue the visible materials and each ink contour from the surrounding picture. '
-                 'Match their native width, edges, tone and texture. Keep the existing subject at its new location.')
-    revised=repaint(candidate,regions['vacated'],instruction,brief,seed,port,directory,stage+'-surface',
-                    'exposed background and support surface',reference_style=True,rebuild_shape=True,
-                    reconstruction_attempt=2)
-    with Image.open(revised) as rendered:
-        final=rendered.convert('RGB')
-    # The editor's context can extend outside the vacated site. Preserve the
-    # relocated actor exactly while the independent reviewer examines the contact.
-    destination=tuple(round(v*n/1000) for v,n in zip(regions['destination'],before.size*2))
-    final.paste(candidate.crop(destination),destination[:2])
-    output=directory/(stage+'-registered.png')
-    final.save(output)
-    return output,regions['inspection']
+    # The masked LaMa fill already restored the exposed area. Preserve the
+    # original support geometry and the moved subject for native inspection.
+    # A further defect at the old site is repaired from its own localized report.
+    return path,regions['inspection']
 
 
 def dimensions(prompt):

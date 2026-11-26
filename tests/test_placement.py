@@ -66,3 +66,13 @@ class PlacementTests(unittest.TestCase):
             self.assertEqual(after.getpixel((390,8)),(27,44,189))
             self.assertLess(areas['source_subject'][2],areas['destination'][0])
             self.assertIsNone(placement.reposition(self.image,{**self.plan,'destination_foot':[200,700]}))
+
+    def test_registered_placement_preserves_the_exact_masked_reconstruction(self):
+        from tempfile import TemporaryDirectory
+        from PIL import ImageChops
+        from run import repair_placement
+        with TemporaryDirectory() as tmp, patch('placement.reposition',return_value=(self.image,{'inspection':[50,100,800,900]})), \
+                patch('run.repaint',side_effect=AssertionError('An unrestricted second drawing can duplicate the moved animal')):
+            path,inspection=repair_placement(self.image,{},'one dog',3,8193,Path(tmp),'dog')
+            with Image.open(path) as actual:self.assertIsNone(ImageChops.difference(actual,self.image).getbbox())
+            self.assertEqual(inspection,[50,100,800,900])
