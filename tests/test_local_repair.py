@@ -14,7 +14,7 @@ sys.path[:0] = [str(ROOT / 'runtime/studio_pipeline'), str(ROOT / 'extensions')]
 from construction_review import LARGE, assess_edit_boundary, assess_local_edit, compare_prior_version, verify_interior_figure
 from illustration import instruction_edit, reference_draft
 from masks import structural_composite
-from print_judge import actionable_edit, crop_brief, disputed_action_resolved, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity, verified_wrist_at
+from print_judge import actionable_edit, boxes_agree, crop_brief, disputed_action_resolved, inspect_repaired_region, issue_category, verify_depicted_connection, verify_part_identity, verified_wrist_at
 from page_layout import retry_direction
 from production import earlier_local_version, previous_scene_candidate, repeated_rejection, same_repair_region
 from review import inspection_key
@@ -150,6 +150,12 @@ class LocalRepairTests(unittest.TestCase):
             self.assertNotIn(unexpected, direction)
         self.assertEqual(retry_direction(''), '')
         self.assertEqual(retry_direction('An unfamiliar artifact in the picture.'), '')
+
+    def test_a_neighbor_cannot_corroborate_the_reported_part(self):
+        actual = [160, 692, 263, 757]
+        self.assertFalse(boxes_agree(actual, [46, 563, 129, 659]))
+        self.assertTrue(boxes_agree(actual, [215, 695, 242, 737]))
+        self.assertFalse(boxes_agree(actual, None))
 
     def test_localized_uncertainty_is_a_repair_candidate_not_an_approved_draft(self):
         from run import draft_repair_issue

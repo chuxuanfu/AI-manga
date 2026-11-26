@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-37'
+REVISION = 'print-inspection-38'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -137,6 +137,35 @@ def map_box(row, rect, size):
     if d<=a or e<=c:return None
     return [round(v*1000/n) for v,n in zip((l+(r-l)*a/1000,t+(b-t)*c/1000,
                         l+(r-l)*d/1000,t+(b-t)*e/1000),size*2)]
+
+def boxes_agree(first, second):
+    if not first or not second:return False
+    left,top,right,bottom=first
+    x,y,u,v=second
+    pad_x=max(5,min(right-left,u-x)*.15)
+    pad_y=max(5,min(bottom-top,v-y)*.15)
+    return max(left,x)<min(right,u)+pad_x and max(top,y)<min(bottom,v)+pad_y
+
+
+def recheck_fixed_site(url, image, anchor, claim, brief):
+    """Two views of the same location prevent confusing adjacent repeated features."""
+    from construction_review import edit_locator
+    pixels=tuple(round(n*v/1000) for n,v in zip(image.size*2,anchor))
+    left,top,right,bottom=pixels
+    pad=max(24,round(.23*max(right-left,bottom-top)))
+    field=max(0,left-pad),max(0,top-pad),min(image.width,right+pad),min(image.height,bottom+pad)
+    detail=image.crop(field)
+    scale=min(2.5,1024/max(detail.size))
+    detail=detail.resize(tuple(max(1,round(v*scale)) for v in detail.size),Image.Resampling.LANCZOS)
+    reading=judge_view(url,detail,GUIDE+' The FIRST image is the intended detail. The marked rectangle '
+        'in the second image identifies it in the full scene. Another reader pointed to a DIFFERENT '
+        'nearby location. Follow the actual contours in the first image. Decide whether the originally '
+        'reported defect is visible HERE. An unrelated neighboring feature cannot corroborate it. '
+        'Name the actual shared edge, contact or transition. An obscured connection may be coherent. '
+        'Use only the first image for coordinates. Original concern: '+claim+' Brief: '+brief,
+        overview=edit_locator(image,pixels),reason=True)
+    return reading,field
+
 
 def repair_extent(final_box, earlier_boxes):
     """Keep adjoining evidence for a single part when a closer view picks just one tip."""
@@ -835,6 +864,23 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                     if intent.get('outcome')=='intentional' and requested_handling(intent.get('phrase'),brief) and str(intent.get('evidence') or '').strip():
                         second=dict(second,decision='clear',evidence=intent['evidence'],operation='none',fix='',target='')
                         record['independent_context']=second
+                anchor=known[rect]['box'] if kind=='previous_local' else tentative
+                if (anchor and second['decision'] in ('local','uncertain') and
+                        kind not in ('comparison','draft-comparison','palette')):
+                    mapped=map_box(second,context,image.size)
+                    if mapped and not boxes_agree(anchor,mapped):
+                        record['mislocalized_context']={'intended_box':anchor,'observed_box':mapped,'reading':second}
+                        claim=known[rect]['symptom'] if kind=='previous_local' else row['evidence']
+                        second,context=recheck_fixed_site(url,image,anchor,claim,brief)
+                        record['localized_context_pixels']=list(context)
+                        record['independent_context']=second
+                        region=image.crop(context)
+                        if second['decision']!='clear' and not boxes_agree(anchor,map_box(second,context,image.size)):
+                            # The wider reader never corroborated this location. Keep the
+                            # original issue here until it can be resolved on actual pixels.
+                            second=dict(row,decision='uncertain')
+                            context=rect
+                            record['independent_context']=second
                 if second['decision']!='clear' and kind in ('whole','construction','contacts'):
                     bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     claim=row['evidence']+' '+second['evidence']
@@ -862,7 +908,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                 if second['decision']!='clear':
                     bounds=map_box(second,context,image.size) or map_box(row,rect,image.size)
                     if second['decision'] in ('uncertain','local') and second.get('operation')=='redraw':
-                        contact=verify_depicted_connection(url,image,bounds,row['evidence']+' '+second['evidence'],brief)
+                        contact=verify_depicted_connection(url,image,bounds,row['evidence']+' '+second['evidence']+
+                            ' Suggested edit: '+str(second.get('fix','')),brief)
                         if contact:
                             record['visible_connection']=contact
                             if contact['disproved']:
@@ -885,7 +932,8 @@ def inspect(path, brief, root, preliminary, *, small=None, focus=None, draft=Non
                         verdict='uncertain'
                     if verdict=='local' and box:
                         first_box=map_box(row,rect,image.size)
-                        corroborating_box=map_box(record['corroboration'],context,image.size)
+                        corroborating_box=map_box(record['corroboration'],record['context_pixels'],image.size)
+                        if not boxes_agree(box,corroborating_box):corroborating_box=None
                         prior_box=known[rect]['box'] if kind=='previous_local' else None
                         box=repair_extent(box,[first_box,corroborating_box,prior_box])
                         for axis in (0,1):

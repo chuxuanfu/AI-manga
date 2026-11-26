@@ -118,7 +118,7 @@ def local_retry_source(previous, brief, *, interrupted=False, review_upgrade=Fal
     image=previous/record['4K']
     candidates=[record['底图'],record.get('高清底图返工',{}).get('重绘')]
     issue=report.get('issue',{})
-    from print_judge import REVISION, actionable_edit, map_box
+    from print_judge import REVISION, actionable_edit, boxes_agree, map_box
     recheck=(review_upgrade and report.get('revision') and report['revision']!=REVISION
              and entry['状态']=='uncertain' and (issue.get('operation') not in ('redraw','remove_forbidden')
              or not actionable_edit(issue.get('fix'))))
@@ -136,6 +136,15 @@ def local_retry_source(previous, brief, *, interrupted=False, review_upgrade=Fal
                 location=map_box(original,views[-1]['pixels'],report['size'])
                 if location:
                     issue.update(box=location,symptom=original['evidence'])
+    if review_upgrade and report.get('revision')!=REVISION and report.get('views'):
+        last=report['views'][-1]
+        if last.get('view')=='previous_local':
+            known=dict((tuple(rect),data) for rect,data in report.get('previous_regions',[]))
+            expected=known.get(tuple(last.get('pixels',[])),{})
+            if expected.get('box') and issue.get('box') and not boxes_agree(expected['box'],issue['box']):
+                recheck=True
+                issue=dict(issue,operation='reinspect',box=expected['box'],symptom=expected.get('symptom',''),
+                           fix='Recheck the originally reported location on the retained file.')
     if (report.get('brief')!=brief or report.get('status')!=entry['状态']
             or (not recheck and issue.get('operation') not in ('redraw','remove_forbidden'))
             or (not recheck and not actionable_edit(issue.get('fix'))) or not issue.get('box') or not image.is_file()
