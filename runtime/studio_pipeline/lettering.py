@@ -29,6 +29,14 @@ def blank_surfaces_requested(brief):
                           r'|(?:没有|不要|不含|禁止|不出现|无)(?:任何|可见的?)?(?:文字|字样|字母)(?=\s*(?:$|[。；、，！？,.!;·]))', brief, re.I))
 
 
+def preserve_instrument_scale(brief):
+    """A ban on letters can coexist with a working dial. An explicit ban on numbers takes priority."""
+    instrument=re.search(r'\b(?:clocks?|wristwatch(?:es)?|pocket watch(?:es)?|watch face|sundials?|gauges?|dials?|rulers?|thermometers?|barometers?|compasses|speedometers?)\b|时钟|钟面|钟表|表盘|仪表|温度计|刻度尺',brief,re.I)
+    if not instrument:return False
+    prohibition=r'\b(?:no|without|omit|exclude)\b[^.;!?。；]{0,110}\b(?:text|writing|numbers?|digits?|numerals?|markings?|scales?)\b|(?:没有|不要|不含|禁止|无).{0,10}(?:数字|文字|刻度)'
+    return not re.search(prohibition,brief,re.I)
+
+
 def lettering_polygons(image):
     from print_judge import axes, SIDE
     model=cv2.dnn_TextDetectionModel_DB(str(DETECTOR))
@@ -249,7 +257,9 @@ def clean_lettering(path, brief, folder, stage):
     if not blank_surfaces_requested(brief) or not DETECTOR.is_file() or not INPAINTER.is_file():
         return path
     source_id = fingerprint(path)
-    key = hashlib.sha256(json.dumps(['lettering-v9', RECOGNIZER.is_file(), source_id, brief, model_identity(MODEL)],
+    functional_scale=preserve_instrument_scale(brief)
+    version='lettering-scale-v1' if functional_scale else 'lettering-v9'
+    key = hashlib.sha256(json.dumps([version, RECOGNIZER.is_file(), source_id, brief, model_identity(MODEL)],
                                      ensure_ascii=False).encode()).hexdigest()
     report = folder / (stage + '-lettering.json')
     candidate = folder / (stage + '-plain-surfaces.png')
@@ -264,7 +274,7 @@ def clean_lettering(path, brief, folder, stage):
                                                   ensure_ascii=False).encode()).hexdigest()
         substrate_key=hashlib.sha256(json.dumps(['lettering-v8',RECOGNIZER.is_file(),source_id,brief,model_identity(MODEL)],
                                                  ensure_ascii=False).encode()).hexdigest()
-        if previous.get('key') in (old_key,old_ocr_key,old_surface_key,substrate_key):
+        if not functional_scale and previous.get('key') in (old_key,old_ocr_key,old_surface_key,substrate_key):
             prior_readings = {tuple(v['box']):v for v in previous['observations'] if 'box' in v}
         if previous.get('key') == key:
             if not previous.get('candidate_sha256'):
@@ -319,6 +329,11 @@ def clean_lettering(path, brief, folder, stage):
                         'or inscription is printed_or_handwritten_marks even if it is illegible or invented. '
                         'Lines defining object contours, seams, grain, reflections or a pictorial motif are '
                         'surface_detail. If the pixels cannot distinguish these, use insufficient_evidence.')
+            if functional_scale:
+                question+=(' Identify functional graduations in their surrounding object. Hour indices arranged '
+                           'around a clock pivot, evenly spaced ruler divisions or calibrated gauge numbers are '
+                           'surface_detail. Inspect the central marks themselves: a manufacturer name, caption '
+                           'or pseudo-writing on the same instrument remains printed_or_handwritten_marks.')
             cached = prior_readings.get(tuple(map(int,(left,top,width,height))))
             if cached:
                 record['observations'].append(cached)

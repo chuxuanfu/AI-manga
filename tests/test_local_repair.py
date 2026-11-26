@@ -206,6 +206,15 @@ class LocalRepairTests(unittest.TestCase):
         self.assertFalse(same_defect_field(initial,changed.resize((400,200)),[500,300,900,900]))
         self.assertFalse(same_defect_field(initial,changed,[0,0,0,100]))
 
+    def test_lettering_cleanup_respects_functional_instrument_marks(self):
+        from lettering import preserve_instrument_scale
+        self.assertTrue(preserve_instrument_scale('An old railway clock. No captions, signatures or lettering.'))
+        self.assertTrue(preserve_instrument_scale('A ruler with fine divisions. No lettering.'))
+        self.assertFalse(preserve_instrument_scale('An old clock. No text or digits.'))
+        self.assertFalse(preserve_instrument_scale('A clock without numbers, signatures or lettering.'))
+        self.assertFalse(preserve_instrument_scale('A small house with no lettering.'))
+        self.assertFalse(preserve_instrument_scale('A girl watches birds. No lettering.'))
+
     def test_plain_secondary_material_requires_intact_native_and_source_boundaries(self):
         from print_judge import check_plateau_material,plateau_candidate
         sample=Image.new('RGB',(96,96))
