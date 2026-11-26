@@ -697,7 +697,21 @@ def main():
     if retry_source:
         last,_,issue=retry_source
         focus=region(issue,{})
-        repaired=correct_shape(last,issue,focus,'continued-repair',seed+820) if focus else None
+        # Check a reported border problem on the retained pixels before redrawing
+        # a body or object that intentionally continues beyond the canvas.
+        from print_judge import FRAME_CLAIM, verify_frame_exit, MODEL as PRINT_MODEL
+        claim=issue.get('symptom','')+' '+issue['fix']
+        framing=None
+        if focus and FRAME_CLAIM.search(claim) and (min(focus[:2])<=12 or max(focus[2:])>=988):
+            from evidence import backend
+            with Image.open(last) as source, backend(PRINT_MODEL) as address:
+                overview=source.copy();overview.thumbnail((1152,1152),Image.Resampling.LANCZOS)
+                framing=verify_frame_exit(address,source,overview,focus,claim,prompt)
+            if framing:save(job/'continued-framing-review.json',framing)
+        if framing and framing['explained']:
+            repaired=last
+        else:
+            repaired=correct_shape(last,issue,focus,'continued-repair',seed+820) if focus else None
         if repaired:
             master,small=repaired,None
             repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}

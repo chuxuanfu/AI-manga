@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-24'
+REVISION = 'print-inspection-25'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -243,6 +243,26 @@ def verify_frame_exit(url,image,overview,box,claim,brief):
         'Claim: '+claim+' Brief: '+brief,{'type':'object','properties':fields,'required':list(fields)},tag=MODEL,reason=True))
     result['explained']=(result['outcome']=='continuous_at_border' and result['edge'] in edges
                          and result['brief_requires_missing_part'] is False and bool(result['trace'].strip()))
+    if result['outcome']=='unresolved' and not result['brief_requires_missing_part'] and result['edge'] in edges:
+        # Ask about literal geometry on the original border rather than asking the
+        # same reviewer to interpret its own uncertain verdict.
+        fields={'part_reaches_border':{'type':'boolean'},'break_before_border':{'type':'boolean'},
+                'another_visible_defect':{'type':'boolean'},'edge':{'enum':['left','top','right','bottom','none']},
+                'required_visible_feature_absent':{'type':'boolean'},'path':{'type':'string'}}
+        observation=json.loads(ask(url,[crop,locator],
+           'Inspect the actual detail (first) and the entire frame with the location outlined (second). '
+           'The feature under examination is described here: '+claim+
+           '. Which physical image edge, if any, does this exact visible part reach? '
+           'Trace the visible path to that edge. Does it actually end or change into an unrelated form '
+           'BEFORE the border? Is some other defect in this same part visible on the canvas? '
+           'Use only the following scene brief to decide whether an absent part was explicitly required '
+           'to be entirely visible: '+brief,
+           {'type':'object','properties':fields,'required':list(fields)},tag=MODEL,reason=True))
+        result['edge_trace']=observation
+        result['explained']=(observation['edge']==result['edge'] and observation['part_reaches_border'] is True
+              and observation['break_before_border'] is False and observation['another_visible_defect'] is False
+              and observation['required_visible_feature_absent'] is False and bool(observation['path'].strip()))
+        if result['explained']:result['trace']=observation['path']
     return result
 
 
