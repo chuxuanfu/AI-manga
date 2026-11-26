@@ -329,5 +329,200 @@
     "url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/palm_detection_mediapipe/palm_detection_mediapipe_2023feb.onnx",
     "sha256": "78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c",
     "size": 3905734
+  },
+  {
+    "path": "runtime/ComfyUI/models/controlnet/xinsir-canny-v2-sdxl.safetensors",
+    "url": "https://huggingface.co/xinsir/controlnet-canny-sdxl-1.0/resolve/1271357eda52d54b857c650cacb5b51144643ccb/diffusion_pytorch_model_V2.safetensors",
+    "sha256": "b3e4ac47bc814019d50dc842f579301440deb6d8f09ee1b91a30f527ace1b852",
+    "size": 2502139104
+  },
+  {
+    "path": "runtime/models/coreml-sd15/SafetyChecker.mlmodelc/analytics/coremldata.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/SafetyChecker.mlmodelc/analytics/coremldata.bin",
+    "sha256": "251f866b15422f387c4c787e5facb959abb76017a9e4a7df5783e7fd2a7fbaa9",
+    "size": 207,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/SafetyChecker.mlmodelc/coremldata.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/SafetyChecker.mlmodelc/coremldata.bin",
+    "sha256": "093155766aa7fc2c8fd77a8f52f6118acaa726c4c366ef1558d76a45dafacba3",
+    "size": 1414,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/SafetyChecker.mlmodelc/metadata.json",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/SafetyChecker.mlmodelc/metadata.json",
+    "sha256": "7d2e4ec4d4bbc160c9254d01d00b57869c5221d807a387926cd991f83408e877",
+    "size": 4338,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/SafetyChecker.mlmodelc/model.mil",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/SafetyChecker.mlmodelc/model.mil",
+    "sha256": "faa294d6af6b89866f8b087a01425c3b360b31a6cb8d83558a8aa864d983bd16",
+    "size": 339498,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/SafetyChecker.mlmodelc/weights/weight.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/SafetyChecker.mlmodelc/weights/weight.bin",
+    "sha256": "00a07988215294a35bc5e23977d200339033489127918802430647728e61182c",
+    "size": 607990114,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/TextEncoder.mlmodelc/analytics/coremldata.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/TextEncoder.mlmodelc/analytics/coremldata.bin",
+    "sha256": "8bc3f275b30918dddd91e7930f680f7d6b5845e89b54a975e0c954224bd8b971",
+    "size": 207,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/TextEncoder.mlmodelc/coremldata.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/TextEncoder.mlmodelc/coremldata.bin",
+    "sha256": "28b16dfd8857a6aceca18baa860826f33cdf224f4f6d97561e617ae83c4ad506",
+    "size": 824,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/TextEncoder.mlmodelc/metadata.json",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/TextEncoder.mlmodelc/metadata.json",
+    "sha256": "02bf81097decbb29a0074994805e80f6d9dbaf08a1ce5af0c15fdafaebd6cbd2",
+    "size": 2770,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/TextEncoder.mlmodelc/model.mil",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/TextEncoder.mlmodelc/model.mil",
+    "sha256": "574d578c3e43ad460332ef2638c8d6107f87b712529b2bf7fc9ebd7cca58988c",
+    "size": 170475,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/TextEncoder.mlmodelc/weights/weight.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/TextEncoder.mlmodelc/weights/weight.bin",
+    "sha256": "822a90cbdba299bec35e434e9da97ca0e2f8920a5a7a25fcca000bfc49917d55",
+    "size": 246145536,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/Unet.mlmodelc/analytics/coremldata.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/Unet.mlmodelc/analytics/coremldata.bin",
+    "sha256": "2668dbb40b99b299aa18174714c397f966c7ffae16474beac71be9931d6ae068",
+    "size": 207,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/Unet.mlmodelc/coremldata.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/Unet.mlmodelc/coremldata.bin",
+    "sha256": "cb9c3c58ae1b100bc47810c777ee623812a7730235019b61d08f903b77e236a2",
+    "size": 1205,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/Unet.mlmodelc/metadata.json",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/Unet.mlmodelc/metadata.json",
+    "sha256": "c0f840ee3d38c2113278241891d83d4dee4ce027b65b583e08beff85619906d6",
+    "size": 3629,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/Unet.mlmodelc/model.mil",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/Unet.mlmodelc/model.mil",
+    "sha256": "6648d4d0615569ddd01fac6435e0bd12eecf0fcc6dd5822c92ab7d385385fd27",
+    "size": 1510116,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/Unet.mlmodelc/weights/weight.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/Unet.mlmodelc/weights/weight.bin",
+    "sha256": "16fecc0e9faf5fe13532321d4a98e01c5c18ba479138b2632459778a527e6b51",
+    "size": 1719344896,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/VAEDecoder.mlmodelc/analytics/coremldata.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/VAEDecoder.mlmodelc/analytics/coremldata.bin",
+    "sha256": "7c055db5bcfd110de9caf775217990bc8a6fc8fe1de05642ef7299399d90f9ea",
+    "size": 207,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/VAEDecoder.mlmodelc/coremldata.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/VAEDecoder.mlmodelc/coremldata.bin",
+    "sha256": "114d6143d9b5e7a34c40e627fcc6b6a65b50fd5c8cc2a27bab75ee7d50b91c09",
+    "size": 754,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/VAEDecoder.mlmodelc/metadata.json",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/VAEDecoder.mlmodelc/metadata.json",
+    "sha256": "ad3a7aefd4f5bb7c44314bac788c4821c690826a03a9f01070ff6224cd13cc11",
+    "size": 2471,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/VAEDecoder.mlmodelc/model.mil",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/VAEDecoder.mlmodelc/model.mil",
+    "sha256": "5dc9e06601d2e01831cb578154e1061929bdae37fee1d5dc5878eba7b7bfd859",
+    "size": 174067,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/VAEDecoder.mlmodelc/weights/weight.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/VAEDecoder.mlmodelc/weights/weight.bin",
+    "sha256": "c11a1a63f85022b398123ab13e9024a23ba72e948636459c3360032110dbbf3d",
+    "size": 99039232,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/VAEEncoder.mlmodelc/analytics/coremldata.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/VAEEncoder.mlmodelc/analytics/coremldata.bin",
+    "sha256": "657e981b075d9079558e097e0c7589c72e13685615ab8e3ea8d9b1500990784a",
+    "size": 207,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/VAEEncoder.mlmodelc/coremldata.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/VAEEncoder.mlmodelc/coremldata.bin",
+    "sha256": "69796e1d32753e2b81d53715c58d8ae756827b24bdbe302811ff2acd98f9ccb0",
+    "size": 761,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/VAEEncoder.mlmodelc/metadata.json",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/VAEEncoder.mlmodelc/metadata.json",
+    "sha256": "4dc95d9acbc31594c22408c9c56d9a443c3f27c705fb207581c844162904ec4b",
+    "size": 2460,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/VAEEncoder.mlmodelc/model.mil",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/VAEEncoder.mlmodelc/model.mil",
+    "sha256": "d33d5d475d2457cb48abae239a2ba0a6ff14a6fa344633e4866c74c6f7907724",
+    "size": 135576,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/VAEEncoder.mlmodelc/weights/weight.bin",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/VAEEncoder.mlmodelc/weights/weight.bin",
+    "sha256": "4c31357d1d5f8896ad66eba657d641e2238175458c70864b642323bf1bbdb68a",
+    "size": 68370240,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/merges.txt",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/merges.txt",
+    "sha256": "f526393189112391ce6f9795d4695f704121ce452c3aad1f5335cc41337eba85",
+    "size": 524657,
+    "profile": "apple-neural-engine"
+  },
+  {
+    "path": "runtime/models/coreml-sd15/vocab.json",
+    "url": "https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/c63580e549bc0ca6c27381d0640c1eb1b68b00b1/split_einsum/compiled/vocab.json",
+    "sha256": "5047b556ce86ccaf6aa22b3ffccfc52d391ea4accdab9c2f2407da5b742d4363",
+    "size": 862328,
+    "profile": "apple-neural-engine"
   }
 ]

@@ -217,7 +217,7 @@ def draft_repair_issue(result):
                  or issue.get('operation') in ('redraw','remove_forbidden'))),None)
 
 
-def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False, reconstruction_attempt=0, allow_specialist=True, design_reference=None):
+def repaint(im, box, description, caption, seed, port, directory, stage, target=None, neighbours=(), reference_style=False, rebuild_shape=False, reconstruction_attempt=0, allow_specialist=True, design_reference=None, allow_control=True):
     # Re-sample only the interior; the wider square gives diffusion scene context.
     original_request=(box,description,target)
     if reference_style and rebuild_shape:
@@ -249,6 +249,59 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
     scene_depth='whole scene as a depth reference' in original_request[1].casefold()
     specialist=(installed_editor(model_root) if allow_specialist and reference_style and rebuild_shape
                 and (design_reference or guide or scene_depth or recolor or reconstruction_attempt>=2) else None)
+    # Use an explicit drawing of the corrected geometry only when it can be placed
+    # in this very crop. The line map must not perpetuate the rejected silhouette.
+    from registered_edit import CONTROL, controlled_drawing, drawing_inputs, registered_design
+    control_available=allow_control and (model_root/'controlnet'/CONTROL).is_file()
+    registered=None
+    if control_available and rebuild_shape and reference_style and not recolor:
+        if design_reference:
+            with Image.open(design_reference) as design:
+                rect=tuple(round(v*n/m) for v,n,m in zip((x,y,x+cw,y+ch),design.size*2,(w,h,w,h)))
+                prior=design.convert('RGB').crop(rect).resize(crop.size,Image.Resampling.LANCZOS)
+            registered=registered_design(crop,prior,mask)
+        elif guide and guide[1].get('placement')=='supported_object' and reconstruction_attempt==1 and ERASE_MODEL.is_file():
+            from masks import frame_supported_object
+            with Image.open(guide[0]) as photo:
+                placed,extent=frame_supported_object(photo,crop.size,(x0-x,y0-y,x1-x,y1-y))
+            visible=mask.point(lambda v:255 if v>=128 else 0)
+            if visible.getbbox():
+                layout=erase_region(crop,visible)
+                layout.paste(placed,(0,0),placed.getchannel('A'))
+                registered=(layout,dict(asset=guide[0].name,extent=list(extent)))
+    native_field=registered[0] if registered else None
+    if native_field is None and reference_style and rebuild_shape and reconstruction_attempt==1:
+        native_field=crop
+    if allow_control and native_field is not None:
+        from apple_paint import paint_local_field
+        native=paint_local_field(native_field,description+'. '+caption,seed,directory,stage,
+                                 strength=.28 if registered else (.41 if recolor else .54))
+        if native is not None:
+            patched=im.copy()
+            patched.paste(Image.composite(native,crop,mask),(x,y))
+            path=directory/(stage+'-composite.png')
+            patched.save(path)
+            save(directory/(stage+'-reference.json'),dict(model='coreml-sd15',registered=registered[1] if registered else None))
+            return path
+    if registered:
+        layout,metadata=registered
+        canvas,edges=drawing_inputs(layout,mask,size)
+        from graphs import BASE
+        checkpoint=ANIME_PAINT if (RUNTIME/'models/checkpoints'/ANIME_PAINT).is_file() and KEY_VISUAL in caption else BASE
+        edit=controlled_drawing(local_image(canvas),local_image(edges),description+'. '+caption,seed,prefix,checkpoint)
+        try:
+            result=post_graph(edit.api,port,directory,stage+'-controlled',edit.ui())
+        except RuntimeError as failure:
+            save(directory/(stage+'-control-fallback.json'),dict(model=CONTROL,reason=str(failure)[:1000]))
+        else:
+            with Image.open(output_image(result[str(len(edit.nodes))])) as painted:
+                part=painted.convert('RGB').resize(crop.size,Image.Resampling.LANCZOS)
+            revised=im.copy()
+            revised.paste(structural_composite(crop,part,mask,(x==0,y==0,x+cw==w,y+ch==h)),(x,y))
+            path=directory/(stage+'-composite.png')
+            revised.save(path)
+            save(directory/(stage+'-reference.json'),dict(model=CONTROL,registered=metadata))
+            return path
     if specialist:
         if reconstruction_attempt>=3 and not recolor and ERASE_MODEL.is_file():
             # A masked editor can still copy a malformed silhouette from its visual
@@ -376,7 +429,7 @@ def repaint(im, box, description, caption, seed, port, directory, stage, target=
             save(directory/(stage+'-editor-fallback.json'),{'model':specialist,'reason':str(error)[:1500]})
             original_box,original_description,original_target=original_request
             return repaint(im,original_box,original_description,caption,seed,port,directory,stage,
-                           original_target,neighbours,reference_style,rebuild_shape,reconstruction_attempt,False)
+                           original_target,neighbours,reference_style,rebuild_shape,reconstruction_attempt,False,design_reference,False)
     else:
         hist=post_graph(graph,port,directory,stage)
     with Image.open(output_image(hist[output])) as new:
@@ -1253,16 +1306,23 @@ def main():
             from construction_review import assess_local_edit
             with Image.open(candidate) as picture:before=picture.convert('RGB')
             target_box=finding['box']
-            corrected=repaint(before,target_box,finding['fix'],prompt,seed+882502,args.port,job,
-                              stage+'-design-repair',finding.get('target'),reference_style=True,
-                              rebuild_shape=True,design_reference=approved)
-            with Image.open(corrected) as picture:
-                repair=assess_local_edit(before,picture.convert('RGB'),target_box,
-                                         finding['fix'],finding.get('observation'),prompt)
-            save(job/(stage+'-design-repair-review.json'),repair)
-            if repair['verdict']=='resolved':
-                candidate=corrected
-                aligned=same_composition(approved,candidate,prompt)
+            from registered_edit import CONTROL
+            for use_edges in (True,False):
+                retry_stage=stage+('-design-repair' if use_edges else '-design-edit')
+                corrected=repaint(before,target_box,finding['fix'],prompt,seed+882502,args.port,job,
+                                  retry_stage,finding.get('target'),reference_style=True,
+                                  rebuild_shape=True,design_reference=approved,allow_control=use_edges)
+                with Image.open(corrected) as picture:
+                    repair=assess_local_edit(before,picture.convert('RGB'),target_box,
+                                             finding['fix'],finding.get('observation'),prompt)
+                save(job/(retry_stage+'-review.json'),repair)
+                if repair['verdict']=='resolved':
+                    candidate=corrected
+                    aligned=same_composition(approved,candidate,prompt)
+                    break
+                reference_record=job/(retry_stage+'-reference.json')
+                if not reference_record.is_file() or json.loads(reference_record.read_text()).get('model') not in (CONTROL,'coreml-sd15'):
+                    break
         elif finding.get('independent',{}).get('verdict')=='faithful':
             aligned=same_composition(approved,candidate,prompt)
         rec['画法整图返工']={'前一版本':str(master),'前一版本指纹':fingerprint(master),

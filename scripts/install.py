@@ -3,6 +3,7 @@ import fcntl
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import socket
@@ -64,6 +65,35 @@ def install_engine():
     editors.mkdir(parents=True,exist_ok=True)
     for wf in (ROOT/'workflows').glob('*.json'):
         shutil.copy2(wf,editors/wf.name)
+
+def install_apple_painter():
+    if not MAC or platform.machine()!='arm64' or not shutil.which('swift'):
+        return False
+    compiler=subprocess.run(['xcrun','-f','swiftc'],capture_output=True)
+    if compiler.returncode:
+        return False
+    revision='ea2805dc1945be20561c77e5f6d1d9a5a637cda2'
+    binary=TOOLS/'bin/coreml-painter'
+    stamp=TOOLS/'coreml-painter-revision'
+    if binary.is_file() and stamp.is_file() and stamp.read_text().strip()==revision:
+        return True
+    archive=CACHE/'apple-stable-diffusion.tar.gz'
+    fetch(f'https://codeload.github.com/apple/ml-stable-diffusion/tar.gz/{revision}',archive,
+          '84e6df7954d35af5431fdcd402fe4e711b83a23bdf880a5fe83de5b5cb80c45e')
+    with tempfile.TemporaryDirectory(dir=RT) as temp:
+        unpack(archive,Path(temp))
+        source=next(Path(temp).glob('ml-stable-diffusion-*'))
+        shutil.copy2(ROOT/'scripts/apple-painter.resolved',source/'Package.resolved')
+        cmd=['swift','build','-c','release','--package-path',str(source),'--only-use-versions-from-resolved-file']
+        built=subprocess.run([*cmd,'--product','StableDiffusionSample'])
+        if built.returncode:
+            print('Swift build unavailable. The standard local renderer will handle these repairs.',flush=True)
+            return False
+        location=Path(subprocess.check_output([*cmd,'--show-bin-path'],text=True).strip())
+        shutil.copy2(location/'StableDiffusionSample',binary)
+        stamp.write_text(revision+'\n')
+    return True
+
 
 def install_superres():
     where='macos' if MAC else 'ubuntu'
@@ -151,9 +181,11 @@ def main():
     with (RT/'.install.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
         install_engine()
+        apple_painter=install_apple_painter()
         large_editor=supports_large_editor()
         for row in json.loads((ROOT/'scripts/models.json').read_text()):
             if row.get('profile')=='large-edit' and not large_editor:continue
+            if row.get('profile')=='apple-neural-engine' and not apple_painter:continue
             fetch(row['url'],ROOT/row['path'],row['sha256'])
         install_superres()
         pull_models(install_ollama())
