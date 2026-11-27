@@ -69,3 +69,9 @@ class ConfirmedEvidenceTests(unittest.TestCase):
             self.assertIsNotNone(confirmed_issue(art,'changed elsewhere',folder))
             art.paste((255,0,0),(25,48,65,105))
             self.assertIsNone(confirmed_issue(art,'changed inside',folder))
+            from unittest.mock import Mock
+            review=Mock(return_value={'verdict':'still_present'})
+            self.assertIsNotNone(confirmed_issue(art,'changed inside',folder,review_changes=review))
+            review.assert_called_once()
+            review.return_value={'verdict':'resolved'}
+            self.assertIsNone(confirmed_issue(art,'changed inside',folder,review_changes=review))

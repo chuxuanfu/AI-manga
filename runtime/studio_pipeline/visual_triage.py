@@ -72,7 +72,9 @@ def review_image(image,brief,digest,root):
         return json.loads(receipt.read_text())
     overview=ImageOps.contain(image,(1050,1050),Image.Resampling.LANCZOS)
     report=dict(version=VERSION,model_id=identity,verifier_id=verifier_id,ledger=ledger,source_sha256=digest,views=[],status='clear',issue=None)
-    known=confirmed_issue(image,digest)
+    from construction_review import assess_local_edit
+    known=confirmed_issue(image,digest,review_changes=lambda a,b,box,fix,symptom:
+                          assess_local_edit(a,b,box,fix,symptom,brief))
     if known:
         report.update(status='local',issue=known)
         store(receipt,report)

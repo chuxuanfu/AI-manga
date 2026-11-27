@@ -29,13 +29,21 @@ def evidence_region(image, box):
     return image.crop(rect).convert('RGB')
 
 
+def context_sample(image,box):
+    thumb=image.convert('RGB').resize((32,32),Image.Resampling.BOX)
+    l,t,r,b=box
+    thumb.paste((0,0,0),(l*32//1000,t*32//1000,(r*32+999)//1000,(b*32+999)//1000))
+    return thumb.tobytes()
+
+
 def register(path, box, symptom, fix, folder=FOLDER):
     from print_judge import fingerprint, store
     if not symptom.strip() or not fix.strip():
         raise ValueError('Provide a visible symptom and a local correction.')
     with Image.open(path) as image:
         region = evidence_region(image,box)
-        record = dict(source_sha256=fingerprint(path),size=list(image.size),signature=signature(image),
+        record = dict(source=str(path.resolve()),source_sha256=fingerprint(path),size=list(image.size),signature=signature(image),
+                      context=context_sample(image,box).hex(),
                       sample=region.resize((32,32),Image.Resampling.BOX).tobytes().hex(),
                       evidence_sha256=hashlib.sha256(region.tobytes()).hexdigest(),box=list(box),symptom=symptom,fix=fix)
     key = hashlib.sha256(json.dumps(record,sort_keys=True).encode()).hexdigest()
@@ -50,13 +58,18 @@ def ledger_version(folder=FOLDER):
     return hashlib.sha256(''.join(sorted(p.stem for p in folder.glob('*.json'))).encode()).hexdigest()
 
 
-def confirmed_issue(image, digest, folder=FOLDER):
+def confirmed_issue(image, digest, folder=FOLDER, *, review_changes=None):
     image_signature=None
     for path in sorted(folder.glob('*.json')):
         row=json.loads(path.read_text())
         if list(image.size)!=row['size']:
             continue
-        if digest!=row['source_sha256']:
+        if digest!=row['source_sha256'] and row.get('context'):
+            current=context_sample(image,row['box'])
+            prior=bytes.fromhex(row['context'])
+            if sum(abs(a-b) for a,b in zip(current,prior))/len(current)>3:
+                continue
+        elif digest!=row['source_sha256']:
             if image_signature is None:
                 image_signature=signature(image)
             if (image_signature ^ row['signature']).bit_count()>8:
@@ -68,9 +81,20 @@ def confirmed_issue(image, digest, folder=FOLDER):
             prior=bytes.fromhex(row['sample'])
             # Ignore visually imperceptible changes without declaring a real repair successful.
             exact=max(abs(a-b) for a,b in zip(current,prior))<=1
+        issue=dict(operation='redraw',target='confirmed visual defect',box=row['box'],
+                   symptom=row['symptom'],fix=row['fix'],receipt=path.name)
         if exact:
-            return dict(operation='redraw',target='confirmed visual defect',box=row['box'],
-                        symptom=row['symptom'],fix=row['fix'],receipt=path.name)
+            return issue
+        source=Path(row.get('source',''))
+        if review_changes is None or not source.is_file():
+            continue
+        from print_judge import fingerprint
+        if fingerprint(source)!=row['source_sha256']:
+            continue
+        with Image.open(source) as original:
+            verdict=review_changes(original,image,row['box'],row['fix'],row['symptom'])
+        if verdict.get('verdict')!='resolved':
+            return dict(issue,verification=verdict)
     return None
 
 
