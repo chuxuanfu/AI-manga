@@ -22,6 +22,20 @@ from structure import inspect_small_figure_support
 
 
 class LocalRepairTests(unittest.TestCase):
+    def test_species_inflections_preserve_real_count_and_identity_errors(self):
+        from counts import inventory_counts
+        from evidence import count_conflict
+        def inventory(label, n):
+            return inventory_counts([dict(category=label,counting_species=label,kind='animal',count=n)])
+        for single,plural in [('otter','otters'),('goose','geese'),('dragonfly','dragonflies')]:
+            wanted,species=inventory(single,2)
+            seen,visible=inventory(plural,2)
+            self.assertFalse(count_conflict(wanted,seen,[],species,visible))
+            seen,visible=inventory(plural,3)
+            self.assertTrue(count_conflict(wanted,seen,[],species,visible))
+            seen,visible=inventory('rabbit',2)
+            self.assertTrue(count_conflict(wanted,seen,[],species,visible))
+
     def test_returned_job_page_does_not_offer_a_historical_print_as_current(self):
         from production import dashboard
         with TemporaryDirectory() as tmp:

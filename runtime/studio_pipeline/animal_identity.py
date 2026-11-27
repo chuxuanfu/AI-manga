@@ -25,6 +25,28 @@ def animal_names():
     return names,parents
 
 
+@lru_cache(maxsize=1)
+def noun_exceptions():
+    with zipfile.ZipFile(DICTIONARY) as archive, archive.open('wordnet/noun.exc') as entries:
+        pairs=[line.decode('utf-8').strip().split() for line in entries]
+    return {row[0]:row[1:] for row in pairs if len(row)>1}
+
+
+@lru_cache(maxsize=1024)
+def species_noun(label):
+    """Resolve number inflections only to an attested animal name."""
+    if not label or not DICTIONARY.is_file():return label
+    names,_=animal_names()
+    if label in names:return label
+    prefix,_,word=label.rpartition(' ')
+    forms=set(noun_exceptions().get(word,()))
+    for suffix,replacement in (('ies','y'),('es',''),('s','')):
+        if word.endswith(suffix):
+            forms.add(word[:-len(suffix)]+replacement)
+    options={f'{prefix} {base}'.strip() for base in forms} & names.keys()
+    return options.pop() if len(options)==1 else label
+
+
 @lru_cache(maxsize=512)
 def domestic_species(label):
     """Map named domestic breeds to the species counted in a scene inventory."""
