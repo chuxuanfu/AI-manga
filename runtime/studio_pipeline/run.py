@@ -839,12 +839,14 @@ def main(resources):
                 workflow=json.loads(layout.info.get('prompt','{}'))
             except (TypeError,ValueError):
                 workflow={}
-            if isinstance(workflow,dict) and any(isinstance(node,dict) and node.get('inputs',{}).get('unet_name')==DRAW_UNET for node in workflow.values()):
+            qwen_layout=isinstance(workflow,dict) and any(isinstance(node,dict) and node.get('inputs',{}).get('unet_name')==DRAW_UNET for node in workflow.values())
+            size=layout.size
+            specialist=(RUNTIME/'models/checkpoints'/ANIME_PAINT).is_file() and max(size)<3840
+            if qwen_layout and (not specialist or rec.get('base_model','auto')!='auto'):
                 return path
             source=local_image(layout.convert('RGB'))
-            size=layout.size
         destination=prefix+'/candidates/'+label+'-painted'
-        if (RUNTIME/'models/checkpoints'/ANIME_PAINT).is_file() and max(size)<3840:
+        if specialist:
             if not rec.get('上色标签'):
                 from evidence import ask,backend
                 schema={'type':'object','properties':{'tags':{'type':'array','items':{'type':'string'},'minItems':6,'maxItems':50}},'required':['tags']}
@@ -854,7 +856,10 @@ def main(resources):
                 with backend() as address:items=json.loads(ask(address,[],request_tags,schema))['tags']
                 rec['上色标签']=', '.join(t.strip() for t in items if isinstance(t,str) and t.strip())
                 save(manifest,rec)
-            paint=anime_color_pass(rec['上色标签'],draw_seed,destination,source)
+            if qwen_layout:
+                paint=anime_color_pass(rec['上色标签'],draw_seed,destination,source,strength=.40,edge=max(size))
+            else:
+                paint=anime_color_pass(rec['上色标签'],draw_seed,destination,source)
         else:
             paint=paint_key_visual(prompt,draw_seed,size,destination,source)
         stage=label+'-color'

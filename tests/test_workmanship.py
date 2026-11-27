@@ -9,6 +9,15 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'runtime/studio_pipeli
 
 
 class WorkmanshipTests(unittest.TestCase):
+    def test_anime_finish_keeps_detailed_layout_size_and_uses_subject_tags(self):
+        from illustration import anime_color_pass, ANIME_PAINT
+        graph=anime_color_pass('one girl, grey jacket',37,'album/proof','drawing.png',strength=.40,edge=1792)
+        nodes=list(graph.api.values())
+        self.assertTrue(any(n['inputs'].get('ckpt_name')==ANIME_PAINT for n in nodes))
+        self.assertTrue(any(1792 in n['inputs'].values() for n in nodes))
+        self.assertTrue(any(n['inputs'].get('denoise')==.40 for n in nodes))
+        self.assertTrue(any('grey jacket' in n['inputs'].get('text','') for n in nodes))
+
     def test_upgrade_rechecks_only_matching_rejected_master_and_source(self):
         import hashlib
         import json
