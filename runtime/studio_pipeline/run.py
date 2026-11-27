@@ -203,6 +203,9 @@ def region(issue,assessment):
         return (isinstance(box,list) and len(box)==4 and all(isinstance(x,(int,float)) and 0<=x<=1000 for x in box)
                 and box[2]-box[0]>=12 and box[3]-box[1]>=12 and (box[2]-box[0])*(box[3]-box[1])<650000)
     box = issue.get('box')
+    if (issue.get('user_selection') is True and isinstance(box,list) and len(box)==4
+            and all(type(v) is int for v in box) and 0<=box[0]<box[2]<=1000 and 0<=box[1]<box[3]<=1000):
+        return box
     if not valid(box):
         box = assessment.get('regions',{}).get(str(issue.get('region','')),{}).get('box')
     return box if valid(box) else None
@@ -572,10 +575,11 @@ def main(resources):
         with Image.open(args.from_image[0]) as original:
             manual_mask=selection_mask(args.selection_mask,original.size)
         if not args.candidate_image and not args.repair_box:
-            args.repair_box=mask_bounds(manual_mask)
+            l,t,r,b=mask_bounds(manual_mask)
+            args.repair_box=[max(0,l-12),max(0,t-12),min(1000,r+12),min(1000,b+12)]
     elif args.candidate_image:
         parser.error('--candidate-image requires --selection-mask')
-    if args.repair_box and (not args.repair_text or not args.from_image or not region({'box':args.repair_box},{})):
+    if args.repair_box and (not args.repair_text or not args.from_image or not region({'box':args.repair_box,'user_selection':True},{})):
         parser.error('--repair-box 需要有效坐标、--repair-text 和 --from-image')
     if args.seed is not None and not 0 <= args.seed < 2**63:
         parser.error('--seed must be between 0 and 9223372036854775807')
@@ -1068,7 +1072,7 @@ def main(resources):
             if args.repair_box and i==0:
                 # The caller identified this source defect. Inspect the edited pixels
                 # against the original, then apply every ordinary draft and print gate.
-                result={'status':'local','score':100,'issues':[{'box':args.repair_box,'fix':args.repair_text,
+                result={'status':'local','score':100,'issues':[{'box':args.repair_box,'user_selection':True,'fix':args.repair_text,
                                                                'operation':'redraw','target':args.object}]}
             elif holder:
                 result=check(path,label)
