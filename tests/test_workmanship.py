@@ -9,6 +9,33 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'runtime/studio_pipeli
 
 
 class WorkmanshipTests(unittest.TestCase):
+    def test_upgrade_rechecks_only_matching_rejected_master_and_source(self):
+        import hashlib
+        import json
+        from tempfile import TemporaryDirectory
+        from production import held_workmanship_pair
+        from reference_review import DETAIL_REVIEW_VERSION
+        with TemporaryDirectory() as tmp:
+            folder=Path(tmp)
+            source=folder/'drawing.png'
+            master=folder/'print.png'
+            for path,color in [(source,'navy'),(master,'yellow')]:
+                Image.new('RGB',(8,8),color).save(path)
+            file_hash=lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+            comparison={'decision':'below'}
+            row=dict(hash=file_hash(master),stage='final-art',review={'note':'finish','参考比较':comparison})
+            record={'prompt':'painting','delivery_edge':3840,'status':'未达标 · 终审退回','4K':master.name,
+                    '底图':str(source),'当前4K重建底图指纹':file_hash(source),'终审退回原因':'finish','reviews':[row]}
+            def check():
+                (folder/'review.json').write_text(json.dumps(record))
+                return held_workmanship_pair(folder,'painting')
+            self.assertIsNotNone(check())
+            comparison['detail_review_version']=DETAIL_REVIEW_VERSION
+            self.assertIsNone(check())
+            comparison.pop('detail_review_version')
+            Image.new('RGB',(8,8),'red').save(master)
+            self.assertIsNone(check())
+
     def test_detail_sheets_use_detected_subjects_with_unlisted_names(self):
         from reference_review import detail_boxes
         regions={'R1':dict(label='glass bottle',box=[200,50,400,700]),
