@@ -169,6 +169,12 @@ def finish_repaint_graph(brief, direction, seed, source, prefix, editor, *, stud
     if study:
         text+=('Image 2 contains grayscale studies of this medium. Apply their treatment of edges, '
                'overlap and values to the subjects in image 1. Retain the original colors. ')
+    elif KEY_VISUAL in brief:
+        study=BRUSHWORK
+        text+=('Image 2 contains separate cropped examples of illustration technique. Study how edges, '
+               'overlap, local contrast and reflected light describe depth. Apply those techniques only '
+               'where needed in image 1. Keep its focal subjects, anatomy, geometry and palette. '
+               'Never import objects, scenery, layout or patch boundaries from the examples. ')
     return instruction_edit(text+direction+' Author brief: '+brief,seed,source,prefix,editor,
                             detail_reference=study,full=full)
 

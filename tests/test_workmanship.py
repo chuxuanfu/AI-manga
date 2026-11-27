@@ -169,6 +169,17 @@ class WorkmanshipTests(unittest.TestCase):
         self.assertEqual([n['inputs']['image'] for n in quick.api.values() if n['class_type']=='LoadImage'],['cat.png'])
         self.assertEqual(next(n['inputs']['steps'] for n in quick.api.values() if n['class_type']=='KSampler'),4)
 
+    def test_anime_finish_editor_receives_source_and_technique_sheet(self):
+        from illustration import BRUSHWORK, KEY_VISUAL, finish_repaint_graph
+        graph=finish_repaint_graph('Interior scene · '+KEY_VISUAL,'Improve depth.',42,
+                                   'candidate.png','revised','local.safetensors')
+        nodes=graph.api
+        condition=next(n['inputs'] for n in nodes.values()
+                       if n['class_type']=='TextEncodeQwenImageEditPlus' and n['inputs']['prompt'])
+        for port,expected in [('image1','candidate.png'),('image2',BRUSHWORK)]:
+            self.assertEqual(nodes[str(condition[port][0])]['inputs']['image'],expected)
+        self.assertEqual(next(n['inputs']['steps'] for n in nodes.values() if n['class_type']=='KSampler'),4)
+
     def test_repaint_uses_both_candidate_observations_and_excludes_reference_subjects(self):
         from reference_review import redraw_direction,last_finish_direction
         grade=dict(decision='below',consistent_deficits=['material_construction'],
