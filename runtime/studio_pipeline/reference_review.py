@@ -39,6 +39,18 @@ def detail_boxes(regions):
                     break
             if selected:break
         if selected:boxes.append(selected)
+    # For unlisted subjects, use the actual model-localized regions as well.
+    # Distinct objects make better witnesses than two detections of the same one.
+    seen={name.casefold() for name,_ in boxes}
+    for row in regions.values():
+        if len(boxes)==2:break
+        name=row['label']
+        bounds=tuple(v/1000 for v in row['box'])
+        if name.casefold() in seen or bounds in [box for _,box in boxes]:continue
+        left,top,right,bottom=bounds
+        if 0<=left<right<=1 and 0<=top<bottom<=1:
+            boxes.append((name,bounds))
+            seen.add(name.casefold())
     if len(boxes)<2:boxes.append(('middle distance',(.18,.28,.75,.64)))
     if len(boxes)<2:boxes.append(('foreground',(.15,.59,.77,.90)))
     return boxes
@@ -99,7 +111,10 @@ PAIR_INSTRUCTION=(' You receive two sheets. Left means the FIRST sheet, right th
                   'and two enlarged details. Compare the execution of the materials depicted. A paper relief can show '
                   'depth through cut-edge shadows, a woodcut through carved contours and value, and a painting through '
                   'local color and illumination. Identify a visible weakness in its own medium when rating one side '
-                  'lower. A greater number of lights, objects, textures or colors alone does not establish better execution.')
+                  'lower. Judge depth at the scale the scene actually depicts: for a tabletop or a close crop, inspect '
+                  'overlaps, grounding and volume. A plain wall or an absent distant landscape by itself is '
+                  'never evidence of a defect. A greater number of lights, objects, textures or colors alone '
+                  'does not establish better execution.')
 
 
 def resolve_workmanship(url, im, regions, instruction, ambiguous, *, sided=False):

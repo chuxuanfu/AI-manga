@@ -9,6 +9,14 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'runtime/studio_pipeli
 
 
 class WorkmanshipTests(unittest.TestCase):
+    def test_detail_sheets_use_detected_subjects_with_unlisted_names(self):
+        from reference_review import detail_boxes
+        regions={'R1':dict(label='glass bottle',box=[200,50,400,700]),
+                 'R2':dict(label='glass bottle',box=[205,50,400,700]),
+                 'R3':dict(label='citrus',box=[500,600,800,720])}
+        self.assertEqual([label for label,_ in detail_boxes(regions)],['glass bottle','citrus'])
+        self.assertEqual(len(detail_boxes({})),2)
+
     def test_replacement_geometry_is_grounded_in_its_repair_field(self):
         from illustration import construction_guide
         from masks import frame_supported_object
