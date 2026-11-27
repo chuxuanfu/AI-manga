@@ -73,35 +73,44 @@ def run(suite, label, budget):
         if result.setdefault('pipeline_sha256',version)!=version:
             raise ValueError('The workflow changed. Start a new named run for this version.')
         for case in cases:
-            name=case['id']; prior=result['cases'].get(name,{})
-            if prior.get('status') in ('passed','budget_exhausted'):
-                continue
-            job=folder/name;job.mkdir(exist_ok=True)
-            state=read(job/'production.json') if (job/'production.json').exists() else {}
-            rounds=state.get('rounds',[])
-            used=sum(row['status'] not in ('运行中','运行中断') for row in rounds)
-            started=prior.get('started_at',time.time())
-            result['cases'][name]=dict(status='running',started_at=started,job=name)
-            store(report_file,result)
-            rc=None
-            if used<budget and state.get('status')!='已自动定稿':
-                cmd=[str(ROOT/'Studio.command'),'--job',str(job),'--max-rounds',str(budget-used)]
-                if not state:
-                    cmd+=['--prompt',case['prompt'],'--seed',str(case['seed']),'--aspect',case['aspect']]
-                with (job/'benchmark.log').open('ab') as log:
-                    rc=subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT).returncode
-            state=read(job/'production.json') if (job/'production.json').exists() else {}
-            passed=state.get('status')=='已自动定稿' and verified_release(job,case['prompt'])
-            exhausted=state.get('status')=='达到指定轮数，本次未产生新定稿'
-            status='passed' if passed else ('budget_exhausted' if exhausted else 'error')
-            result['cases'][name]=dict(status=status,job=name,started_at=started,elapsed_seconds=round(time.time()-started,1),
-                                       rounds=len(state.get('rounds',[])),exit_code=rc,
-                                       last_finding=(state.get('rounds') or [{}])[-1].get('原因',''))
-            if pipeline_identity()!=version:
-                result['cases'][name]['status']='workflow_changed'
+            prior=result['cases'].setdefault(case['id'],dict(status='queued',job=case['id']))
+            if prior['status']=='error':
+                prior['status']='queued'
+        store(report_file,result)
+        for turn in range(budget):
+            for case in cases:
+                name=case['id']; prior=result['cases'].get(name,{})
+                if prior.get('status') in ('passed','budget_exhausted','error'):
+                    continue
+                job=folder/name;job.mkdir(exist_ok=True)
+                state=read(job/'production.json') if (job/'production.json').exists() else {}
+                rounds=state.get('rounds',[])
+                used=sum(row['status'] not in ('运行中','运行中断') for row in rounds)
+                started=prior.get('started_at',time.time())
+                result['cases'][name]=dict(status='running',started_at=started,job=name)
                 store(report_file,result)
-                raise RuntimeError('Workflow source changed during execution. Use a new run for a clean comparison.')
-            store(report_file,result)
+                rc=None
+                if used<budget and state.get('status')!='已自动定稿':
+                    cmd=[str(ROOT/'Studio.command'),'--job',str(job),'--max-rounds','1']
+                    if not state:
+                        cmd+=['--prompt',case['prompt'],'--seed',str(case['seed']),'--aspect',case['aspect']]
+                    with (job/'benchmark.log').open('ab') as log:
+                        rc=subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT).returncode
+                state=read(job/'production.json') if (job/'production.json').exists() else {}
+                passed=state.get('status')=='已自动定稿' and verified_release(job,case['prompt'])
+                exhausted=state.get('status')=='达到指定轮数，本次未产生新定稿'
+                used=sum(row['status'] not in ('运行中','运行中断') for row in state.get('rounds',[]))
+                status='passed' if passed else 'error'
+                if exhausted:
+                    status='budget_exhausted' if used>=budget else 'retry_pending'
+                result['cases'][name]=dict(status=status,job=name,started_at=started,elapsed_seconds=round(time.time()-started,1),
+                                           rounds=len(state.get('rounds',[])),exit_code=rc,
+                                           last_finding=(state.get('rounds') or [{}])[-1].get('原因',''))
+                if pipeline_identity()!=version:
+                    result['cases'][name]['status']='workflow_changed'
+                    store(report_file,result)
+                    raise RuntimeError('Workflow source changed during execution. Use a new run for a clean comparison.')
+                store(report_file,result)
     return report_file
 
 
@@ -111,4 +120,6 @@ if __name__=='__main__':
     parser.add_argument('--run',required=True)
     parser.add_argument('--rounds',type=int,default=1)
     args=parser.parse_args()
-    print(run(args.suite,args.run,args.rounds))
+    report=run(args.suite,args.run,args.rounds)
+    print(report, flush=True)
+    sys.exit(0 if all(case['status']=='passed' for case in read(report)['cases'].values()) else 2)

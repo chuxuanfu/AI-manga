@@ -504,7 +504,7 @@ def dimensions(prompt):
     return (832,1248)
 
 
-def main():
+def main(resources):
     parser = argparse.ArgumentParser(description='本地漫画壁纸选片、纠错、精绘')
     parser.add_argument('-p','--prompt',help='中文或英文画面描述')
     parser.add_argument('-o','--output-dir',type=Path,help='将选中的校样或通过终审的成品复制到此目录')
@@ -602,6 +602,8 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         parser.error('这个任务正由另一个本地进程运行')
+    from scheduler import round_slot
+    resources.enter_context(round_slot(RUNTIME, job))
     manifest = job/'review.json'
     rec = json.loads(manifest.read_text()) if manifest.exists() else {}
     if args.skip_focus is not None and (not rec or rec.get('输出模式')!='全幅4K扩散与8K焦点精修' or not rec.get('精绘区域报告',{}).get('8K局部')):
@@ -660,6 +662,7 @@ def main():
         parser.error('继续原任务时请保持原画幅，新画幅请建立新任务。')
     if reference_style and rec['画法参考']!=hashlib.sha256((INPUT/REFERENCE).read_bytes()).hexdigest():
         parser.error('该任务的画法参考已更换，请为新参考建立新任务。')
+    args.candidates_explicit=args.candidates is not None
     args.candidates=args.candidates or rec.get('候选数',3)
     if args.from_image:
         rec['输入底图']=[str(p.resolve()) for p in args.from_image]
@@ -774,7 +777,7 @@ def main():
         args.proof_only=True
     def check(path,stage,focus=None):
         key = hashlib.sha256(path.read_bytes()).hexdigest()
-        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v15' if rec.get('画法自适应') else '')+'-independent-inventory-v6'+('body-support-v5-grounded-figures'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
+        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v16-equal-area' if rec.get('画法自适应') else '')+'-independent-inventory-v6'+('body-support-v5-grounded-figures'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'
@@ -1004,7 +1007,13 @@ def main():
                 path=color_candidate(path,label,seed+373+i)
                 path,result=check_composition(path,label)
             if usable(result) and not args.repair_box:
-                passing.append((result,path,i))
+                if args.round_worker and not args.candidates_explicit and not args.from_image:
+                    result=check_draft_structure(path,result)
+                    if usable(result):
+                        approved=path
+                        break
+                else:
+                    passing.append((result,path,i))
             if draft_repair_issue(result):
                 assessed.append((result,path,i))
         for result,path,i in sorted(passing,key=lambda item:-item[0]['score']):
@@ -1018,6 +1027,7 @@ def main():
                 issue=draft_repair_issue(result)
                 if not issue:continue
                 base_path=path
+                rejected_edits=0
                 for n in range(3):
                     label=f'region-repair-{i+1}-{n+1}'
                     with Image.open(base_path) as original:
@@ -1036,7 +1046,15 @@ def main():
                                     judged=assess_local_edit(original,candidate,region(issue,result),issue['fix'],
                                                              issue.get('symptom'),prompt)
                                 save(job/(label+'-draft-patch.json'),judged)
-                                if judged.get('verdict')!='resolved':continue
+                                if judged.get('verdict')!='resolved':
+                                    rejected_edits+=1
+                                    if rejected_edits>=2:
+                                        # Recompose from the brief when two different local edits
+                                        # leave this same defect. Supplied sources keep their third try.
+                                        if not args.from_image and not args.repair_box:
+                                            break
+                                    continue
+                                rejected_edits=0
                     next_review=check_draft_structure(patched,check(patched,label,region(issue,result)))
                     if usable(next_review):
                         approved=patched;break
@@ -1753,4 +1771,6 @@ def main():
 
 
 if __name__=='__main__':
-    sys.exit(main())
+    from contextlib import ExitStack
+    with ExitStack() as resources:
+        sys.exit(main(resources))

@@ -58,6 +58,9 @@ runtime/venv/bin/python scripts/evaluate.py --run first-local-test
 ```
 
 结果保存在 `images/benchmarks/first-local-test/results.json`。要比较两个版本，可用不同的 `--run` 名称，在同一台机器上保持提示词、种子和 `--rounds` 相同。也可以用 `--suite FILE.json` 换成自己的测试集，格式见 `tests/fixtures/unseen-scenes.json`。总耗时包含等待本机设备的时间。
+同机多个 Studio 任务按到达顺序每次执行一轮，每轮独占设备直到审查完成。需要返工的任务在下一轮重新排队。排队进程意外退出后，后续任务会跳过失效的队列记录。默认选片在首张通过构图和结构检查后进入精绘，显式传入 `--candidates N` 时会比较整组候选。自动选片中，同一处结构缺陷经过两次局部重绘仍未通过时，程序转试其他候选或重新构图。
+
+测试集按轮次轮转各提示词。`results.json` 区分等待、运行、待重试、耗尽轮数和通过。只有整套通过并验证每份 4K 交付凭证，测试命令才以状态码 0 退出。
 
 ## 成品在哪里
 

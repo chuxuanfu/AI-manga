@@ -261,7 +261,7 @@ def confirmed_final_comparison(review):
 def compare(im,regions,path,brief='',*,final=False,medium=None):
     from print_judge import MODEL
     tag=MODEL if final else TAG
-    board=comparison(im,regions,path)
+    comparison(im,regions,path)
     if not available(tag):return {'decision':'review','reason':'参考图比较模型未就绪'}
     instruction=('Compare these two illustrations as peers. They may show identical art or different scenes. For each axis indicate which side demonstrates visibly stronger workmanship, or tie when both are comparable. '
                  'Use unclear only if the evidence is too small. Check each picture on its own visible subjects. Trace a joint, supporting contact or joined object; judge how the artist depicts the materials actually present through their edges, joints or changes of surface. Compare lighting within the intended medium and the separation of focal and distant shapes. A subject present on just one side does not confer an advantage. '
@@ -271,19 +271,9 @@ def compare(im,regions,path,brief='',*,final=False,medium=None):
         instruction+=SIDE_INSTRUCTION+' Judge each picture in the medium visibly used on that side.'
     elif brief:
         instruction+=' The new image has its own requested medium: '+brief+'. Evaluate construction and deliberate marks within each medium. Spare ink, flat cel shading, paper cutouts, monochrome or visible print dots may be fully resolved. Do not reward merely having more texture.'
-    if final:
-        pair=artwork_pair(im,regions)
-        presentations=(pair,list(reversed(pair)))
-        instruction+=PAIR_INSTRUCTION
-    else:
-        neutral=board.copy()
-        draw=ImageDraw.Draw(neutral)
-        draw.rectangle((0,0,1151,24),fill='#f4f2eb')
-        draw.rectangle((0,768,1151,797),fill='#f4f2eb')
-        reverse=Image.new('RGB',neutral.size)
-        reverse.paste(neutral.crop((576,0,1152,1104)),(0,0))
-        reverse.paste(neutral.crop((0,0,576,1104)),(576,0))
-        presentations=([neutral],[reverse])
+    pair=artwork_pair(im,regions)
+    presentations=(pair,list(reversed(pair)))
+    instruction+=PAIR_INSTRUCTION
     try:
         with backend(tag) as url:
             schema=grade_schema(AXES,final)
