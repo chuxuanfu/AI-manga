@@ -24,6 +24,7 @@ from construction_review import review as review_construction
 from review import audit, reviewer, RUNTIME, CHECKS
 from manga_materials.planner import plan_scene, requested_medium
 from focus_print import PATCH, centers, sampled_surfaces, combine_source, detail_graph, finish_neural, neural_double, repair_print_pair, preserve_source_marks
+from local_patch import confine_edit
 from masks import object_mask, structural_composite
 from lettering import remove_reviewed_feature
 from erase import duplicate_box, erase_region, masked_candidate, MODEL as ERASE_MODEL
@@ -948,6 +949,9 @@ def main(resources):
         for attempt in range(3):
             if not issue:break
             box=region(issue,result)
+            if args.repair_box:
+                l,t,r,b=args.repair_box
+                if not (l<=box[0]<box[2]<=r and t<=box[1]<box[3]<=b):break
             label=f'region-repair-{index+1}-{attempt+1}'
             instruction=' '.join(filter(None,[issue['fix'],feedback]))
             strategy=2 if consecutive_failures and attempt==1 else attempt
@@ -961,6 +965,7 @@ def main(resources):
                                     [o for o,_ in rec['parts']],reference_style,
                                     rebuild_shape=reference_style and issue.get('operation')=='redraw',
                                     reconstruction_attempt=strategy)
+                patched=confine_edit(path,patched,box,job/(label+'-bounded.png'))
                 if args.round_worker or (reference_style and issue.get('operation')=='redraw'):
                     with Image.open(patched) as candidate:
                         verdict=assess_local_edit(original,candidate,box,issue['fix'],issue.get('symptom'),prompt)
@@ -991,24 +996,6 @@ def main(resources):
         elif args.retry_round:
             retry_origin=args.retry_round
             retry_source=local_retry_source(retry_origin,prompt,review_upgrade=True)
-        if retry_source and retry_origin==job and not (args.reviewed_image or args.from_image or args.candidate_image or args.repair_box):
-            from production import failed_scene_connection
-            if failed_scene_connection(job,rec,retry_source[2]):
-                rec.update({'整图重绘后仍需换构图':True,'终审退回原因':retry_source[2]['symptom'],
-                            'status':'未达标 · 整图重绘后仍需换构图'})
-                save(manifest,rec)
-                return 2
-        if retry_source and retry_source[2]['operation']!='reinspect' and retry_origin!=job and not (args.reviewed_image or args.from_image or args.candidate_image or args.repair_box):
-            # When a text-only job consumes a whole new round yet keeps exactly
-            # the previous rejected master, let new seeds try a fresh composition.
-            # User-supplied source images always keep their original composition.
-            retained=retry_source[0].resolve()
-            from production import failed_scene_connection
-            previous=json.loads((args.retry_round/'review.json').read_text())
-            if (not retained.is_relative_to(args.retry_round.resolve()) or previous.get('整图重绘后仍需换构图')
-                    or failed_scene_connection(args.retry_round,previous,retry_source[2])):
-                rec['重选构图原因']='上一轮局部重画未能改变被退回的母版'
-                retry_source=None
     if retry_source:
         approved=retry_source[1]
     elif args.candidate_image:
@@ -1028,12 +1015,22 @@ def main(resources):
         approved=args.reviewed_image.resolve()
         rec['底图人工审定']=str(approved)
     else:
-        paths=list(args.from_image) or [job/name for name in rec.get('原生底图',[]) if (job/name).is_file()]
+        holder=rec.get('待局修底图')
+        if not holder and args.retry_round and (args.retry_round/'review.json').is_file():
+            preceding=json.loads((args.retry_round/'review.json').read_text())
+            if preceding.get('prompt')==prompt:holder=preceding.get('待局修底图')
+        if holder and not args.from_image and not args.repair_box:
+            from print_judge import fingerprint as file_hash
+            retained=Path(holder['file'])
+            if not retained.is_file() or file_hash(retained)!=holder['sha256']:
+                raise ValueError('已保留的局部修订底图发生变化')
+        else:holder=None
+        paths=([retained] if holder else []) or list(args.from_image) or [job/name for name in rec.get('原生底图',[]) if (job/name).is_file()]
         assessed=[]
         passing=[]
         # A selection belongs to the supplied picture. New unrelated layouts
         # cannot establish whether a patch improves that selected area.
-        count=len(paths) if args.repair_box else max(args.candidates,len(paths))
+        count=len(paths) if args.repair_box or holder else max(args.candidates,len(paths))
         streaming=args.round_worker and not args.candidates_explicit and not args.from_image
         for i in range(count):
             label=f'draft-{i+1}'
@@ -1053,21 +1050,32 @@ def main(resources):
                 # against the original, then apply every ordinary draft and print gate.
                 result={'status':'local','score':100,'issues':[{'box':args.repair_box,'fix':args.repair_text,
                                                                'operation':'redraw','target':args.object}]}
+            elif holder:
+                result=check(path,label)
             else:
                 path=color_candidate(path,label,seed+373+i)
                 path,result=check_composition(path,label)
             if usable(result) and not args.repair_box:
-                if streaming:
+                if streaming or holder:
                     result=check_draft_structure(path,result)
+                    if draft_repair_issue(result):
+                        from print_judge import fingerprint as file_hash
+                        holder=dict(file=str(path.resolve()),sha256=file_hash(path))
+                        rec['待局修底图']=holder
+                        save(manifest,rec)
                     if usable(result):
                         approved=path
                         break
                 else:
                     passing.append((result,path,i))
+            if holder and result['status']=='global':
+                holder=None
+                rec.pop('待局修底图',None)
+                save(manifest,rec)
             if draft_repair_issue(result):
-                if streaming:
+                if streaming or holder:
                     approved=repair_draft(path,result,i)
-                    if approved:break
+                    if approved or holder:break
                 else:
                     assessed.append((result,path,i))
         for result,path,i in sorted(passing,key=lambda item:-item[0]['score']):
@@ -1080,6 +1088,11 @@ def main(resources):
             for result,path,i in sorted(assessed,key=lambda x:-x[0]['score']):
                 approved=repair_draft(path,result,i)
                 if approved:break
+        if holder and not approved:
+            rec.update({'待局修底图':holder,'status':'未达标 · 保留构图待局部返修','终审退回原因':result.get('note','局部修复尚未通过')})
+            save(manifest,rec)
+            return 2
+        if approved:rec.pop('待局修底图',None)
     if not approved and not args.from_image and not args.repair_box:
         # Allow fresh layouts for unattended production even when reviewers cannot localize an issue.
         conflicts=[c for row in rec['reviews'] for c in row['review'].get('count_conflicts',[])]
@@ -1256,7 +1269,7 @@ def main(resources):
         deliver_file(source_path,master)
         temp=dest/(uuid.uuid4().hex+'.png');scaled.save(temp);temp.replace(small)
         return master,small
-    def correct_shape(source,issue,box,stage,edit_seed,previous=None,*,placement_only=False):
+    def correct_shape(source,issue,box,stage,edit_seed,previous=None):
         from construction_review import assess_local_edit
         instruction=issue['fix']
         with Image.open(source) as original:
@@ -1267,14 +1280,14 @@ def main(resources):
             if plan:
                 trial=repair_placement(before,plan,rec['positive'],edit_seed,args.port,job,stage+'-layout')
                 if trial:
-                    path,both_sites=trial
+                    path,_=trial
+                    path=confine_edit(source,path,box,job/(stage+'-layout-bounded.png'))
                     with Image.open(path) as proposed:
-                        checked=assess_local_edit(before,proposed,both_sites,instruction,issue.get('symptom'),prompt)
+                        checked=assess_local_edit(before,proposed,box,instruction,issue.get('symptom'),prompt)
                     from print_judge import fingerprint as print_fingerprint
-                    checked.update(source_sha256=print_fingerprint(source),candidate_sha256=print_fingerprint(path),box=both_sites)
+                    checked.update(source_sha256=print_fingerprint(source),candidate_sha256=print_fingerprint(path),box=box)
                     save(job/(stage+'-layout-review.json'),checked)
                     if checked['verdict']=='resolved':return path
-        if placement_only:return None
         from production import repeated_rejection
         recurring=bool(previous and repeated_rejection(previous,box))
         strategies=[2,0,1] if recurring else [0,1,2]
@@ -1283,6 +1296,7 @@ def main(resources):
             revised=repaint(before,box,instruction,rec['positive'],edit_seed+variant*1753,args.port,
                             job,name,issue.get('target'),[o for o,_ in rec['parts']],reference_style,rebuild_shape=True,
                             reconstruction_attempt=strategy)
+            revised=confine_edit(source,revised,box,job/(name+'-bounded.png'))
             release_idle_renderer(args.port)
             with Image.open(revised) as proposed:
                 verdict=assess_local_edit(before,proposed,box,issue['fix'],issue.get('symptom'),prompt)
@@ -1374,99 +1388,8 @@ def main(resources):
             return candidate
         return None
 
-    scene_tried=False
-    def redraw_scene(source,issue,box,stage):
-        nonlocal scene_tried
-        if (scene_tried or not reference_style or args.keep_native or args.repair_box or args.selection_mask
-                or not box or issue.get('operation')!='redraw'):
-            return None
-        editor=installed_editor(RUNTIME/'ComfyUI/models')
-        if not editor:return None
-        scene_tried=True
-        guided=bool(args.reviewed_image or args.from_image or args.candidate_image)
-        def screen_scene(path,label,known_box):
-            reviewed=check_draft_structure(path,check(path,label,known_box))
-            if usable(reviewed):return path
-            finding=draft_repair_issue(reviewed)
-            if not finding or finding.get('operation')!='redraw':return None
-            # Keep a promising new composition. A single localized flaw can be
-            # repaired at drawing scale before another full-frame print is built.
-            repair_box=region(finding,reviewed)
-            corrected=correct_shape(path,finding,repair_box,label+'-draft-repair',seed+8311)
-            if not corrected:return None
-            if guided:
-                from print_judge import same_composition
-                if not same_composition(source,corrected,prompt):return None
-            final_draft=check_draft_structure(corrected,check(corrected,label+'-draft-corrected',repair_box))
-            return corrected if usable(final_draft) else None
-
-        from production import previous_scene_candidate, previous_scene_on_master
-        from print_judge import same_composition
-        prior=previous_scene_candidate(job,stage,rec['reviews'],OUTPUT,structural_reports=rec.get('底图结构终审'))
-        if not prior and args.retry_round:
-            prior=previous_scene_on_master(args.retry_round,source,prompt,OUTPUT)
-        if prior:
-            existing,weights=prior
-            if not guided or same_composition(source,existing,prompt):
-                reassessed=screen_scene(existing,stage+'-rescreen',box if guided else None)
-                if reassessed:
-                    rec['高清底图返工']={'源图':str(source),'重绘':str(reassessed),'依据':issue['fix'],'模型':weights,
-                                     '保留原构图':guided,'目标范围':box if guided else None}
-                    save(manifest,rec)
-                    return reassessed
-        with Image.open(source) as canvas:
-            scale=min(1,(1536*1024/(canvas.width*canvas.height))**.5)
-            size=tuple(max(32,round(n*scale/16)*16) for n in canvas.size)
-            rgb=canvas.convert('RGB')
-            full=rgb.resize(size,Image.Resampling.LANCZOS)
-            # The editor internally reduces its semantic view to roughly 384x384.
-            # Supply native neighboring contours for small defects in a wide composition.
-            from print_judge import expanded
-            pixels=tuple(round(v*n/1000) for v,n in zip(box,rgb.size*2))
-            field=expanded(pixels,rgb.size)
-            if guided:
-                # A loose mask allows rerouting the attachment at scene scale while
-                # anchoring the selected composition outside its surrounding field.
-                field_px=tuple(round(v*target/origin) for v,target,origin in zip(field,size*2,rgb.size*2))
-                feather=max(2,round(min(field_px[2]-field_px[0],field_px[3]-field_px[1])*.055))
-                mask=Image.new('L',size)
-                ImageDraw.Draw(mask).rounded_rectangle(field_px,radius=feather*2,fill=255)
-                full.putalpha(ImageOps.invert(mask.filter(ImageFilter.GaussianBlur(feather))))
-            reference=local_image(full)
-            detail=rgb.crop(field)
-            detail.thumbnail((1152,1152),Image.Resampling.LANCZOS)
-            detail_reference=local_image(detail)
-        center=((box[0]+box[2])/20,(box[1]+box[3])/20)
-        text=('Edit image 1 as a complete illustration. Image 2 enlarges the defect in this same drawing. '
-              'Use its surrounding contours to locate and repair that part in image 1. Output the complete '
-              'scene as one uninterrupted image. Preserve its framing, '
-              'subjects, identities, gestures, clothes, colors, lighting, and original drawing medium. '
-              'The local crop editor could not construct this part with coherent connections to its '
-              'surroundings. Redraw the part together with its connected structures in the full composition. '
-              f'Location about {center[0]:.0f}% of width from left and {center[1]:.0f}% of height from top. '
-              'Required correction: '+issue['fix']+' Original art direction: '+prompt)
-        graph=instruction_edit(text,seed+1621,reference,prefix+'/'+stage,editor,masked=guided,
-                               detail_reference=detail_reference)
-        try:
-            history=post_graph(graph.api,args.port,job,stage,graph.ui())
-        except RuntimeError as exc:
-            save(job/(stage+'-editor-failure.json'),{'model':editor,'error':str(exc)[:1200]})
-            return None
-        candidate=output_image(history[str(len(graph.nodes))])
-        release_idle_renderer(args.port)
-        from print_judge import same_composition
-        aligned=same_composition(source,candidate,prompt)
-        if not aligned and guided:return None
-        # An unconstrained text brief may legitimately change layout. Evaluate it
-        # like a new draft and locate its subjects afresh; old coordinates no longer apply.
-        candidate=screen_scene(candidate,stage,box if aligned else None)
-        if not candidate:return None
-        rec['高清底图返工']={'源图':str(source),'重绘':str(candidate),'依据':issue['fix'],'模型':editor,
-                         '保留原构图':aligned,'目标范围':box if aligned else None}
-        save(manifest,rec)
-        return candidate
-
     repair_check=None
+    retained_failure=None
     if retry_source:
         last,_,issue=retry_source
         focus=region(issue,{})
@@ -1523,8 +1446,6 @@ def main(resources):
                 overview=source.copy();overview.thumbnail((1152,1152),Image.Resampling.LANCZOS)
                 framing=verify_frame_exit(address,source,overview,focus,claim,prompt)
             if framing:save(job/'continued-framing-review.json',framing)
-        scene=None
-        moved_source=None
         if reverted:
             repaired=reverted
         elif issue.get('operation')=='reinspect' or (framing and framing['explained']):
@@ -1537,26 +1458,11 @@ def main(resources):
             if focus and issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
                 repaired=job/(stage+'-removed-unrequested-object.png')
                 with Image.open(last) as retained:remove_reviewed_feature(retained.convert('RGB'),focus,issue).save(repaired)
+                repaired=confine_edit(last,repaired,focus,job/(stage+'-bounded.png'))
             else:
-                from production import repeated_rejection
-                from placement import placement_requested
-                if focus and not args.keep_native and placement_requested(issue['fix']):
-                    moved_source=correct_shape(approved,issue,focus,stage+'-composition',seed+820,retry_origin,placement_only=True)
-                if not moved_source and focus and repeated_rejection(retry_origin,focus,minimum=3):
-                    scene=redraw_scene(last,issue,focus,'continued-scene')
-                repaired=(correct_shape(last,issue,focus,stage,seed+820,retry_origin)
-                          if focus and not scene and not moved_source else None)
-        if not repaired and not scene and not moved_source:scene=redraw_scene(last,issue,focus,'continued-scene')
-        if repaired or scene or moved_source:
-            if moved_source:
-                approved=moved_source
-                master,small=render(approved,'continued-placement-print')
-            elif scene:
-                approved=scene
-                master,small=render(approved,'continued-scene-print')
-            else:
-                master,small=repaired,None
-            if scene and rec['高清底图返工'].get('保留原构图') is False:focus=None
+                repaired=correct_shape(last,issue,focus,stage,seed+820,retry_origin) if focus else None
+        if repaired:
+            master,small=repaired,None
             repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']} if focus else None
             rec['续修来源']=str(last)
         else:
@@ -1571,6 +1477,12 @@ def main(resources):
             save(manifest,rec)
             print(rec['status'],flush=True)
             return 2
+        if repaired and issue.get('operation')!='reinspect':
+            prior=json.loads((retry_origin/'review.json').read_text())
+            entry=dict(prior['逐块终审'])
+            entry['报告']=os.path.relpath((retry_origin/entry['报告']).resolve(),job)
+            retained_failure={'4K':os.path.relpath(last,job),'底图':str(retry_source[1]),
+                              '逐块终审':entry,'终审退回原因':issue.get('symptom') or issue['fix']}
     elif args.review_print:
         from print_judge import fingerprint,reviewed_print_layout
         supplied=args.review_print.resolve()
@@ -1592,7 +1504,15 @@ def main(resources):
         small=None
         rec['已有修订稿']={'来源':str(supplied),'指纹':fingerprint(master),'底图指纹':fingerprint(approved)}
     else:
-        master,small=native_pair(approved,'native-repair') if args.keep_native else render(approved,'refine')
+        with Image.open(approved) as img:
+            local_master=bool((args.repair_box or args.selection_mask) and four_only and max(img.size)==3840)
+        if local_master:
+            master=job/'pending-review'/'local-master.png'
+            master.parent.mkdir(exist_ok=True)
+            deliver_file(approved,master)
+            small=None
+        else:
+            master,small=native_pair(approved,'native-repair') if args.keep_native else render(approved,'refine')
     from print_judge import actionable_edit, fingerprint, grade_finished_print, MODEL
     from production import publish
     detail_rebuilt=False
@@ -1602,11 +1522,12 @@ def main(resources):
         label='final-art' if attempt==0 else f'revision-{attempt}-final-art'
         from focus_print import fit_print_aspect
         aspect=rec.get('aspect','auto')
-        master=fit_print_aspect(master,aspect,3840 if four_only else 7680)
-        if small is not None:
-            small=fit_print_aspect(small,aspect,3840)
+        if not (repair_check or args.repair_box or args.selection_mask):
+            master=fit_print_aspect(master,aspect,3840 if four_only else 7680)
+            if small is not None:
+                small=fit_print_aspect(small,aspect,3840)
         release_idle_renderer(args.port)
-        if four_only and not args.repair_box and not args.keep_native:
+        if four_only and not repair_check and not args.repair_box and not args.selection_mask and not args.keep_native:
             from lettering import clean_lettering
             master=clean_lettering(master,prompt,job,label)
         rec['4K']=os.path.relpath(master if four_only else small,job)
@@ -1620,7 +1541,7 @@ def main(resources):
         rec.setdefault('终审设备耗时',{})[label]=timings
         if judged is None:
             rec['终审退回原因']=final['note']
-            candidate=repaint_finish(master,approved,final) if attempt==0 else None
+            candidate=repaint_finish(master,approved,final) if attempt==0 and not (repair_check or args.repair_box or args.selection_mask) else None
             if candidate:
                 approved=candidate
                 focus=None
@@ -1652,16 +1573,6 @@ def main(resources):
         # A localized, actionable suspicion can produce a *candidate*; it still has
         # to beat the source on the native crop and pass the full review to be released.
         finding=judged.get('issue',{})
-        from production import same_repair_region
-        scene_record=rec.get('高清底图返工',{})
-        if (args.round_worker and not any((args.reviewed_image,args.from_image,args.candidate_image,args.repair_box))
-                and scene_record.get('模型') and judged['status'] in ('local','uncertain')
-                and same_repair_region(scene_record.get('目标范围'),finding.get('box'))):
-            # A fully redrawn composition still defeats this same connection. A text
-            # brief can choose a new layout; preserve the intermediate for inspection.
-            rec['整图重绘后仍需换构图']=True
-            rec['终审退回原因']=finding.get('symptom') or finding.get('fix')
-            break
         if judged['status']=='local' or (judged['status']=='uncertain' and finding.get('operation') in ('redraw','remove_forbidden')):
             candidates=[finding]
         elif final['status']=='local' and judged['status']=='pass':
@@ -1670,14 +1581,15 @@ def main(resources):
             candidates=[]
         issue=next((item for item in candidates if region(item,final) and actionable_edit(item.get('fix'))),None)
         rec['终审退回原因']=judged.get('issue',{}).get('symptom') or final.get('note','')
-        repeated=False
-        if issue and repair_check:
-            old=repair_check['box']
-            new=region(issue,final)
-            repeated=(min(old[2],new[2])>max(old[0],new[0]) and min(old[3],new[3])>max(old[1],new[1]))
+        if four_only and issue and judged['status'] in ('local','uncertain'):
+            retained_failure={k:rec[k] for k in ('4K','底图','逐块终审','终审退回原因')}
+        locked_box=args.repair_box or (rec.get('选区返修',{}).get('范围') if args.selection_mask else None)
+        if locked_box and issue:
+            l,t,r,b=locked_box
+            box=region(issue,final)
+            if not (l<=box[0]<box[2]<=r and t<=box[1]<box[3]<=b):break
         with Image.open(approved) as original:
             native_edge=max(original.size)
-            low_resolution=native_edge<1024
             rebuild_size=detail_canvas(original.size)
         if four_only and attempt<2 and not (args.keep_native or args.selection_mask or args.repair_box):
             from focal_edit import failed_focus, print_constraints, repaint_definition
@@ -1695,10 +1607,11 @@ def main(resources):
                     save(manifest,rec)
                     continue
             from restoration import available as restoration_available
+            local_defect=bool(issue or pixels or finding.get('box')) and judged['status'] in ('local','uncertain')
             needs_detail=pixels or finding.get('category')=='unresolved_focus'
             restored_source=rec.get('当前4K重建底图指纹')
             already_restored=(restored_source==fingerprint(approved) if restored_source else rec.get('初次4K方法')=='SeedVR2')
-            if (attempt==0 and needs_detail and not repair_check and not args.candidate_image
+            if (attempt==0 and needs_detail and not local_defect and not repair_check and not args.candidate_image
                     and not already_restored and args.print_method!='tiled'
                     and native_edge<3840 and restoration_available(RUNTIME/'ComfyUI/models')):
                 # Compare against the actual selected drawing. A final with a later structural
@@ -1726,8 +1639,8 @@ def main(resources):
                     master,small=revised,None
                     save(manifest,rec)
                     continue
-        if (reference_style and not args.keep_native and not detail_rebuilt and attempt<2 and
-                judged.get('issue',{}).get('category')=='unresolved_focus' and (not issue or repeated or low_resolution)
+        if (reference_style and not (args.keep_native or args.selection_mask or args.repair_box or repair_check) and not detail_rebuilt and attempt<2 and
+                judged.get('issue',{}).get('category')=='unresolved_focus' and not issue and not finding.get('box') and judged['status']=='global'
                 and rebuild_size is not None):
             # A verified focus failure across the picture, or one that survived a local repair,
             # needs a higher-resolution drawing of the scene before another print pass.
@@ -1754,14 +1667,7 @@ def main(resources):
         if not issue or attempt==2:break
         focus=region(issue,final)
         repair_check={'box':focus,'symptom':issue.get('symptom') or issue['fix']}
-        with Image.open(master) as final_image:
-            native=args.keep_native or max((focus[2]-focus[0])*final_image.width,(focus[3]-focus[1])*final_image.height)/1000<=1300
-        from placement import placement_requested
-        if not args.keep_native and issue.get('operation')=='redraw' and placement_requested(issue['fix']):
-            # A change of position changes the composition. Compare the new print to a drawing
-            # that depicts the subject in its actual position, including the newly exposed surface.
-            native=False
-        source=master if native else approved
+        source=master
         stage=f'print-repair-{attempt+1}'
         with Image.open(source) as original:
             if issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
@@ -1771,24 +1677,16 @@ def main(resources):
                 corrected.save(temp);temp.replace(revised)
             elif reference_style and issue.get('operation')=='redraw':
                 revised=correct_shape(source,issue,focus,stage,seed+650+attempt)
-                if revised is None:
-                    candidate=redraw_scene(master,issue,focus,stage+'-scene')
-                    if candidate is None:break
-                    approved=candidate
-                    if rec['高清底图返工'].get('保留原构图') is False:
-                        focus=None
-                        repair_check=None
-                    master,small=render(approved,stage+'-scene-print')
-                    continue
+                if revised is None:break
             else:
                 revised=repaint(original.convert('RGB'),focus,issue['fix'],rec['positive'],seed+650+attempt,args.port,
                                 job,stage,issue.get('target'),[o for o,_ in rec['parts']],reference_style,
                                 rebuild_shape=issue.get('operation')=='redraw')
-        if native and four_only:master=revised
-        elif native:master,small=native_pair(revised,stage,(small,master))
-        else:
-            approved=revised
-            master,small=render(approved,stage)
+        if not (reference_style and issue.get('operation')=='redraw'):
+            revised=confine_edit(source,revised,focus,job/(stage+'-bounded.png'))
+        if four_only:master=revised
+        else:master,small=native_pair(revised,stage,(small,master))
+    if retained_failure:rec.update(retained_failure)
     rec['status']='未达标 · 终审退回'
     save(manifest,rec);print(rec['status'],flush=True);return 2
 
