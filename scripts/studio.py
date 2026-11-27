@@ -75,7 +75,11 @@ def set_output(value):
     print('默认成品位置',cfg.get('output_dir',IMAGES/'new-jobs'))
 
 def main(args):
-    interactive=not args
+    if not args or args==['--ui']:
+        from retouch import start
+        print(start(page='/studio'))
+        return
+    interactive=args==['--menu']
     background = '--background' in args
     if background:
         args=[arg for arg in args if arg!='--background']

@@ -1,6 +1,6 @@
 AI Manga Studio
 
-  ./Studio.command                         Open the interactive menu
+  ./Studio.command                         Open the local browser studio
   ./Studio.command -p "A fox in a garden"  Generate a reviewed 4K PNG
 
   -p, --prompt TEXT       Describe the scene in Chinese or English
@@ -22,6 +22,8 @@ AI Manga Studio
   --from-image PNG        Start from an existing image
   --review-print PNG      Review an existing 4K print against its --reviewed-image draft
   --set-output-dir DIR    Save a default export folder; use --reset-output-dir to clear it
+  --ui                    Open the local browser studio
+  --menu                  Open the interactive terminal menu
   --retouch               Paint a local selection directly on a 4K or 8K original
   --gallery               Open the offline gallery
   --editor                Open the node editor
