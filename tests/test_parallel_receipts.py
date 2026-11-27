@@ -85,6 +85,11 @@ class ParallelReceiptsTests(unittest.TestCase):
         report=dict(size=size,views=views,status='pass',revision=REVISION,planned=len(views))
         self.assertFalse(complete_print_review(report))
         views[0]['brief_checked']=True
+        self.assertFalse(complete_print_review(report))
+        from visual_triage import VERSION, views as triage_views
+        from confirmed_issues import ledger_version
+        report.update(sha256='example',visual_triage=dict(version=VERSION,source_sha256='example',status='clear',
+                      ledger=ledger_version(),views=[dict(view=k,pixels=rect) for k,rect in triage_views(size)]))
         self.assertTrue(complete_print_review(report))
         views.pop()
         report['planned']=len(views)

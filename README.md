@@ -93,3 +93,13 @@ FLUX.2 klein 和 Anima 负责生成及精绘。具备 Qwen-Image-2512 权重时�
 木版画与分层剪纸的自动构图可以参考本地灰度技法样片，观察刻线、留白和纸层的遮挡。样片取自大都会艺术博物馆开放馆藏。作品、图源和使用许可记录在 `assets/medium-studies/credits.json`。
 
 在已安装指令编辑模型的设备上，若整幅图的主体和结构通过检查、终审确认画法仍低于参考，默认流程会按具体评语在该构图上重新绘制。它先核对身份、动作、画幅和色彩，再对新版重新精绘并逐块复审。
+
+离线审查先看整幅画，再单独看相互重叠的局部。审查者可指出任意类型的严重问题。Qwen3.8 27B 标出疑点后，Qwen3-VL 32B 对照该处与整图复核。首审判为重大、第二个模型确认且能定位时，才按此项自动返修。证据含混会暂缓交付。通过这一步后仍需经过现有的逐块终审。
+
+要记录已经确认的局部问题，可以使用安装目录内的 Python。坐标按原图宽、高分别归一化为 0 到 1000。记录保存在本机的 `runtime/confirmed-issues`。同尺寸、构图相近的版本如果保留了完全相同的问题区域，工作流会再次退回。区域像素发生变化后，候选重新进入视觉审查。
+
+```sh
+runtime/venv/bin/python runtime/studio_pipeline/confirmed_issues.py artwork.png \
+  --box 200 300 450 650 --symptom "The two surfaces meet with no visible boundary." \
+  --fix "Clarify the overlap and carry the material to its visible edge."
+```

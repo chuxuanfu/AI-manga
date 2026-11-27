@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-46'
+REVISION = 'print-inspection-47'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -1280,6 +1280,20 @@ def complete_print_review(report):
             or any(type(n) is not int or n<=0 for n in size) or not views
             or len(views)!=report.get('planned') or not any(v.get('view')=='whole' for v in views)):
         return False
+    from visual_triage import VERSION, views as triage_views
+    from confirmed_issues import confirmed_issue, ledger_version
+    triage=report.get('visual_triage') or {}
+    if (triage.get('status')!='clear' or triage.get('issue') or triage.get('version')!=VERSION
+            or not report.get('sha256') or triage.get('source_sha256')!=report['sha256']
+            or [(v.get('view'),tuple(v.get('pixels',()))) for v in triage.get('views',[])]!=list(triage_views(size))):
+        return False
+    if triage.get('ledger')!=ledger_version():
+        source=Path(report.get('source',''))
+        if not source.is_file() or fingerprint(source)!=report['sha256']:
+            return False
+        with Image.open(source) as art:
+            if confirmed_issue(art,report['sha256']):
+                return False
     expected={rect for kind,rect in print_windows(tuple(size),{}) if kind=='native'}
     inspected={tuple(v.get('pixels') or []) for v in views if v.get('view')=='native'}
     return (expected==inspected and not any(needs_brief_after_clearance(v) for v in views)
@@ -1343,7 +1357,8 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
     prior_id=fingerprint(small) if small else None
     draft_id=fingerprint(draft) if draft and small else None
     repair=(focus or {}).get('repair_check')
-    key=hashlib.sha256(json.dumps([REVISION,'print-overlay-1',model_id,brief,regions,dispute,prior_id,draft_id,focals,constraints,repair],sort_keys=True,
+    from confirmed_issues import ledger_version
+    key=hashlib.sha256(json.dumps([REVISION,ledger_version(),'print-overlay-1',model_id,brief,regions,dispute,prior_id,draft_id,focals,constraints,repair],sort_keys=True,
                                  ensure_ascii=False).encode()).hexdigest()[:16]
     if source_comparison:key+='-source'
     if construction_draft:key+='-draft-structure'
@@ -1672,6 +1687,20 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
                     store(report,result)
                     return result
             result['resampling_check']=checks
+        if 'visual_triage' not in result:
+            from visual_triage import review_image
+            triage=review_image(image,brief,digest,root)
+            result['visual_triage']=triage
+            if triage.get('issue'):
+                issue=triage['issue']
+                observation=dict(decision=triage['status'],evidence=issue['symptom'],target=issue['target'],
+                                 operation=issue['operation'],fix=issue['fix'],
+                                 **dict(zip(('left','top','right','bottom'),issue['box'])))
+                result['views'].append(dict(view='visual_triage',pixels=[0,0,*image.size],observation=observation))
+                result.update(status=triage['status'],issue=issue)
+                store(report,result)
+                return result
+            store(report,result)
         url=resources.enter_context(backend(MODEL))
         if report.is_file():
             checkpoint=json.loads(report.read_text())

@@ -788,7 +788,8 @@ def main(resources):
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'
         from review import inspection_environment,inspection_key
-        context_key=inspection_key(rubric,prompt,rec['parts'],focus,rec.get('画法参考'),inspection_environment())
+        from confirmed_issues import ledger_version
+        context_key=inspection_key(rubric+ledger_version(),prompt,rec['parts'],focus,rec.get('画法参考'),inspection_environment())
         from construction_review import held_pocket_reading
         def inspection_matches(row):
             detail=row['review'].get('局部连接复审') or {}
@@ -882,6 +883,13 @@ def main(resources):
                             result.update(status='global' if gap>145 else 'local',note=symptom)
                             if gap>145:
                                 result['局部连接复审']=dict(result.get('局部连接复审') or {},fix=fix)
+            if result['status']!='global' and not count_rejection and 'visual_triage' not in result:
+                from visual_triage import review_image
+                triage=review_image(rgb,prompt,key,job)
+                result['visual_triage']=triage
+                if triage.get('issue'):
+                    result.setdefault('issues',[]).insert(0,triage['issue'])
+                    result.update(status=triage['status'],note=triage['issue']['symptom'])
             # Assess workmanship on the actual version eligible to advance.
             if reference_style and (result['status']=='pass' or not args.round_worker):
                 comparison=compare(rgb,result.get('regions',{}),job/(stage+'-reference-comparison.jpg'),
@@ -908,8 +916,14 @@ def main(resources):
             from lettering import clean_lettering
             if not rec.get('原生4K') and not args.native_only:
                 path=prepare_full_bleed(path,prompt)
-            path=clean_lettering(path,prompt,job,label)
         result=check(path,label)
+        if result.get('visual_triage',{}).get('issue'):
+            return path,result
+        if not args.from_image and not args.repair_box and usable(result):
+            cleaned=clean_lettering(path,prompt,job,label)
+            if cleaned!=path:
+                path=cleaned
+                result=check(path,label+'-cleaned')
         duplicate=duplicate_box(result) if rec.get('画法自适应') and not args.repair_box and ERASE_MODEL.exists() else None
         if not duplicate and args.round_worker and ERASE_MODEL.is_file() and any(
             c.get('requested')==0 and (c.get('observed') or 0)>0 for c in result.get('count_conflicts',[])
@@ -1527,9 +1541,6 @@ def main(resources):
             if small is not None:
                 small=fit_print_aspect(small,aspect,3840)
         release_idle_renderer(args.port)
-        if four_only and not repair_check and not args.repair_box and not args.selection_mask and not args.keep_native:
-            from lettering import clean_lettering
-            master=clean_lettering(master,prompt,job,label)
         rec['4K']=os.path.relpath(master if four_only else small,job)
         if not four_only:rec['8K']=os.path.relpath(master,job)
         rec['status']='离线逐块终审中';save(manifest,rec)

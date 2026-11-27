@@ -33,7 +33,7 @@ def inspection_environment():
     # A long-running process can coexist with an upgraded checkout. Bind the
     # receipt to its actually loaded functions as well as its installation.
     acc=hashlib.sha256(b'loaded-review-functions-v1')
-    for name in ('review','construction_review','reference_review','evidence','structure','counts','page_layout'):
+    for name in ('review','construction_review','reference_review','evidence','structure','counts','page_layout','visual_triage','confirmed_issues'):
         module=importlib.import_module(name)
         acc.update(Path(__file__).with_name(name+'.py').read_bytes())
         for key,value in sorted(vars(module).items()):

@@ -209,6 +209,11 @@ def local_retry_source(previous, brief, *, interrupted=False, review_upgrade=Fal
                 recheck=True
                 issue=dict(issue,operation='reinspect',box=expected['box'],symptom=expected.get('symptom',''),
                            fix='Recheck the originally reported location on the retained file.')
+    if (review_upgrade and report.get('revision')!=REVISION and
+            report.get('issue',{}).get('operation')=='remove_forbidden' and 'visual_triage' not in report):
+        recheck=True
+        issue=dict(report['issue'],operation='reinspect',
+                   fix='Check the main visual problems on this master before revisiting decorative marks.')
     if (report.get('brief')!=brief or report.get('status')!=entry['状态']
             or (not recheck and issue.get('operation') not in ('redraw','remove_forbidden'))
             or (not recheck and not actionable_edit(issue.get('fix'))) or not issue.get('box') or not image.is_file()
