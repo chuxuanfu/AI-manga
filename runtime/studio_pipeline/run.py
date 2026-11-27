@@ -777,7 +777,7 @@ def main(resources):
         args.proof_only=True
     def check(path,stage,focus=None):
         key = hashlib.sha256(path.read_bytes()).hexdigest()
-        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v16-equal-area' if rec.get('画法自适应') else '')+'-independent-inventory-v6'+('body-support-v5-grounded-figures'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
+        rubric=hashlib.sha256((CHECKS+('-construction-zoom-v17-count-triage' if rec.get('画法自适应') else '')+'-independent-inventory-v6'+('body-support-v5-grounded-figures'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'
@@ -837,7 +837,8 @@ def main(resources):
                 result=dict(prior_structure['review'])
                 result.pop('参考比较',None)
                 timings['reused_structure_stage']=prior_structure['stage']
-            if reference_style and prior_structure is None:
+            count_rejection=bool(result.get('count_conflicts')) and result['status'] in ('global','uncertain')
+            if reference_style and prior_structure is None and not count_rejection:
                 geometry=inspect_structure(rgb,result.get('detector',[]),job/(stage+'-structure-and-support.jpg'),result.get('observed_counts'),prompt)
                 result['结构审查']=geometry
                 verdict=geometry.get('verdict','unclear')
@@ -852,7 +853,7 @@ def main(resources):
                     if dv in ('local','global') and result['status']!='global':
                         result.update(status=dv,note=detail['observation'])
                         if dv=='local':
-                            result['issues'].insert(0,dict(target=detail['target'],box=detail['box'],fix=detail['fix'],symptom=detail['observation']))
+                            result['issues'].insert(0,dict(operation='redraw',target=detail['target'],box=detail['box'],fix=detail['fix'],symptom=detail['observation']))
                     elif dv=='unclear' and result['status']=='pass':
                         result.update(status='uncertain',note=detail['observation'])
                 if (args.round_worker and not args.from_image and not args.repair_box
@@ -932,6 +933,49 @@ def main(resources):
         return dict(result,status=report['status'],issues=[finding] if finding else [],
                     note=finding.get('symptom') or '底图结构需要返修')
 
+    def repair_draft(path, result, index):
+        """Keep the last sound source until the proposed local correction passes."""
+        from construction_review import assess_local_edit
+        from print_judge import actionable_edit, fingerprint
+        issue=draft_repair_issue(result)
+        feedback=''
+        consecutive_failures=0
+        for attempt in range(3):
+            if not issue:break
+            box=region(issue,result)
+            label=f'region-repair-{index+1}-{attempt+1}'
+            instruction=' '.join(filter(None,[issue['fix'],feedback]))
+            strategy=2 if consecutive_failures and attempt==1 else attempt
+            with Image.open(path) as original:
+                if issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
+                    patched=job/(label+'-removed.png')
+                    remove_reviewed_feature(original.convert('RGB'),box,issue).save(patched)
+                else:
+                    patched=repaint(original.convert('RGB'),box,instruction,rec['positive'],
+                                    seed+100+index*3+attempt,args.port,job,label,issue.get('target'),
+                                    [o for o,_ in rec['parts']],reference_style,
+                                    rebuild_shape=reference_style and issue.get('operation')=='redraw',
+                                    reconstruction_attempt=strategy)
+                if args.round_worker or (reference_style and issue.get('operation')=='redraw'):
+                    with Image.open(patched) as candidate:
+                        verdict=assess_local_edit(original,candidate,box,issue['fix'],issue.get('symptom'),prompt)
+                    save(job/(label+'-draft-patch.json'),dict(verdict,source_sha256=fingerprint(path),
+                         candidate_sha256=fingerprint(patched),target_box=box,instruction=instruction,strategy=strategy))
+                    if verdict['verdict']!='resolved':
+                        consecutive_failures+=1
+                        feedback=verdict.get('next_edit','')
+                        if not actionable_edit(feedback):feedback=''
+                        if consecutive_failures>=2 and not args.from_image and not args.repair_box:break
+                        continue
+            checked=check_draft_structure(patched,check(patched,label,box))
+            if usable(checked):return patched
+            next_issue=draft_repair_issue(checked)
+            if not next_issue or checked['score']<result['score']:break
+            path,result,issue=patched,checked,next_issue
+            feedback=''
+            consecutive_failures=0
+        return None
+
     retry_source=None
     retry_origin=None
     if args.round_worker and four_only:
@@ -985,6 +1029,7 @@ def main(resources):
         # A selection belongs to the supplied picture. New unrelated layouts
         # cannot establish whether a patch improves that selected area.
         count=len(paths) if args.repair_box else max(args.candidates,len(paths))
+        streaming=args.round_worker and not args.candidates_explicit and not args.from_image
         for i in range(count):
             label=f'draft-{i+1}'
             if i<len(paths):
@@ -1007,7 +1052,7 @@ def main(resources):
                 path=color_candidate(path,label,seed+373+i)
                 path,result=check_composition(path,label)
             if usable(result) and not args.repair_box:
-                if args.round_worker and not args.candidates_explicit and not args.from_image:
+                if streaming:
                     result=check_draft_structure(path,result)
                     if usable(result):
                         approved=path
@@ -1015,7 +1060,11 @@ def main(resources):
                 else:
                     passing.append((result,path,i))
             if draft_repair_issue(result):
-                assessed.append((result,path,i))
+                if streaming:
+                    approved=repair_draft(path,result,i)
+                    if approved:break
+                else:
+                    assessed.append((result,path,i))
         for result,path,i in sorted(passing,key=lambda item:-item[0]['score']):
             result=check_draft_structure(path,result)
             if usable(result):
@@ -1024,44 +1073,7 @@ def main(resources):
             if draft_repair_issue(result):assessed.append((result,path,i))
         if not approved:
             for result,path,i in sorted(assessed,key=lambda x:-x[0]['score']):
-                issue=draft_repair_issue(result)
-                if not issue:continue
-                base_path=path
-                rejected_edits=0
-                for n in range(3):
-                    label=f'region-repair-{i+1}-{n+1}'
-                    with Image.open(base_path) as original:
-                        if issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
-                            patched=job/(label+'-removed.png')
-                            remove_reviewed_feature(original.convert('RGB'),region(issue,result),issue).save(patched)
-                        else:
-                            structural=reference_style and issue.get('operation')=='redraw'
-                            patched=repaint(original.convert('RGB'),region(issue,result),issue['fix'],rec['positive'],
-                                            seed+100+i*3+n,args.port,job,label,issue.get('target'),
-                                            [o for o,_ in rec['parts']],reference_style,
-                                            rebuild_shape=structural,reconstruction_attempt=n)
-                            if structural:
-                                from construction_review import assess_local_edit
-                                with Image.open(patched) as candidate:
-                                    judged=assess_local_edit(original,candidate,region(issue,result),issue['fix'],
-                                                             issue.get('symptom'),prompt)
-                                save(job/(label+'-draft-patch.json'),judged)
-                                if judged.get('verdict')!='resolved':
-                                    rejected_edits+=1
-                                    if rejected_edits>=2:
-                                        # Recompose from the brief when two different local edits
-                                        # leave this same defect. Supplied sources keep their third try.
-                                        if not args.from_image and not args.repair_box:
-                                            break
-                                    continue
-                                rejected_edits=0
-                    next_review=check_draft_structure(patched,check(patched,label,region(issue,result)))
-                    if usable(next_review):
-                        approved=patched;break
-                    if next_review['score']>=result['score']:
-                        next_issue=draft_repair_issue(next_review)
-                        if next_issue:
-                            base_path,result,issue=patched,next_review,next_issue
+                approved=repair_draft(path,result,i)
                 if approved:break
     if not approved and not args.from_image and not args.repair_box:
         # Allow fresh layouts for unattended production even when reviewers cannot localize an issue.
