@@ -95,8 +95,12 @@ def run(suite, label, budget, *, resume_after_update=False):
         store(report_file,result)
         if upgrading:
             def priority(case):
+                from production import held_workmanship_pair
+                job=folder/case['id']
+                rounds=sorted(job.glob('rounds/[0-9]*'))
+                if rounds and held_workmanship_pair(rounds[-1],case['prompt']):return 0
                 state=history['cases'].get(case['id'],{}).get('status','queued')
-                return 0 if state=='running' else (1 if state=='queued' else 2)
+                return 1 if state=='running' else (2 if state=='queued' else 3)
             cases=sorted(cases,key=priority)
         for turn in range(budget):
             for case in cases:
