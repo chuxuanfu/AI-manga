@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw
 from evidence import ask, backend, model_identity
 
 MODEL = 'qwen3.8:27b'
-REVISION = 'print-inspection-47'
+REVISION = 'print-inspection-48'
 SIDE = 1024
 OVERLAP = 96
 FIELDS = {'decision': {'enum': ['clear', 'local', 'global', 'uncertain']},
@@ -1283,7 +1283,14 @@ def complete_print_review(report):
     from visual_triage import VERSION, views as triage_views
     from confirmed_issues import confirmed_issue, ledger_version
     triage=report.get('visual_triage') or {}
-    if (triage.get('status')!='clear' or triage.get('issue') or triage.get('version')!=VERSION
+    if triage.get('status')=='uncertain' and triage.get('issue'):
+        box=triage['issue']['box']
+        field=expanded(tuple(round(v*n/1000) for v,n in zip(box,size*2)),size)
+        if not any(v.get('view')=='previous_local' and tuple(v.get('pixels',()))==field for v in views):
+            return False
+    elif triage.get('status')!='clear' or triage.get('issue'):
+        return False
+    if (triage.get('version')!=VERSION
             or not report.get('sha256') or triage.get('source_sha256')!=report['sha256']
             or [(v.get('view'),tuple(v.get('pixels',()))) for v in triage.get('views',[])]!=list(triage_views(size))):
         return False
@@ -1687,20 +1694,32 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
                     store(report,result)
                     return result
             result['resampling_check']=checks
-        if 'visual_triage' not in result:
+        triage=result.get('visual_triage')
+        if triage is None:
             from visual_triage import review_image
             triage=review_image(image,brief,digest,root)
             result['visual_triage']=triage
-            if triage.get('issue'):
-                issue=triage['issue']
-                observation=dict(decision=triage['status'],evidence=issue['symptom'],target=issue['target'],
-                                 operation=issue['operation'],fix=issue['fix'],
-                                 **dict(zip(('left','top','right','bottom'),issue['box'])))
-                result['views'].append(dict(view='visual_triage',pixels=[0,0,*image.size],observation=observation))
-                result.update(status=triage['status'],issue=issue)
-                store(report,result)
-                return result
+        issue=triage['issue']
+        if triage['status']=='local':
+            observation=dict(decision='local',evidence=issue['symptom'],target=issue['target'],
+                             operation=issue['operation'],fix=issue['fix'],
+                             **dict(zip(('left','top','right','bottom'),issue['box'])))
+            result['views'].append(dict(view='visual_triage',pixels=[0,0,*image.size],observation=observation))
+            result.update(status='local',issue=issue)
             store(report,result)
+            return result
+        if triage['status']=='uncertain':
+            bounds=tuple(round(v*n/1000) for v,n in zip(issue['box'],image.size*2))
+            field=expanded(bounds,image.size)
+            # A hypothesis earns a blind pixel check, not a repaint. Put it ahead of decoration
+            # and bind any eventual clearance to the exact field in the finished print.
+            window=('previous_local',field)
+            if window in windows:
+                windows.remove(window)
+            windows.insert(0,window)
+            known[field]=dict(box=issue['box'],symptom=issue['target']+'. '+issue['symptom'])
+            result.update(triage_followup_pixels=list(field),planned=len(windows))
+        store(report,result)
         url=resources.enter_context(backend(MODEL))
         if report.is_file():
             checkpoint=json.loads(report.read_text())

@@ -91,6 +91,17 @@ class ParallelReceiptsTests(unittest.TestCase):
         report.update(sha256='example',visual_triage=dict(version=VERSION,source_sha256='example',status='clear',
                       ledger=ledger_version(),views=[dict(view=k,pixels=rect) for k,rect in triage_views(size)]))
         self.assertTrue(complete_print_review(report))
+        from print_judge import expanded
+        report['visual_triage'].update(status='uncertain',issue={'box':[100,100,500,500]})
+        self.assertFalse(complete_print_review(report))
+        field=expanded((384,216,1920,1080),size)
+        views.append(dict(view='previous_local',pixels=list(field),observation={'decision':'uncertain'}))
+        report['planned']=len(views)
+        self.assertFalse(complete_print_review(report))
+        views[-1]['independent_context']={'decision':'clear'}
+        self.assertTrue(complete_print_review(report))
+        views.pop()
+        report['visual_triage'].update(status='clear',issue=None)
         views.pop()
         report['planned']=len(views)
         self.assertFalse(complete_print_review(report))

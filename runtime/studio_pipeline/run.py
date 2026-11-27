@@ -887,7 +887,7 @@ def main(resources):
                 from visual_triage import review_image
                 triage=review_image(rgb,prompt,key,job)
                 result['visual_triage']=triage
-                if triage.get('issue'):
+                if triage['status']=='local':
                     result.setdefault('issues',[]).insert(0,triage['issue'])
                     result.update(status=triage['status'],note=triage['issue']['symptom'])
             # Assess workmanship on the actual version eligible to advance.
