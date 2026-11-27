@@ -65,6 +65,12 @@ runtime/venv/bin/python scripts/evaluate.py --run first-local-test
 
 测试集按轮次轮转各提示词。`results.json` 区分等待、运行、待重试、耗尽轮数和通过。只有整套通过并验证每份 4K 交付凭证，测试命令才以状态码 0 退出。
 
+要复查两名本地模型对同一区域的读法，可运行下面的盲审诊断。它自动选取检测框面积最大的主体，保存三块局部的坐标、两份独立描述、逐项比较和复核理由。报告里的分歧可用于排查漏检和误报。默认出图流程的定稿、返工由原有审查决定。
+
+```sh
+/usr/bin/sandbox-exec -f runtime/local-only.sb runtime/venv/bin/python scripts/audit_readings.py artwork.png --report readings.json
+```
+
 ## 成品在哪里
 
 - 图库入口为项目根目录的 `gallery.html` 或 `images/gallery.html`。
