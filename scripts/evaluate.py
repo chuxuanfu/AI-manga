@@ -19,7 +19,7 @@ def read(path):
 
 def pipeline_identity():
     digest=hashlib.sha256()
-    files=[ROOT/'Studio.command',ROOT/'scripts/studio.py',ROOT/'scripts/models.json']
+    files=[ROOT/'Studio.command',ROOT/'scripts/studio.py',ROOT/'scripts/evaluate.py',ROOT/'scripts/models.json']
     for directory in ('runtime/studio_pipeline','extensions/manga_materials'):
         files.extend(sorted((ROOT/directory).glob('*.py')))
     for path in files:
@@ -49,7 +49,7 @@ def verified_release(job, prompt):
             and workmanship_confirmed(record,sha))
 
 
-def run(suite, label, budget):
+def run(suite, label, budget, *, resume_after_update=False):
     from print_judge import store
     cases = read(suite)
     ids = [case['id'] for case in cases]
@@ -71,7 +71,22 @@ def run(suite, label, budget):
             raise ValueError('Use a new run name when the suite or round budget changes.')
         version=pipeline_identity()
         if result.setdefault('pipeline_sha256',version)!=version:
-            raise ValueError('The workflow changed. Start a new named run for this version.')
+            if not resume_after_update:
+                raise ValueError('The workflow changed. Start a new named run for a clean comparison, or use --resume-after-update to continue saved work.')
+            history=dict(pipeline_sha256=result['pipeline_sha256'],cases=result['cases'],ended_at=time.time())
+            result.setdefault('version_history',[]).append(history)
+            result['pipeline_sha256']=version
+            result['cases']={}
+            for case in cases:
+                name=case['id']
+                prior=history['cases'].get(name,{})
+                if prior.get('status')=='passed' and verified_release(folder/name,case['prompt']):
+                    result['cases'][name]=dict(prior,verified_pipeline_sha256=prior.get('verified_pipeline_sha256',history['pipeline_sha256']))
+                    continue
+                state_file=folder/name/'production.json'
+                state=read(state_file) if state_file.is_file() else {}
+                finished=sum(r['status'] not in ('运行中','运行中断') for r in state.get('rounds',[]))
+                result['cases'][name]=dict(status='queued',job=name,completed_before_update=finished)
         for case in cases:
             prior=result['cases'].setdefault(case['id'],dict(status='queued',job=case['id']))
             if prior['status']=='error':
@@ -86,8 +101,10 @@ def run(suite, label, budget):
                 state=read(job/'production.json') if (job/'production.json').exists() else {}
                 rounds=state.get('rounds',[])
                 used=sum(row['status'] not in ('运行中','运行中断') for row in rounds)
+                baseline=prior.get('completed_before_update',0)
+                used-=baseline
                 started=prior.get('started_at',time.time())
-                result['cases'][name]=dict(status='running',started_at=started,job=name)
+                result['cases'][name]=dict(status='running',started_at=started,job=name,completed_before_update=baseline)
                 store(report_file,result)
                 rc=None
                 if used<budget and state.get('status')!='已自动定稿':
@@ -102,9 +119,10 @@ def run(suite, label, budget):
                 used=sum(row['status'] not in ('运行中','运行中断') for row in state.get('rounds',[]))
                 status='passed' if passed else 'error'
                 if exhausted:
-                    status='budget_exhausted' if used>=budget else 'retry_pending'
+                    status='budget_exhausted' if used-baseline>=budget else 'retry_pending'
                 result['cases'][name]=dict(status=status,job=name,started_at=started,elapsed_seconds=round(time.time()-started,1),
-                                           rounds=len(state.get('rounds',[])),exit_code=rc,
+                                           rounds=len(state.get('rounds',[])),exit_code=rc,completed_before_update=baseline,
+                                           verified_pipeline_sha256=version if passed else None,
                                            last_finding=(state.get('rounds') or [{}])[-1].get('原因',''))
                 if pipeline_identity()!=version:
                     result['cases'][name]['status']='workflow_changed'
@@ -119,7 +137,8 @@ if __name__=='__main__':
     parser.add_argument('--suite',type=Path,default=ROOT/'tests/fixtures/unseen-scenes.json')
     parser.add_argument('--run',required=True)
     parser.add_argument('--rounds',type=int,default=1)
+    parser.add_argument('--resume-after-update',action='store_true',help='Keep locally generated checkpoints and record the previous workflow version. Omit for a single-version benchmark.')
     args=parser.parse_args()
-    report=run(args.suite,args.run,args.rounds)
+    report=run(args.suite,args.run,args.rounds,resume_after_update=args.resume_after_update)
     print(report, flush=True)
     sys.exit(0 if all(case['status']=='passed' for case in read(report)['cases'].values()) else 2)
