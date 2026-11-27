@@ -89,7 +89,8 @@ def monitor(folder, cases, rows, key, job):
 
 def produce(folder, cases, rows, case, attempt):
     key=case['id']
-    job=folder/'jobs'/(key if attempt==1 else f'{key}-retry')
+    suffix='' if attempt==1 else ('-retry' if attempt==2 else f'-retry-{attempt}')
+    job=folder/'jobs'/(key+suffix)
     job.mkdir(exist_ok=True)
     prev=rows.get(key,{})
     started=prev.get('started',time.time()) if prev.get('status')=='running' else time.time()
@@ -139,9 +140,16 @@ def run():
                 except (KeyError,ValueError,OSError):verified=None
                 if not verified:rows[case['id']]=dict(status='retry',attempt=1)
         gallery(folder,cases,rows)
+        # A new invocation can retry jobs that previously exhausted both attempts.
+        # Give them fresh deadlines and keep every earlier job directory for diagnosis.
+        starts={}
+        for case in cases:
+            row=rows.get(case['id'],{})
+            prior=row.get('attempt',1)
+            starts[case['id']]=prior+1 if row.get('status')=='failed' else 1+2*((prior-1)//2)
         interrupted=[(case,rows[case['id']]['attempt']) for case in cases
                      if rows.get(case['id'],{}).get('status')=='running']
-        for case,attempt in interrupted+[(case,a) for a in (1,2) for case in cases]:
+        for case,attempt in interrupted+[(case,starts[case['id']]+offset) for offset in (0,1) for case in cases]:
             key=case['id']
             prev=rows.get(key,{})
             if prev.get('status') in ('approved','manual'):continue
@@ -151,7 +159,7 @@ def run():
             except (OSError,ValueError,KeyError) as exc:
                 result=None
                 rows.setdefault(key,{})['error']=str(exc)
-            rows[key].update(result or dict(status='retry' if attempt==1 else 'failed'),ended=time.time())
+            rows[key].update(result or dict(status='retry' if attempt==starts[key] else 'failed'),ended=time.time())
             gallery(folder,cases,rows)
             if not result and not (folder/rows[key]['job']/'production.json').exists():
                 print(key,'启动失败，见该任务 run.log；暂停一分钟后继续。',flush=True)

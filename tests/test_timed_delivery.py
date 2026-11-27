@@ -129,3 +129,22 @@ with model_slot.slot():Path(sys.argv[3]).touch()
         for field in ('id','prompt','title','seed'):
             self.assertEqual(len({x[field] for x in entries}),50)
         self.assertEqual({x['aspect'] for x in entries},{'16:9','9:16'})
+
+    def test_resume_retries_only_exhausted_jobs_with_fresh_directories(self):
+        import batch
+        entries=[dict(id='x',prompt='night',title='Night',aspect='16:9',seed=1),
+                 dict(id='y',prompt='day',title='Day',aspect='16:9',seed=2)]
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            deadlines.save(root/'prompts.json',entries)
+            deadlines.save(root/'progress.json',{'cases':{
+                'x':{'status':'failed','attempt':2,'job':'jobs/x-retry'},
+                'y':{'status':'approved','attempt':1,'job':'jobs/y','file':'y.png','thumbnail':'y.jpg'}}})
+            def complete(folder,cases,rows,case,attempt):
+                return dict(status='manual',file='x.png',thumbnail='x.jpg')
+            with patch.object(batch,'ALBUM',root),patch.object(batch,'collect',return_value={'status':'approved'}), \
+                    patch.object(batch,'produce',side_effect=complete) as produce:
+                batch.run()
+            self.assertEqual(produce.call_count,1)
+            self.assertEqual(produce.call_args.args[-1],3)
+            self.assertEqual(deadlines.read(root/'progress.json')['delivered'],2)
