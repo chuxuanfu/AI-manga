@@ -38,6 +38,12 @@ class OpenReviewTests(unittest.TestCase):
         self.assertEqual(result['issue']['target'],votes[-1][0])
         self.assertEqual(result['issue']['box'],[568,676,892,964])
 
+    def test_verification_budget_does_not_silently_pass_unchecked_findings(self):
+        result,count=self.exercise([('open concern','major')]*7,dict(decision='explained'))
+        self.assertEqual(count,2)
+        self.assertEqual(result['status'],'uncertain')
+        self.assertEqual(result['issue']['operation'],'reinspect')
+
     def test_explained_stylization_allows_normal_review_to_continue(self):
         votes=[('impossible outline','major')]+[('clear','clear')]*6
         result,_=self.exercise(votes,dict(decision='explained'))

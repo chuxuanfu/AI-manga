@@ -105,6 +105,7 @@ def review_image(image,brief,digest,root):
 
 def adjudicate(image,overview,brief,candidates,report):
     with backend(VERIFIER) as url:
+        reviewed=0
         for candidate in candidates:
             box=map_box(candidate,candidate['pixels'],image.size)
             candidate['box']=box
@@ -113,6 +114,13 @@ def adjudicate(image,overview,brief,candidates,report):
                 report.update(status='uncertain',issue=dict(target='visual coherence',operation='reinspect',
                               box=[0,0,1000,1000],symptom=candidate['observation'],fix='Locate the reported issue on the complete image.'))
                 continue
+            if reviewed>=2:
+                if not report['issue']:
+                    report.update(status='uncertain',issue=dict(target='unverified visual concern',box=box,
+                                  operation='reinspect',symptom=candidate['observation'],
+                                  fix='Reinspect the unresolved region before accepting the print.'))
+                break
+            reviewed+=1
             check=verify(url,image,overview,brief,candidate)
             candidate['verification']=check
             if check['decision']=='explained':
