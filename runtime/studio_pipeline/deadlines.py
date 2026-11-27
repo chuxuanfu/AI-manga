@@ -89,6 +89,27 @@ def boundary(job,clock):
     return (first or clock['started'])+clock['seconds'], ('终审超过 15 分钟' if first else '生成 4K 超过 15 分钟')
 
 
+REPAIR_WINDOW_CLOSED='未达标 · 剩余时间不足以完成 4K 修订'
+
+
+def insufficient_repair_time(folder, stage, *, now=None):
+    """Budget a new low-resolution repaint and its print using this job's actual timings."""
+    if (folder/(stage+'-task.json')).is_file():return None
+    job=folder.parent.parent
+    clock=read(job/CLOCK)
+    latest=read(job/LATEST)
+    if (not clock or latest.get('run')!=clock['run'] or not latest.get('first_4k_at')
+            or max(latest.get('source_size') or [0])<3840):return None
+    drawing=read(folder/'draft-1-task.json').get('renderer_seconds')
+    reconstruction=read(folder/'first-source-restoration-task.json').get('renderer_seconds')
+    if not all(isinstance(t,(int,float)) and t>0 for t in (drawing,reconstruction)):return None
+    remaining=latest['first_4k_at']+clock['seconds']-(time.time() if now is None else now)
+    expected=drawing+reconstruction
+    if expected<=remaining:return None
+    return {'stage':stage,'remaining_seconds':round(remaining,2),'drawing_seconds':drawing,
+            'reconstruction_seconds':reconstruction,'estimated_seconds':round(expected,2)}
+
+
 def stop_graphs(folder,port):
     url=f'http://127.0.0.1:{port}'
     root=Path(__file__).resolve().parents[2]/'images'

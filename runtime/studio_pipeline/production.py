@@ -528,6 +528,9 @@ def run(args,job,entry):
                 save(job,state)
                 if retry==2:return finish_manual('本地运行故障，已用完恢复次数')
                 time.sleep(3*(retry+1))
+            from deadlines import REPAIR_WINDOW_CLOSED
+            if code==2 and record['status']==REPAIR_WINDOW_CLOSED:
+                return finish_manual(REPAIR_WINDOW_CLOSED)
             row['status']=record['status']
             if record.get('终审退回原因'):row['原因']=record['终审退回原因']
             if code==0:

@@ -16,7 +16,7 @@ import uuid
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 import torch
 
-from deadlines import checkpoint
+from deadlines import checkpoint, insufficient_repair_time, REPAIR_WINDOW_CLOSED
 from gallery import write_gallery, write_focus_proof
 from graphs import UP, draft, finish
 from illustration import pigment_edit, has_drawing_model, text_composition, DRAW_UNET, installed_editor, instruction_edit, detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
@@ -724,6 +724,15 @@ def main(resources):
                 with Image.open(path) as frame:print_ready=max(frame.size)>=3840
             checkpoint(job,Path(path),stage,print_ready=print_ready)
 
+    def reserve_source_repaint(stage):
+        if args.round_worker and four_only:
+            timing=insufficient_repair_time(job,stage)
+            if timing:
+                rec.update(status=REPAIR_WINDOW_CLOSED,修订时间预算=timing,终审退回原因=REPAIR_WINDOW_CLOSED)
+                save(manifest,rec)
+                raise SystemExit(2)
+        reserve_redraw(stage)
+
     prepared_prints={}
     def reconstruct_print(source_path,stage,print_seed):
         from restoration import restoration_graph
@@ -1226,7 +1235,7 @@ def main(resources):
             positive=' '.join(filter(None,[constraint,rec['positive'],*instructions[-3:]]))
             for i in range(2):
                 label=f'recompose-{i+1}'
-                reserve_redraw(label)
+                reserve_source_repaint(label)
                 graph=None
                 if i==0 and reference_style:
                     for row in reversed(rec['reviews']):
@@ -1469,7 +1478,7 @@ def main(resources):
             # its rejection so that the next round can draw a different layout.
             return None
         full=bool(repeated and args.deep_repair)
-        reserve_redraw(stage)
+        reserve_source_repaint(stage)
         graph=finish_repaint_graph(prompt,instruction,seed+882501,local_image(drawing),
                                   prefix+'/'+stage,editor,study=study,full=full)
         save(job/(stage+'-workflow.json'),graph.ui())

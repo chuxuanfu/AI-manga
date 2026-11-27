@@ -160,3 +160,22 @@ with model_slot.slot():Path(sys.argv[3]).touch()
             with patch.object(deadlines,'previous_worker',return_value=worker),patch('deadlines.subprocess.Popen') as launch:
                 self.assertEqual(deadlines.run_worker(['unused'],folder,folder,8193,clock),(0,None))
                 launch.assert_not_called()
+
+    def test_repaint_budget_keeps_a_completed_print_when_new_print_cannot_fit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job=Path(tmp)
+            folder=job/'rounds/0001'
+            folder.mkdir(parents=True)
+            deadlines.save(job/deadlines.CLOCK,{'run':'a','seconds':900})
+            candidate={'run':'a','first_4k_at':1000,'source_size':[2160,3840]}
+            deadlines.save(job/deadlines.LATEST,candidate)
+            for name,elapsed in [('draft-1',80.82),('first-source-restoration',90.54)]:
+                deadlines.save(folder/(name+'-task.json'),{'renderer_seconds':elapsed})
+            self.assertIsNone(deadlines.insufficient_repair_time(folder,'recompose-1',now=1400))
+            rejected=deadlines.insufficient_repair_time(folder,'recompose-2',now=1774)
+            self.assertEqual((rejected['remaining_seconds'],rejected['estimated_seconds']),(126,171.36))
+            deadlines.save(folder/'recompose-2-task.json',{'submitted':1770})
+            self.assertIsNone(deadlines.insufficient_repair_time(folder,'recompose-2',now=1774))
+            candidate['source_size']=[864,1536]
+            deadlines.save(job/deadlines.LATEST,candidate)
+            self.assertIsNone(deadlines.insufficient_repair_time(folder,'next',now=1774))
