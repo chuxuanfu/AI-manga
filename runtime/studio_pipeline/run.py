@@ -844,6 +844,8 @@ def main(resources):
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
         if gaps and args.round_worker:rubric+='-layout2'
+        check_contact=stage.startswith(('draft-','recompose-')) or (stage=='final-art' and rec.get('单候选成品初审')==key)
+        if check_contact:rubric+='-working-contact'
         from review import inspection_environment,inspection_key
         from confirmed_issues import ledger_version
         context_key=inspection_key(rubric+ledger_version(),prompt,rec['parts'],focus,rec.get('画法参考'),inspection_environment())
@@ -921,7 +923,7 @@ def main(resources):
                     elif dv=='unclear' and result['status']=='pass':
                         result.update(status='uncertain',note=detail['observation'])
                 if (args.round_worker and not args.from_image and not args.repair_box
-                        and result['status'] in ('pass','local','uncertain') and stage.startswith(('draft-','recompose-'))):
+                        and result['status'] in ('pass','local','uncertain') and check_contact):
                     from brief_check import check_working_contact
                     from construction_review import LARGE
                     from evidence import backend
@@ -967,13 +969,13 @@ def main(resources):
         return assessment['status']=='pass' and assessment['score']>=75
     approved=None
     focus=args.repair_box
-    def check_composition(path,label):
+    def check_composition(path,label,prepared_print=None):
         if not args.from_image and not args.repair_box:
             from framing import prepare_full_bleed
             from lettering import clean_lettering
-            if not rec.get('原生4K') and not args.native_only:
+            if prepared_print is None and not rec.get('原生4K') and not args.native_only:
                 path=prepare_full_bleed(path,prompt)
-        result=check(path,label)
+        result=check(prepared_print,'final-art') if prepared_print else check(path,label)
         if result.get('visual_triage',{}).get('issue'):
             return path,result
         if not args.from_image and not args.repair_box and usable(result):
@@ -1132,6 +1134,7 @@ def main(resources):
                 result=check(path,label)
             else:
                 path=color_candidate(path,label,seed+373+i)
+                prepared_print=None
                 # Prepare the first real print before potentially lengthy draft audits.
                 # An unchanged source produces the same graph digest at final refinement.
                 if i==0 and args.round_worker and four_only and not args.from_image and not holder:
@@ -1139,12 +1142,24 @@ def main(resources):
                     with Image.open(path) as frame:
                         restore=prefer_source_reconstruction(args.print_method,max(frame.size),RUNTIME/'ComfyUI/models')
                     if restore:
-                        reconstruct_print(path,'first-source-restoration',seed+28601)
+                        from framing import prepare_full_bleed
+                        path=prepare_full_bleed(path,prompt)
+                        early=reconstruct_print(path,'first-source-restoration',seed+28601)
                         if count==1:
+                            from focus_print import fit_print_aspect
                             from print_judge import fingerprint
+                            prepared_print=fit_print_aspect(early,rec.get('aspect','auto'),3840)
                             rec['待在4K复查的底图']=fingerprint(path)
+                            rec['单候选成品初审']=fingerprint(prepared_print)
                             save(manifest,rec)
-                path,result=check_composition(path,label)
+                path,result=check_composition(path,label,prepared_print)
+                if prepared_print and result.get('status')=='global':
+                    from reference_review import final_repaint_direction
+                    if final_repaint_direction(result.get('参考比较') or {}):
+                        # Route the recorded rejection into the final repair stage.
+                        # The exact print still needs its complete release receipt.
+                        approved=path
+                        break
             if usable(result) and not args.repair_box:
                 if streaming or holder:
                     result=check_draft_structure(path,result)
@@ -1441,7 +1456,15 @@ def main(resources):
         save(job/(stage+'-workflow.json'),graph.ui())
         outputs=post_graph(graph.api,args.port,job,stage,graph.ui())
         candidate=output_image(outputs[str(len(graph.nodes))])
-        remember(candidate,stage)
+        def prepare_repaint(path,label):
+            remember(path,label)
+            from restoration import prefer_source_reconstruction
+            with Image.open(path) as image:
+                restore=four_only and prefer_source_reconstruction(args.print_method,max(image.size),RUNTIME/'ComfyUI/models')
+            if restore:
+                reconstruct_print(path,'finish-repaint-print-source-restoration',seed+28601)
+            return restore
+        restored=prepare_repaint(candidate,stage)
         from reference_review import review_finish_changes
         finding=review_finish_changes(approved,candidate,prompt)
         save(job/(stage+'-design-review.json'),finding)
@@ -1458,13 +1481,14 @@ def main(resources):
                                   retry_stage,finding.get('target'),reference_style=True,
                                   rebuild_shape=True,design_reference=approved,allow_control=use_edges)
                 corrected=confine_edit(candidate,corrected,target_box,job/(retry_stage+'-bounded.png'))
-                remember(corrected,retry_stage)
+                corrected_restored=prepare_repaint(corrected,retry_stage)
                 with Image.open(corrected) as picture:
                     repair=assess_local_edit(before,picture.convert('RGB'),target_box,
                                              finding['fix'],finding.get('observation'),prompt)
                 save(job/(retry_stage+'-review.json'),repair)
                 if repair['verdict']=='resolved':
                     candidate=corrected
+                    restored=corrected_restored
                     aligned=same_composition(approved,candidate,prompt)
                     break
                 reference_record=job/(retry_stage+'-reference.json')
@@ -1476,7 +1500,7 @@ def main(resources):
                            '重绘':str(candidate),'重绘指纹':fingerprint(candidate),
                            '保留构图':aligned,'修改要求':instruction,'步数':40 if full else 4}
         save(manifest,rec)
-        if aligned and usable(check_draft_structure(candidate,check(candidate,stage+'-draft'))):
+        if aligned and (restored or usable(check_draft_structure(candidate,check(candidate,stage+'-draft')))):
             return candidate
         return None
 
