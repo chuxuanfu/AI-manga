@@ -294,6 +294,47 @@ def count_conflict(wanted,seen,locations,wanted_species=(),visible_species=()):
     return evidence
 
 
+def recount_apparent_absences(url, full, seen, conflicts, locations):
+    """A text extractor can mistake 'no other people' for an empty scene."""
+    from construction_review import LARGE
+    resolved=dict(seen)
+    receipts={}
+    schema={'type':'object','properties':{'certainty':{'enum':['clear','uncertain']},
+            'subjects':{'type':'array','items':{'type':'object','properties':{
+                'appearance':{'type':'string'},'center':{'type':'array','items':{'type':'integer'},'minItems':2,'maxItems':2}},
+                'required':['appearance','center']}}},'required':['certainty','subjects']}
+    for conflict in conflicts:
+        if not (conflict['observed']==0 and 0<conflict['detected']==conflict['requested']):continue
+        name=conflict['object']
+        prompt=(f"Inspect the entire image independently. List each physically present {name} visible in the depicted scene, "
+                "including background subjects. Exclude portraits, printed decorations, reflections and shadows. "
+                "For each distinct subject describe its visible appearance and give a point near its center in [x,y], "
+                "both coordinates 0..1000. An empty scene has an empty list. If occlusion or depiction makes the count doubtful, mark uncertain.")
+        if not model_identity(LARGE):continue
+        try:
+            reading=json.loads(ask(url,[full],prompt,schema,tag=LARGE))
+        except (ValueError,OSError,RuntimeError) as exc:
+            receipts[name]={'reader':LARGE,'confirmed':False,'error':str(exc)[:160],'original_count':0}
+            continue
+        subjects=reading.get('subjects')
+        boxes=[row['box'] for row in locations if row['name']==name]
+        receipts[name]={'reader':LARGE,'reading':reading,'confirmed':False,'original_count':0}
+        if reading.get('certainty')!='clear' or not isinstance(subjects,list) or len(subjects)!=len(boxes):continue
+        matched=set()
+        for subject in subjects:
+            if not isinstance(subject,dict) or not str(subject.get('appearance','')).strip():break
+            center=subject.get('center')
+            if not isinstance(center,list) or len(center)!=2 or not all(type(v) is int and 0<=v<=1000 for v in center):break
+            x,y=center
+            hits=[i for i,(l,t,r,b) in enumerate(boxes) if l<=x<=r and t<=y<=b]
+            if len(hits)!=1 or hits[0] in matched:break
+            matched.add(hits[0])
+        if len(matched)==len(boxes):
+            resolved[name]=len(boxes)
+            receipts[name]['confirmed']=True
+    return resolved,receipts
+
+
 def review(full,sheet,regions,request_text,native=None):
     locations=objects(full)
     with backend() as url:
@@ -301,11 +342,13 @@ def review(full,sheet,regions,request_text,native=None):
         wanted,wanted_species=classified_counts(url,request_text,True)
         seen,visible_species=classified_counts(url,inventory,False)
         conflicts=count_conflict(wanted,seen,locations,wanted_species,visible_species)
+        seen,recounts=recount_apparent_absences(url,full,seen,conflicts,locations)
+        if recounts:conflicts=count_conflict(wanted,seen,locations,wanted_species,visible_species)
         if conflicts:
             details='；'.join(f"{c['object']} 要求 {c['requested']}，独立读图得到 {c['observed'] if c['observed'] is not None else '不确定'}，检测框 {c['detected']}" for c in conflicts)
             decisive=any(c['observed'] is not None and c['observed']>c['requested'] and c['detected']>=c['observed'] for c in conflicts)
             return {'status':'global' if decisive else 'uncertain','score':35,'note':'数量需复核。'+details,
-                    'issues':[],'regions':regions,'blind_inventory':inventory,'detector':locations,
+                    'issues':[],'regions':regions,'blind_inventory':inventory,'independent_recounts':recounts,'detector':locations,
                     'expected_counts':wanted,'observed_counts':seen,'count_conflicts':conflicts,'reviewer':TAG}
         # Inspect separate region and print samples without asking the model to infer total counts from a collage.
         instructions=(
@@ -338,4 +381,4 @@ def review(full,sheet,regions,request_text,native=None):
     if status=='local':
         issues=[{'symptom':str(obj['note']),'target':str(obj['target']),'fix':str(obj['fix']),'region':str(obj['region']),'box':obj['box']}]
     return {'status':status,'score':max(0,min(100,int(obj['score']))),'note':str(obj['note']),'issues':issues,
-            'regions':regions,'blind_inventory':inventory,'detector':locations,'expected_counts':wanted,'observed_counts':seen,'reviewer':TAG}
+            'regions':regions,'blind_inventory':inventory,'independent_recounts':recounts,'detector':locations,'expected_counts':wanted,'observed_counts':seen,'reviewer':TAG}
