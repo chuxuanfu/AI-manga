@@ -387,6 +387,12 @@ def run(args,job,entry):
             if args.candidates:options+=['--candidates',str(args.candidates)]
             state=dict(prompt=args.prompt.strip(),seed=args.seed if args.seed is not None else secrets.randbelow(2**45),
                        delivery_edge=7680 if args.eight_k else 3840,options=options,rounds=[],status='准备离线出片',port=args.port)
+        if getattr(args,'max_redraws',None) is not None:
+            options=state['options']
+            if '--max-redraws' in options:
+                options[options.index('--max-redraws')+1]=str(args.max_redraws)
+            else:
+                options.extend(['--max-redraws',str(args.max_redraws)])
         if args.deep_repair:state['deep_repair']=True
         if args.eight_k and state.get('delivery_edge',7680)==3840:
             if args.skip_focus is not None:
@@ -469,6 +475,8 @@ def run(args,job,entry):
                 baseline,printed=row['reinspection_pair']
                 aspect=options[options.index('--aspect')+1] if '--aspect' in options else 'auto'
                 options=['--reviewed-image',baseline,'--review-print',printed,'--aspect',aspect]
+            if '--max-redraws' in state['options'] and '--max-redraws' not in options:
+                options.extend(['--max-redraws',state['options'][state['options'].index('--max-redraws')+1]])
             if edit:row['skip_focus']=args.skip_focus
             row['status']='运行中';state['status']='离线审图与返修中'
             save(job,state)

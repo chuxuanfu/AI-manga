@@ -10,6 +10,7 @@ AI Manga Studio
   --aspect RATIO          auto (default), 2:3, 3:2, 9:16, 16:9, 1:1
   --seed N                Starting seed (default random)
   --candidates N          Drafts per round, 1 to 8 (default 2, deep repair 3)
+  --max-redraws N           Limit corrective candidates per round (local edits and recompositions)
   --max-rounds N          Maximum rounds this run (default 0, retry until accepted)
   --print-method METHOD   First 4K pass: auto (default), restoration (SeedVR2) or tiled
   --8k                    Also render, inspect and export an 8K PNG

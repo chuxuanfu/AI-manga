@@ -253,7 +253,7 @@ def remove_reviewed_feature(image, box, issue):
     return masked_candidate(image,box)
 
 
-def clean_lettering(path, brief, folder, stage):
+def clean_lettering(path, brief, folder, stage, *, before_edit=None):
     if not blank_surfaces_requested(brief) or not DETECTOR.is_file() or not INPAINTER.is_file():
         return path
     source_id = fingerprint(path)
@@ -372,6 +372,7 @@ def clean_lettering(path, brief, folder, stage):
                     if strokes is not None:group_mask=ImageChops.lighter(strokes,group_mask)
                 if group_mask.getbbox():confirmed.append(group_mask)
     if confirmed:
+        if before_edit:before_edit(stage+'-lettering')
         cleaned=image
         for mask in confirmed:
             cleaned=finish_blank_surface(cleaned,erase_region(cleaned,mask),mask)

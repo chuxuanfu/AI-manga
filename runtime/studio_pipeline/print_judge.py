@@ -1725,7 +1725,8 @@ def _inspect_print(path,brief,root,preliminary,digest,small,focus,draft,source_c
             checkpoint=json.loads(report.read_text())
             if checkpoint['status'] in ('pass','local','global','uncertain'):return checkpoint
             if len(checkpoint['views'])>len(result['views']):result=checkpoint
-        print(f'本机逐块终审 {len(result["views"])}/{len(windows)}，原像素 {result["planned_native"]} 块',flush=True)
+        label='底图结构复核' if construction_draft else '成品逐块终审'
+        print(f'{label} {len(result["views"])}/{len(windows)}，原像素 {result["planned_native"]} 块',flush=True)
         native_readings=None
         for i,(kind,rect) in enumerate(windows):
             if i<len(result['views']):continue

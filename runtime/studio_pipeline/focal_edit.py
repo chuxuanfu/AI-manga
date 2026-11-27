@@ -173,7 +173,7 @@ def repaint_definition(master, pixels, medium, seed, folder, stage, port, prefix
     return None
 
 
-def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix, *, magnified, local_image, post_graph, output_image, models):
+def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix, *, magnified, local_image, post_graph, output_image, models, before_edit=None):
     editor=installed_editor(models)
     if not editor:return None
     with Image.open(master) as opened:original=opened.convert('RGB')
@@ -195,6 +195,7 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
         if saved.get('key')==identity:
             if saved.get('decision')=='hold':return None
             if destination.is_file() and saved.get('sha256')==fingerprint(destination):return destination
+    if before_edit:before_edit(stage)
     with backend(LARGE) as url:
         caption=describe_patch(url,base.crop(target),locator,localize=True)
         if magnified:
@@ -270,7 +271,7 @@ def _repaint_at_scale(master, pixels, medium, seed, folder, stage, port, prefix,
     return destination if evidence['decision']=='improved' else None
 
 
-def repair_reported_speckles(master, baseline, report, folder, stage):
+def repair_reported_speckles(master, baseline, report, folder, stage, *, before_edit=None):
     """Try a source-guided print correction when the reader saw new isolated speckles."""
     import re
     from print_artifacts import suppress_isolated_marks
@@ -293,6 +294,7 @@ def repair_reported_speckles(master, baseline, report, folder, stage):
         old, current = compare_pixels(low.convert('RGB'), im.convert('RGB'), rect, im.size)
         cleaned = suppress_isolated_marks(old, current)
         if not cleaned:return None
+        if before_edit:before_edit(stage)
         art, count = cleaned
         result = im.convert('RGB')
     result.paste(art, rect[:2])

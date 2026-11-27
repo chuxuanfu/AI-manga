@@ -1,6 +1,7 @@
 """Local candidate selection, repeatable regional repair, and checked 4K/8K delivery."""
 import argparse
 import fcntl
+from functools import partial
 import hashlib
 import json
 import os
@@ -39,6 +40,21 @@ def save(path, obj):
     from print_judge import store
     store(path,obj)
     if path.name=="review.json":write_gallery(path.parent,obj,STUDIO)
+
+
+def record_redraw(limit,manifest,rec,stage):
+    """Persist a correction before starting it so interrupted rounds keep their budget."""
+    if limit is None:
+        return
+    attempts=rec.setdefault('redraw_attempts',[])
+    if len(attempts)>=limit:
+        rec['status']='未达标 · 已达到重绘上限'
+        rec.setdefault('终审退回原因',f'已用完 {limit} 次修订机会')
+        save(manifest,rec)
+        print(rec['status'],flush=True)
+        raise SystemExit(2)
+    attempts.append(stage)
+    save(manifest,rec)
 
 
 def deliver_file(source, dest):
@@ -533,6 +549,7 @@ def main(resources):
     parser.add_argument('--from-image',type=Path,action='append',default=[],help='先检查已有底图，可重复')
     parser.add_argument('--candidates',type=int,choices=range(1,9),default=None)
     parser.add_argument('--max-rounds',type=int,default=0,help='完整出片的最大轮数，默认 0 表示持续至通过')
+    parser.add_argument('--max-redraws',type=int,help='每轮最多生成多少次修订候选，含局部修改和重新构图')
     parser.add_argument('--retry-round',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--retry-observation',default='',help=argparse.SUPPRESS)
     parser.add_argument('--round-worker',action='store_true',help=argparse.SUPPRESS)
@@ -543,6 +560,8 @@ def main(resources):
     parser.add_argument('--object',help='可选，指定需要保护轮廓的对象，如 porcelain teapot')
     parser.add_argument('--repair-text',help='这个区域应当画成什么样')
     args=parser.parse_args()
+    if args.max_redraws is not None and args.max_redraws<0:
+        parser.error('--max-redraws 需要非负数')
     if args.base_model!='auto':
         native_requested=any(term in (args.prompt or '').lower().replace(' ','') for term in ('原生4k','native4k'))
         if args.from_image or args.reviewed_image or args.native_4k or native_requested:
@@ -672,6 +691,7 @@ def main(resources):
         rec['输出模式']=('全幅双级扩散' if args.full_8k_diffusion else '全幅4K扩散与8K焦点精修') if args.eight_k else '全幅4K精绘'
         rec['笔触参考']=hashlib.sha256((INPUT/BRUSHWORK).read_bytes()).hexdigest()
         save(manifest,rec)
+    reserve_redraw=partial(record_redraw,args.max_redraws,manifest,rec)
     four_only=rec.get('delivery_edge',7680)==3840
     if args.aspect!='auto':rec['aspect']=args.aspect
     if args.round_worker:rec['执行模式']='离线自动定稿'
@@ -936,7 +956,7 @@ def main(resources):
         if result.get('visual_triage',{}).get('issue'):
             return path,result
         if not args.from_image and not args.repair_box and usable(result):
-            cleaned=clean_lettering(path,prompt,job,label)
+            cleaned=clean_lettering(path,prompt,job,label,before_edit=reserve_redraw)
             if cleaned!=path:
                 path=cleaned
                 result=check(path,label+'-cleaned')
@@ -951,6 +971,7 @@ def main(resources):
             if inspected['status']=='local' and finding.get('operation')=='remove_forbidden':
                 duplicate=region(finding,result)
         if duplicate:
+            reserve_redraw(label+'-count-repair')
             repaired=job/(label+'-removed-duplicate.png')
             with Image.open(path) as source:
                 masked_candidate(source,duplicate).save(repaired)
@@ -983,6 +1004,7 @@ def main(resources):
                 l,t,r,b=args.repair_box
                 if not (l<=box[0]<box[2]<=r and t<=box[1]<box[3]<=b):break
             label=f'region-repair-{index+1}-{attempt+1}'
+            reserve_redraw(label)
             instruction=' '.join(filter(None,[issue['fix'],feedback]))
             strategy=2 if consecutive_failures and attempt==1 else attempt
             with Image.open(path) as original:
@@ -1127,6 +1149,7 @@ def main(resources):
             positive=' '.join(filter(None,[constraint,rec['positive'],*instructions[-3:]]))
             for i in range(2):
                 label=f'recompose-{i+1}'
+                reserve_redraw(label)
                 graph=None
                 if i==0 and reference_style:
                     for row in reversed(rec['reviews']):
@@ -1302,6 +1325,7 @@ def main(resources):
             from placement import placement_plan
             plan=placement_plan(before,instruction,prompt)
             if plan:
+                reserve_redraw(stage+'-layout')
                 trial=repair_placement(before,plan,rec['positive'],edit_seed,args.port,job,stage+'-layout')
                 if trial:
                     path,_=trial
@@ -1317,6 +1341,7 @@ def main(resources):
         strategies=[2,0,1] if recurring else [0,1,2]
         for variant,strategy in enumerate(strategies):
             name=stage if variant==0 else f'{stage}-variant-{variant+1}'
+            reserve_redraw(name)
             revised=repaint(before,box,instruction,rec['positive'],edit_seed+variant*1753,args.port,
                             job,name,issue.get('target'),[o for o,_ in rec['parts']],reference_style,rebuild_shape=True,
                             reconstruction_attempt=strategy)
@@ -1372,6 +1397,7 @@ def main(resources):
             # its rejection so that the next round can draw a different layout.
             return None
         full=bool(repeated and args.deep_repair)
+        reserve_redraw(stage)
         graph=finish_repaint_graph(prompt,instruction,seed+882501,local_image(drawing),
                                   prefix+'/'+stage,editor,study=study,full=full)
         save(job/(stage+'-workflow.json'),graph.ui())
@@ -1388,6 +1414,7 @@ def main(resources):
             from registered_edit import CONTROL
             for use_edges in (True,False):
                 retry_stage=stage+('-design-repair' if use_edges else '-design-edit')
+                reserve_redraw(retry_stage)
                 corrected=repaint(before,target_box,finding['fix'],prompt,seed+882502,args.port,job,
                                   retry_stage,finding.get('target'),reference_style=True,
                                   rebuild_shape=True,design_reference=approved,allow_control=use_edges)
@@ -1481,6 +1508,7 @@ def main(resources):
                     stage='resume-'+hashlib.file_digest(stream,'sha256').hexdigest()[:16]+'-repair'
             if focus and issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
                 repaired=job/(stage+'-removed-unrequested-object.png')
+                reserve_redraw(stage)
                 with Image.open(last) as retained:remove_reviewed_feature(retained.convert('RGB'),focus,issue).save(repaired)
                 repaired=confine_edit(last,repaired,focus,job/(stage+'-bounded.png'))
             else:
@@ -1623,7 +1651,7 @@ def main(resources):
             pixels=failed_focus(judged)
             if not rec.get('4K散点修复'):
                 from focal_edit import repair_reported_speckles
-                polished=repair_reported_speckles(master,approved,judged,job,f'print-clean-{attempt+1}')
+                polished=repair_reported_speckles(master,approved,judged,job,f'print-clean-{attempt+1}',before_edit=reserve_redraw)
                 if polished:
                     master,pixel_rect=polished
                     size=judged['size']
@@ -1644,6 +1672,7 @@ def main(resources):
                 # Compare against the actual selected drawing. A final with a later structural
                 # repair must not be replaced by an earlier, uncorrected source.
                 stage='source-restoration'
+                reserve_redraw(stage)
                 prior_master=master
                 master=reconstruct_print(approved,stage,seed+28601)
                 small=None
@@ -1655,7 +1684,7 @@ def main(resources):
                 tried_focus_fields.add(pixels)
                 stage=f'print-definition-{attempt+1}'
                 revised=repaint_definition(master,pixels,rec.get('画材','')+' '+print_constraints(prompt),seed+17041+attempt,job,stage,
-                                           args.port,prefix+'/pending-review/'+stage,local_image=local_image,
+                                           args.port,prefix+'/pending-review/'+stage,before_edit=reserve_redraw,local_image=local_image,
                                            post_graph=post_graph,output_image=output_image,models=RUNTIME/'ComfyUI/models')
                 if revised:
                     with Image.open(master) as img:
@@ -1674,6 +1703,7 @@ def main(resources):
             detail_rebuilt=True
             repair_check=None
             stage=f'detail-source-{attempt+1}'
+            reserve_redraw(stage)
             with Image.open(approved) as original:
                 size=rebuild_size
                 reference=local_image(original.convert('RGB'))
@@ -1698,6 +1728,7 @@ def main(resources):
         stage=f'print-repair-{attempt+1}'
         with Image.open(source) as original:
             if issue.get('operation')=='remove_forbidden' and ERASE_MODEL.is_file():
+                reserve_redraw(stage)
                 revised=job/(stage+'-removed-unrequested-object.png')
                 corrected=remove_reviewed_feature(original.convert('RGB'),focus,issue)
                 temp=revised.with_suffix('.partial.png')
@@ -1706,6 +1737,7 @@ def main(resources):
                 revised=correct_shape(source,issue,focus,stage,seed+650+attempt)
                 if revised is None:break
             else:
+                reserve_redraw(stage)
                 revised=repaint(original.convert('RGB'),focus,issue['fix'],rec['positive'],seed+650+attempt,args.port,
                                 job,stage,issue.get('target'),[o for o,_ in rec['parts']],reference_style,
                                 rebuild_shape=issue.get('operation')=='redraw')
