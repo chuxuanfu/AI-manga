@@ -1004,7 +1004,12 @@ def main(resources):
 
     def check_draft_structure(path,result):
         if not usable(result) or not args.round_worker or args.proof_only:return result
-        from print_judge import inspect
+        from print_judge import inspect, fingerprint
+        if rec.get('待在4K复查的底图')==fingerprint(path):
+            # The draft has already passed the composition and structure screen.
+            # These same whole, construction and contact views are mandatory at
+            # print size. Spend the remaining deadline on the finished pixels.
+            return result
         report=inspect(path,prompt,job,result,construction_draft=True)
         rec.setdefault('底图结构终审',{})[os.path.relpath(path,job)]=report['report']
         save(manifest,rec)
@@ -1135,6 +1140,10 @@ def main(resources):
                         restore=prefer_source_reconstruction(args.print_method,max(frame.size),RUNTIME/'ComfyUI/models')
                     if restore:
                         reconstruct_print(path,'first-source-restoration',seed+28601)
+                        if count==1:
+                            from print_judge import fingerprint
+                            rec['待在4K复查的底图']=fingerprint(path)
+                            save(manifest,rec)
                 path,result=check_composition(path,label)
             if usable(result) and not args.repair_box:
                 if streaming or holder:
