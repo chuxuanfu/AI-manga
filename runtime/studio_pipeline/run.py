@@ -24,7 +24,7 @@ from construction_review import review as review_construction
 from review import audit, reviewer, RUNTIME, CHECKS
 from manga_materials.planner import plan_scene, requested_medium
 from focus_print import PATCH, centers, sampled_surfaces, combine_source, detail_graph, finish_neural, neural_double, repair_print_pair, preserve_source_marks
-from local_patch import confine_edit
+from local_patch import confine_edit, mask_bounds, merge_selection, selection_mask
 from masks import object_mask, structural_composite
 from lettering import remove_reviewed_feature
 from erase import duplicate_box, erase_region, masked_candidate, MODEL as ERASE_MODEL
@@ -565,9 +565,18 @@ def main(resources):
         style=args.style.strip()
         if style.casefold() in ('anime-key-visual','日系商业插画'):style=KEY_VISUAL
         args.prompt=args.prompt.rstrip()+' · '+style
+    manual_mask=None
+    if args.selection_mask:
+        if not args.from_image or not (args.candidate_image or args.repair_text):
+            parser.error('--selection-mask requires --from-image and either --repair-text or --candidate-image')
+        with Image.open(args.from_image[0]) as original:
+            manual_mask=selection_mask(args.selection_mask,original.size)
+        if not args.candidate_image and not args.repair_box:
+            args.repair_box=mask_bounds(manual_mask)
+    elif args.candidate_image:
+        parser.error('--candidate-image requires --selection-mask')
     if args.repair_box and (not args.repair_text or not args.from_image or not region({'box':args.repair_box},{})):
         parser.error('--repair-box 需要有效坐标、--repair-text 和 --from-image')
-    if bool(args.candidate_image)!=bool(args.selection_mask):parser.error('请同时传入 --candidate-image 与 --selection-mask')
     if args.seed is not None and not 0 <= args.seed < 2**63:
         parser.error('--seed must be between 0 and 9223372036854775807')
     if args.output_dir is not None:
@@ -641,7 +650,10 @@ def main(resources):
     if rec.get('选区返修') and not changing:
         prior=rec['选区返修']
         args.from_image=[Path(prior['原图'])];args.candidate_image=Path(prior['候选'])
-        args.selection_mask=Path(prior['遮罩']);args.keep_native=True
+        args.selection_mask=Path(prior['遮罩'])
+        with Image.open(args.from_image[0]) as original:
+            manual_mask=selection_mask(args.selection_mask,original.size)
+            args.keep_native=max(original.size)==7680
     prompt = (args.prompt or rec.get('prompt') or '').strip()
     if not prompt: parser.error('需要 --prompt 或已有任务目录')
     if rec and rec['prompt']!=prompt: parser.error('请为新的 prompt 开始一个新任务')
@@ -980,6 +992,8 @@ def main(resources):
                                     rebuild_shape=reference_style and issue.get('operation')=='redraw',
                                     reconstruction_attempt=strategy)
                 patched=confine_edit(path,patched,box,job/(label+'-bounded.png'))
+                if manual_mask is not None:
+                    patched=merge_selection(path,patched,manual_mask,job/(label+'-masked.png'))
                 if args.round_worker or (reference_style and issue.get('operation')=='redraw'):
                     with Image.open(patched) as candidate:
                         verdict=assess_local_edit(original,candidate,box,issue['fix'],issue.get('symptom'),prompt)
@@ -1002,7 +1016,7 @@ def main(resources):
 
     retry_source=None
     retry_origin=None
-    if args.round_worker and four_only:
+    if args.round_worker and four_only and not (args.repair_box or args.selection_mask):
         from production import local_retry_source
         retry_source=local_retry_source(job,prompt,interrupted=True,review_upgrade=True)
         if retry_source:
@@ -1014,16 +1028,8 @@ def main(resources):
         approved=retry_source[1]
     elif args.candidate_image:
         if not args.from_image:parser.error('选区合成需要 --from-image 提供原图')
-        with Image.open(args.from_image[0]) as before, Image.open(args.candidate_image) as candidate, Image.open(args.selection_mask) as selection:
-            if before.size!=candidate.size or selection.size!=before.size:parser.error('原图、候选和遮罩必须具有相同尺寸')
-            mask=selection.getchannel('A') if 'A' in selection.getbands() else selection.convert('L')
-            bounds=mask.getbbox()
-            if not bounds:parser.error('选区为空')
-            composite=before.convert('RGB')
-            composite.paste(candidate.crop(bounds).convert('RGB'),bounds[:2],mask.crop(bounds))
-            approved=job/'merged-selection.png'
-            tmp=job/(uuid.uuid4().hex+'.png');composite.save(tmp);tmp.replace(approved)
-            focus=[round(1000*z/n) for z,n in zip(bounds,(*before.size,*before.size))]
+        approved=merge_selection(args.from_image[0],args.candidate_image,manual_mask,job/'merged-selection.png')
+        focus=mask_bounds(manual_mask)
         rec['选区返修']={'原图':str(args.from_image[0]),'候选':str(args.candidate_image.resolve()),'遮罩':str(args.selection_mask.resolve()),'范围':focus}
     elif args.reviewed_image:
         approved=args.reviewed_image.resolve()
@@ -1540,6 +1546,12 @@ def main(resources):
             master=fit_print_aspect(master,aspect,3840 if four_only else 7680)
             if small is not None:
                 small=fit_print_aspect(small,aspect,3840)
+        if manual_mask is not None:
+            with Image.open(master) as img:
+                same_canvas=img.size==manual_mask.size
+            if same_canvas:
+                master=merge_selection(args.from_image[0],master,manual_mask,
+                                       job/(label+'-protected.png'),protect_only=True)
         release_idle_renderer(args.port)
         rec['4K']=os.path.relpath(master if four_only else small,job)
         if not four_only:rec['8K']=os.path.relpath(master,job)

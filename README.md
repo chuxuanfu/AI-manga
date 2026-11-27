@@ -103,3 +103,12 @@ runtime/venv/bin/python runtime/studio_pipeline/confirmed_issues.py artwork.png 
   --box 200 300 450 650 --symptom "The two surfaces meet with no visible boundary." \
   --fix "Clarify the overlap and carry the material to its visible edge."
 ```
+
+人工检查后，要在现有 4K 图上微调，可以用同尺寸的黑白 PNG 画出选区。白色允许改变，黑色锁定，灰色可柔化初次合成的边缘。带透明度的遮罩使用其 Alpha 通道。运行以下命令会为修订建立一个新任务。
+
+```sh
+./Studio.command --from-image original-4k.png --selection-mask mask.png \
+  --prompt "原来的完整画面描述" --repair-text "这个区域希望改成的样子" --max-rounds 1
+```
+
+已有同尺寸的修订图时，用 `--candidate-image revised.png` 代替 `--repair-text`。只需要矩形时，可以用 `--repair-box L T R B` 代替遮罩，坐标取 0 到 1000。修订图仍需经过局部和整图审查。

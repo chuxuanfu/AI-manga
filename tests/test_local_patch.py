@@ -38,3 +38,27 @@ class ConfinedEditTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 confine_edit(source, proposal, [0, 0, 1000, 1000], result)
             self.assertFalse(result.exists())
+
+    def test_mask_protects_holes_alpha_and_soft_edges_after_another_edit(self):
+        from PIL import ImageDraw
+        from local_patch import merge_selection, selection_mask
+        with TemporaryDirectory() as folder:
+            root=Path(folder)
+            original=root/'original.png'
+            proposal=root/'proposal.png'
+            Image.new('RGBA',(100,100),(12,18,30,100)).save(original)
+            Image.new('RGBA',(100,100),(200,220,240,230)).save(proposal)
+            mask=Image.new('L',(100,100))
+            draw=ImageDraw.Draw(mask)
+            draw.ellipse((5,5,90,90),fill=150)
+            draw.rectangle((30,30,65,65),fill=0)
+            mask.convert('RGBA').save(root/'mask.png')
+            mask=selection_mask(root/'mask.png',(100,100))
+            chosen=merge_selection(original,proposal,mask,root/'selected.png')
+            with Image.open(chosen) as im:
+                self.assertEqual(im.getpixel((45,45)),(12,18,30,100))
+                self.assertTrue(12 < im.getpixel((20,40))[0] < 200)
+            protected=merge_selection(original,proposal,mask,root/'protected.png',protect_only=True)
+            with Image.open(protected) as im:
+                self.assertEqual(im.getpixel((45,45)),(12,18,30,100))
+                self.assertEqual(im.getpixel((20,40)),(200,220,240,230))
