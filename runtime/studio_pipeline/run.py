@@ -724,16 +724,34 @@ def main(resources):
                 with Image.open(path) as frame:print_ready=max(frame.size)>=3840
             checkpoint(job,Path(path),stage,print_ready=print_ready)
 
+    prepared_prints={}
     def reconstruct_print(source_path,stage,print_seed):
         from restoration import restoration_graph
         with Image.open(source_path) as original:
             input_name=local_image(original.convert('RGB'))
+        cache_key=(input_name,print_seed)
+        if cache_key in prepared_prints:
+            result=prepared_prints[cache_key]
+            remember(result,stage,print_ready=True)
+            return result
         graph,node=restoration_graph(input_name,prefix+'/pending-review/'+stage,3840,print_seed)
         save(job/(stage+'-workflow.json'),graph.ui())
         outputs=post_graph(graph.api,args.port,job,stage,graph.ui())
         result=preserve_source_marks(source_path,output_image(outputs[node]))
-        if not args.selection_mask:remember(result,stage,print_ready=True)
+        if not args.selection_mask:
+            remember(result,stage,print_ready=True)
+            prepared_prints[cache_key]=result
         return result
+
+    def prepare_repaint(path,label):
+        remember(path,label)
+        if not args.round_worker or not four_only or args.selection_mask or args.repair_box:return False
+        from restoration import prefer_source_reconstruction
+        with Image.open(path) as image:
+            restore=prefer_source_reconstruction(args.print_method,max(image.size),RUNTIME/'ComfyUI/models')
+        if restore:
+            reconstruct_print(path,label+'-restoration',seed+28601)
+        return restore
 
     def build_draft(caption,draw_seed,label,index):
         from page_layout import retry_direction
@@ -982,7 +1000,7 @@ def main(resources):
             cleaned=clean_lettering(path,prompt,job,label,before_edit=reserve_redraw)
             if cleaned!=path:
                 path=cleaned
-                remember(cleaned,label+'-cleaned')
+                prepare_repaint(cleaned,label+'-cleaned')
                 result=check(path,label+'-cleaned')
         duplicate=duplicate_box(result) if rec.get('画法自适应') and not args.repair_box and ERASE_MODEL.exists() else None
         if not duplicate and args.round_worker and ERASE_MODEL.is_file() and any(
@@ -999,7 +1017,7 @@ def main(resources):
             repaired=job/(label+'-removed-duplicate.png')
             with Image.open(path) as source:
                 masked_candidate(source,duplicate).save(repaired)
-            remember(repaired,label+'-count-repair')
+            prepare_repaint(repaired,label+'-count-repair')
             checked=check(repaired,label+'-count-repair',duplicate)
             if usable(checked):return repaired,checked
         return path,result
@@ -1050,7 +1068,7 @@ def main(resources):
                 patched=confine_edit(path,patched,box,job/(label+'-bounded.png'))
                 if manual_mask is not None:
                     patched=merge_selection(path,patched,manual_mask,job/(label+'-masked.png'))
-                remember(patched,label)
+                prepare_repaint(patched,label)
                 if args.round_worker or (reference_style and issue.get('operation')=='redraw'):
                     with Image.open(patched) as candidate:
                         verdict=assess_local_edit(original,candidate,box,issue['fix'],issue.get('symptom'),prompt)
@@ -1226,6 +1244,7 @@ def main(resources):
                 new_path=output_image(hist[str(len(graph.nodes))])
                 remember(new_path,label)
                 new_path=color_candidate(new_path,label,seed+1173+i)
+                prepare_repaint(new_path,label)
                 new_path,result=check_composition(new_path,label)
                 if usable(check_draft_structure(new_path,result)):
                     approved=new_path;break
@@ -1456,14 +1475,6 @@ def main(resources):
         save(job/(stage+'-workflow.json'),graph.ui())
         outputs=post_graph(graph.api,args.port,job,stage,graph.ui())
         candidate=output_image(outputs[str(len(graph.nodes))])
-        def prepare_repaint(path,label):
-            remember(path,label)
-            from restoration import prefer_source_reconstruction
-            with Image.open(path) as image:
-                restore=four_only and prefer_source_reconstruction(args.print_method,max(image.size),RUNTIME/'ComfyUI/models')
-            if restore:
-                reconstruct_print(path,'finish-repaint-print-source-restoration',seed+28601)
-            return restore
         restored=prepare_repaint(candidate,stage)
         from reference_review import review_finish_changes
         finding=review_finish_changes(approved,candidate,prompt)
