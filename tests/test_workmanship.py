@@ -109,6 +109,7 @@ class WorkmanshipTests(unittest.TestCase):
         from reference_review import AXES, compare
         board=Image.new('RGB',(1152,1104),'white')
         grades={axis:dict(level='tie',evidence='Each material has clear directional marks.',left_detail='Twisted strands around the mooring ring.',right_detail='Sleeve seams follow the folded elbow.') for axis in AXES}
+        grades['depth_and_finish']['basis']='visible_spatial_relationship'
         with patch('reference_review.available',return_value=True),patch('reference_review.comparison',return_value=board), \
                 patch('reference_review.artwork_pair',return_value=[board,board.copy()]), \
                 patch('reference_review.backend',side_effect=lambda tag:nullcontext('local')), \
@@ -168,6 +169,19 @@ class WorkmanshipTests(unittest.TestCase):
         quick=finish_repaint_graph('A cat at dusk.',direction,42,'cat.png','revised','local.safetensors')
         self.assertEqual([n['inputs']['image'] for n in quick.api.values() if n['class_type']=='LoadImage'],['cat.png'])
         self.assertEqual(next(n['inputs']['steps'] for n in quick.api.values() if n['class_type']=='KSampler'),4)
+
+    def test_depth_grade_requires_a_visible_relationship_in_both_orders(self):
+        from reference_review import grade_schema, order_verdict
+        axis='depth_and_finish'
+        self.assertIn('basis',grade_schema([axis],True)['properties'][axis]['required'])
+        grade=dict(evidence='ring casts a shadow',left_detail='ring overlaps the finger',right_detail='ring floats over skin')
+        def decide(a,b):
+            return order_verdict({axis:dict(grade,level='left',basis=a)},
+                                 {axis:dict(grade,level='right',basis=b)},[axis],
+                                 sided=True,require_depth_basis=True)['decision']
+        self.assertEqual(decide('visible_spatial_relationship','visible_spatial_relationship'),'below')
+        self.assertEqual(decide('scenery_complexity_only','visible_spatial_relationship'),'review')
+        self.assertEqual(decide('unresolved',None),'review')
 
     def test_anime_finish_editor_receives_source_and_technique_sheet(self):
         from illustration import BRUSHWORK, KEY_VISUAL, finish_repaint_graph

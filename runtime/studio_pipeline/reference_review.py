@@ -7,7 +7,7 @@ from evidence import ask, backend, available, TAG
 from illustration import REFERENCE
 
 BENCHMARK=Path(__file__).resolve().parents[1]/'ComfyUI/input'/REFERENCE
-DETAIL_REVIEW_VERSION='subject-crops-v2'
+DETAIL_REVIEW_VERSION='subject-crops-v3'
 AXES=('form_and_contact','material_construction','lighting','depth_and_finish')
 GRADE={'type':'object','properties':{'level':{'type':'string','enum':['left','right','tie','unclear']},'evidence':{'type':'string'}},'required':['level','evidence']}
 SIDE_GRADE={'type':'object','properties':{**GRADE['properties'],'left_detail':{'type':'string'},
@@ -18,8 +18,20 @@ SIDE_INSTRUCTION=(' Inspect each picture separately before grading. In left_deta
                   'detail cannot be located. In evidence give a short reason for the relative grade.')
 
 
+DEPTH_INSTRUCTION=('For depth_and_finish, name two actual forms on EACH side and describe their overlap, '
+                      'occluding contour, grounding shadow or value separation in the side detail. Inspect the main subject '
+                      'when distant planes are absent. A solid background can be intentional. '
+                      'If the only contrast you can identify is that one scene contains more scenery or distant planes, '
+                      'set basis to scenery_complexity_only. If either spatial relationship cannot be traced, set unresolved.')
+
+
 def grade_schema(axes,sided):
-    return {'type':'object','properties':{axis:SIDE_GRADE if sided else GRADE for axis in axes},'required':list(axes)}
+    fields={axis:SIDE_GRADE if sided else GRADE for axis in axes}
+    if sided and 'depth_and_finish' in fields:
+        fields['depth_and_finish']={'type':'object','properties':{**SIDE_GRADE['properties'],
+            'basis':{'enum':['visible_spatial_relationship','scenery_complexity_only','unresolved']}},
+            'required':[*SIDE_GRADE['required'],'basis']}
+    return {'type':'object','properties':fields,'required':list(axes)}
 
 
 
@@ -127,11 +139,11 @@ def resolve_workmanship(url, im, regions, instruction, ambiguous, *, sided=False
     question=(instruction+('' if PAIR_INSTRUCTION in instruction else PAIR_INSTRUCTION)+' Trace visible evidence in both. '
               'Compare only these aspects: '+', '.join(ambiguous)+'.')
     readings=[json.loads(ask(url,pair,question,schema,tag=LARGE)) for pair in ([first,last],[last,first])]
-    result=order_verdict(*readings,ambiguous,sided=sided)
+    result=order_verdict(*readings,ambiguous,sided=sided,require_depth_basis=sided)
     return dict(result,model=LARGE,orders=readings)
 
 
-def order_verdict(forward,backward,axes,*,sided=False):
+def order_verdict(forward,backward,axes,*,sided=False,require_depth_basis=False):
     supported=(('right','left'),('tie','tie'),('tie','left'),('right','tie'))
     pairs={axis:(forward[axis]['level'],backward[axis]['level']) for axis in axes}
     valid={k for k in axes if all(str(v[k].get('evidence') or '').strip() for v in (forward,backward))}
@@ -140,6 +152,9 @@ def order_verdict(forward,backward,axes,*,sided=False):
             marks=[str(grade.get(field) or '').strip().casefold() for field in ('left_detail','right_detail')]
             return all(len(mark.split())>=3 and not mark.startswith(('both ','both:','both pictures','both sides')) for mark in marks)
         valid={axis for axis in valid if all(side_evidence(row[axis]) for row in (forward,backward))}
+    if require_depth_basis and 'depth_and_finish' in valid and any(
+            row['depth_and_finish'].get('basis')!='visible_spatial_relationship' for row in (forward,backward)):
+        valid.remove('depth_and_finish')
     deficits=[k for k in axes if k in valid and pairs[k]==('left','right')]
     ambiguous=[k for k in axes if k not in valid or (pairs[k] not in supported and k not in deficits)]
     return dict(decision='below' if deficits else 'review' if ambiguous else 'candidate',
@@ -264,12 +279,13 @@ def confirmed_final_comparison(review):
             or review.get('separate_material_evidence') is not True):
         return False
     try:
-        first=order_verdict(review['reference_on_left'],review['reference_on_right'],AXES,sided=True)
+        depth_basis=review.get('detail_review_version')==DETAIL_REVIEW_VERSION
+        first=order_verdict(review['reference_on_left'],review['reference_on_right'],AXES,sided=True,require_depth_basis=depth_basis)
         if first['decision']=='candidate':return True
         if first['decision']=='below':return False
         second=review.get('independent_review') or {}
         if second.get('model')!=LARGE or len(second.get('orders',[]))!=2:return False
-        return order_verdict(*second['orders'],first['unresolved_axes'],sided=True)['decision']=='candidate'
+        return order_verdict(*second['orders'],first['unresolved_axes'],sided=True,require_depth_basis=depth_basis)['decision']=='candidate'
     except (KeyError,TypeError,ValueError,AttributeError):
         return False
 
@@ -284,7 +300,7 @@ def compare(im,regions,path,brief='',*,final=False,medium=None):
                  'Ignore personal preferences, differences in subject matter, relative zoom of detail crops and which painting appears first. '
                  'Give under twelve words of concrete evidence per axis. Use left, right, tie or unclear.')
     if final:
-        instruction+=SIDE_INSTRUCTION+' Judge each picture in the medium visibly used on that side.'
+        instruction+=SIDE_INSTRUCTION+' Judge each picture in the medium visibly used on that side. '+DEPTH_INSTRUCTION
     elif brief:
         instruction+=' The new image has its own requested medium: '+brief+'. Evaluate construction and deliberate marks within each medium. Spare ink, flat cel shading, paper cutouts, monochrome or visible print dots may be fully resolved. Do not reward merely having more texture.'
     pair=artwork_pair(im,regions)
@@ -294,7 +310,7 @@ def compare(im,regions,path,brief='',*,final=False,medium=None):
         with backend(tag) as url:
             schema=grade_schema(AXES,final)
             forward,backward=[json.loads(ask(url,pictures,instruction,schema,tag=tag)) for pictures in presentations]
-            result=order_verdict(forward,backward,AXES,sided=final)
+            result=order_verdict(forward,backward,AXES,sided=final,require_depth_basis=final)
             if result['decision']=='review':
                 independent=resolve_workmanship(url,im,regions,instruction,result['unresolved_axes'],sided=final)
                 result.update(decision=independent['decision'],first_unresolved_axes=result['unresolved_axes'],
