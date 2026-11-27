@@ -16,13 +16,14 @@ import uuid
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 import torch
 
+from deadlines import checkpoint
 from gallery import write_gallery, write_focus_proof
 from graphs import UP, draft, finish
 from illustration import pigment_edit, has_drawing_model, text_composition, DRAW_UNET, installed_editor, instruction_edit, detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
 from reference_review import compare
 from structure import inspect_structure
 from construction_review import review as review_construction
-from review import audit, reviewer, RUNTIME, CHECKS
+from review import audit, RUNTIME, CHECKS
 from manga_materials.planner import plan_scene, requested_medium
 from focus_print import PATCH, centers, sampled_surfaces, combine_source, detail_graph, finish_neural, neural_double, repair_print_pair, preserve_source_marks
 from local_patch import confine_edit, mask_bounds, merge_selection, selection_mask
@@ -93,27 +94,25 @@ def post_graph(api, port, directory, stage, workflow=None):
         if (old.get('digest')==digest and old.get('renderer')=='ComfyUI' and old.get('output_sha256')
                 and output_fingerprints(old.get('outputs',{}))==old['output_sha256']):
             return old['outputs']
-    waiting=time.monotonic()
-    with (RUNTIME/'vision-model-lock').open('a') as memory_lock:
-        fcntl.flock(memory_lock,fcntl.LOCK_EX)
-        queue_seconds=round(time.monotonic()-waiting,2)
+    # The executor owns the lease. Waiting clients must leave it available to
+    # the worker that runs the graph, including direct node-editor submissions.
+    if os.environ.get('STUDIO_SUBMITTED_AT'):
+        scripts=str(STUDIO/'scripts')
+        if scripts not in sys.path:sys.path.insert(0,scripts)
+        from studio import server
+        server(port)
+    try:
+        return _post_graph(payload,digest,port,directory,stage,None)
+    except (error.URLError,ConnectionError) as exc:
+        cause=getattr(exc,'reason',exc)
+        if not isinstance(cause,(ConnectionRefusedError,ConnectionResetError,BrokenPipeError)):raise
+        sys.path.insert(0,str(STUDIO/'scripts'))
         try:
-            try:
-                return _post_graph(payload,digest,port,directory,stage,queue_seconds)
-            except (error.URLError,ConnectionError) as exc:
-                cause=getattr(exc,'reason',exc)
-                if not isinstance(cause,(ConnectionRefusedError,ConnectionResetError,BrokenPipeError)):raise
-                # The local service can exit independently of a long-running job.
-                # Only restart this project's offline server on its reserved port.
-                sys.path.insert(0,str(STUDIO/'scripts'))
-                try:
-                    from studio import server
-                    server(port)
-                finally:
-                    sys.path.pop(0)
-                return _post_graph(payload,digest,port,directory,stage,queue_seconds)
+            from studio import server
+            server(port)
         finally:
-            release_idle_renderer(port)
+            sys.path.pop(0)
+        return _post_graph(payload,digest,port,directory,stage,None)
 
 
 def output_fingerprints(outputs):
@@ -162,13 +161,14 @@ def _post_graph(payload, digest, port, directory, stage, queue_seconds):
         if job['id'] not in history and not any(row[1]==job['id'] for rows in active.values() for row in rows):
             job = {}
     if not job:
+        submitted=time.time()
         req = request.Request(url+'/prompt', data=payload, headers={'Content-Type':'application/json'})
         try:
             with request.urlopen(req,timeout=45) as response:
                 ident = json.load(response)['prompt_id']
         except error.HTTPError as exc:
             raise RuntimeError(exc.read().decode()) from exc
-        job = {'id':ident,'digest':digest,'gpu_queue_seconds':queue_seconds}
+        job = {'id':ident,'digest':digest,'gpu_queue_seconds':queue_seconds,'submitted':submitted}
         save(cache,job)
     while True:
         hist = get('/history/'+job['id']).get(job['id'])
@@ -187,6 +187,8 @@ def _post_graph(payload, digest, port, directory, stage, queue_seconds):
                     job.update(renderer='ComfyUI',endpoint=url,model_files=sorted(weights))
             timestamps={name:data['timestamp'] for name,data in hist['status'].get('messages',[])
                         if isinstance(data,dict) and isinstance(data.get('timestamp'),(int,float))}
+            if 'execution_start' in timestamps and job.get('submitted'):
+                job['gpu_queue_seconds']=round(max(0,timestamps['execution_start']/1000-job['submitted']),2)
             if 'execution_start' in timestamps and 'execution_success' in timestamps:
                 job['renderer_seconds']=round((timestamps['execution_success']-timestamps['execution_start'])/1000,2)
             hashes=output_fingerprints(hist['outputs'])
@@ -548,7 +550,7 @@ def main(resources):
     parser.add_argument('--keep-native',action='store_true',help='对已有长边 7680 的母版返修，保留选区外的原像素')
     parser.add_argument('--from-image',type=Path,action='append',default=[],help='先检查已有底图，可重复')
     parser.add_argument('--candidates',type=int,choices=range(1,9),default=None)
-    parser.add_argument('--max-rounds',type=int,default=0,help='完整出片的最大轮数，默认 0 表示持续至通过')
+    parser.add_argument('--max-rounds',type=int,default=0,help='完整出片的最大轮数，默认 0 表示在交付时限内持续尝试')
     parser.add_argument('--max-redraws',type=int,help='每轮最多生成多少次修订候选，含局部修改和重新构图')
     parser.add_argument('--retry-round',type=Path,help=argparse.SUPPRESS)
     parser.add_argument('--retry-observation',default='',help=argparse.SUPPRESS)
@@ -716,6 +718,23 @@ def main(resources):
         correction=rec['指定修正']
         args.repair_box=correction['box'];args.repair_text=correction['text'];args.object=correction['object']
     prefix = job.relative_to(OUTPUT).as_posix()
+    def remember(path,stage,*,print_ready=False):
+        if args.round_worker:
+            if not print_ready:
+                with Image.open(path) as frame:print_ready=max(frame.size)>=3840
+            checkpoint(job,Path(path),stage,print_ready=print_ready)
+
+    def reconstruct_print(source_path,stage,print_seed):
+        from restoration import restoration_graph
+        with Image.open(source_path) as original:
+            input_name=local_image(original.convert('RGB'))
+        graph,node=restoration_graph(input_name,prefix+'/pending-review/'+stage,3840,print_seed)
+        save(job/(stage+'-workflow.json'),graph.ui())
+        outputs=post_graph(graph.api,args.port,job,stage,graph.ui())
+        result=preserve_source_marks(source_path,output_image(outputs[node]))
+        if not args.selection_mask:remember(result,stage,print_ready=True)
+        return result
+
     def build_draft(caption,draw_seed,label,index):
         from page_layout import retry_direction
         clean=retry_direction(args.retry_observation)
@@ -814,7 +833,9 @@ def main(resources):
         stage=label+'-color'
         save(job/(stage+'workflow.json'),paint.ui())
         history=post_graph(paint.api,args.port,job,stage,paint.ui())
-        return output_image(history[str(len(paint.nodes))])
+        colored=output_image(history[str(len(paint.nodes))])
+        remember(colored,stage)
+        return colored
     if args.native_only:
         args.proof_only=True
     def check(path,stage,focus=None):
@@ -959,6 +980,7 @@ def main(resources):
             cleaned=clean_lettering(path,prompt,job,label,before_edit=reserve_redraw)
             if cleaned!=path:
                 path=cleaned
+                remember(cleaned,label+'-cleaned')
                 result=check(path,label+'-cleaned')
         duplicate=duplicate_box(result) if rec.get('画法自适应') and not args.repair_box and ERASE_MODEL.exists() else None
         if not duplicate and args.round_worker and ERASE_MODEL.is_file() and any(
@@ -975,6 +997,7 @@ def main(resources):
             repaired=job/(label+'-removed-duplicate.png')
             with Image.open(path) as source:
                 masked_candidate(source,duplicate).save(repaired)
+            remember(repaired,label+'-count-repair')
             checked=check(repaired,label+'-count-repair',duplicate)
             if usable(checked):return repaired,checked
         return path,result
@@ -1020,6 +1043,7 @@ def main(resources):
                 patched=confine_edit(path,patched,box,job/(label+'-bounded.png'))
                 if manual_mask is not None:
                     patched=merge_selection(path,patched,manual_mask,job/(label+'-masked.png'))
+                remember(patched,label)
                 if args.round_worker or (reference_style and issue.get('operation')=='redraw'):
                     with Image.open(patched) as candidate:
                         verdict=assess_local_edit(original,candidate,box,issue['fix'],issue.get('symptom'),prompt)
@@ -1055,6 +1079,7 @@ def main(resources):
     elif args.candidate_image:
         if not args.from_image:parser.error('选区合成需要 --from-image 提供原图')
         approved=merge_selection(args.from_image[0],args.candidate_image,manual_mask,job/'merged-selection.png')
+        remember(approved,'merged-selection')
         focus=mask_bounds(manual_mask)
         rec['选区返修']={'原图':str(args.from_image[0]),'候选':str(args.candidate_image.resolve()),'遮罩':str(args.selection_mask.resolve()),'范围':focus}
     elif args.reviewed_image:
@@ -1090,6 +1115,8 @@ def main(resources):
                 local=str(path.relative_to(job))
                 if local not in native:native.append(local)
                 save(manifest,rec)
+                with Image.open(path) as frame:
+                    remember(path,label,print_ready=max(frame.size)==3840)
                 print('原生底图',path,flush=True)
             if args.repair_box and i==0:
                 # The caller identified this source defect. Inspect the edited pixels
@@ -1100,6 +1127,14 @@ def main(resources):
                 result=check(path,label)
             else:
                 path=color_candidate(path,label,seed+373+i)
+                # Prepare the first real print before potentially lengthy draft audits.
+                # An unchanged source produces the same graph digest at final refinement.
+                if i==0 and args.round_worker and four_only and not args.from_image and not holder:
+                    from restoration import prefer_source_reconstruction
+                    with Image.open(path) as frame:
+                        restore=prefer_source_reconstruction(args.print_method,max(frame.size),RUNTIME/'ComfyUI/models')
+                    if restore:
+                        reconstruct_print(path,'first-source-restoration',seed+28601)
                 path,result=check_composition(path,label)
             if usable(result) and not args.repair_box:
                 if streaming or holder:
@@ -1165,6 +1200,7 @@ def main(resources):
                 if avoid and not reference_style:graph.api['3']['inputs']['text']+=', '+avoid
                 hist=post_graph(graph.api,args.port,job,label,graph.ui() if reference_style else None)
                 new_path=output_image(hist[str(len(graph.nodes))])
+                remember(new_path,label)
                 new_path=color_candidate(new_path,label,seed+1173+i)
                 new_path,result=check_composition(new_path,label)
                 if usable(check_draft_structure(new_path,result)):
@@ -1188,17 +1224,7 @@ def main(resources):
             from delivery import export_files
             export_files(args.output_dir,job,{'selected-proof.png':proof})
         rec['status']='底图已选 · 待目检';save(manifest,rec);print(rec['status'],proof,flush=True);return 0
-    def reconstruct_print(source_path,stage,print_seed):
-        from restoration import restoration_graph
-        with Image.open(source_path) as original:
-            input_name=local_image(original.convert('RGB'))
-        graph,node=restoration_graph(input_name,prefix+'/pending-review/'+stage,3840,print_seed)
-        save(job/(stage+'-workflow.json'),graph.ui())
-        outputs=post_graph(graph.api,args.port,job,stage,graph.ui())
-        return preserve_source_marks(source_path,output_image(outputs[node]))
-
     def render(source_path,stage):
-        reviewer.cache_clear()
         if torch.backends.mps.is_available():torch.mps.empty_cache()
         with Image.open(source_path) as selected:
             composition=selected.convert('RGB')
@@ -1244,6 +1270,7 @@ def main(resources):
             return preserve_source_marks(source_path,four),None
         if focus_mode:
             small=output_image(hist[ids['small']])
+            if not args.selection_mask:remember(small,stage+'-4k',print_ready=True)
             # Use actual landmarks from the approved image; there are no scene-specific coordinates.
             from evidence import ask, backend
             from construction_review import landmarks
@@ -1330,6 +1357,7 @@ def main(resources):
                 if trial:
                     path,_=trial
                     path=confine_edit(source,path,box,job/(stage+'-layout-bounded.png'))
+                    if not (args.selection_mask or args.repair_box):remember(path,stage+'-layout')
                     with Image.open(path) as proposed:
                         checked=assess_local_edit(before,proposed,box,instruction,issue.get('symptom'),prompt)
                     from print_judge import fingerprint as print_fingerprint
@@ -1346,6 +1374,7 @@ def main(resources):
                             job,name,issue.get('target'),[o for o,_ in rec['parts']],reference_style,rebuild_shape=True,
                             reconstruction_attempt=strategy)
             revised=confine_edit(source,revised,box,job/(name+'-bounded.png'))
+            if not (args.selection_mask or args.repair_box):remember(revised,name)
             release_idle_renderer(args.port)
             with Image.open(revised) as proposed:
                 verdict=assess_local_edit(before,proposed,box,issue['fix'],issue.get('symptom'),prompt)
@@ -1403,6 +1432,7 @@ def main(resources):
         save(job/(stage+'-workflow.json'),graph.ui())
         outputs=post_graph(graph.api,args.port,job,stage,graph.ui())
         candidate=output_image(outputs[str(len(graph.nodes))])
+        remember(candidate,stage)
         from reference_review import review_finish_changes
         finding=review_finish_changes(approved,candidate,prompt)
         save(job/(stage+'-design-review.json'),finding)
@@ -1418,6 +1448,8 @@ def main(resources):
                 corrected=repaint(before,target_box,finding['fix'],prompt,seed+882502,args.port,job,
                                   retry_stage,finding.get('target'),reference_style=True,
                                   rebuild_shape=True,design_reference=approved,allow_control=use_edges)
+                corrected=confine_edit(candidate,corrected,target_box,job/(retry_stage+'-bounded.png'))
+                remember(corrected,retry_stage)
                 with Image.open(corrected) as picture:
                     repair=assess_local_edit(before,picture.convert('RGB'),target_box,
                                              finding['fix'],finding.get('observation'),prompt)
@@ -1587,6 +1619,7 @@ def main(resources):
         release_idle_renderer(args.port)
         rec['4K']=os.path.relpath(master if four_only else small,job)
         if not four_only:rec['8K']=os.path.relpath(master,job)
+        remember(master if four_only else small,label,print_ready=True)
         rec['status']='离线逐块终审中';save(manifest,rec)
         print_focus=dict(rec.get('精绘区域报告') or {})
         if repair_check:print_focus['repair_check']=repair_check
@@ -1713,6 +1746,7 @@ def main(resources):
             graph=reference_draft(caption,seed+830+attempt,*size,prefix+'/'+stage,reference=reference,edit=True)
             history=post_graph(graph.api,args.port,job,stage,graph.ui())
             candidate=output_image(history[str(len(graph.nodes))])
+            remember(candidate,stage)
             rebuilt=check(candidate,stage)
             if not usable(rebuilt):break
             from print_judge import same_composition

@@ -19,7 +19,6 @@ def hand_attachment(claim):
     return bool(HAND.search(claim) and ATTACHMENT.search(claim))
 
 
-@lru_cache(maxsize=1)
 def detector():
     model = cv2.dnn.readNetFromONNX(str(WEIGHTS))
     # The 192px palm model has two anchors/cell on its 24px feature map and six on its 12px map.
@@ -28,6 +27,9 @@ def detector():
     return model, anchors
 
 
+from model_slot import auxiliary
+
+@auxiliary
 def palms(image):
     model, anchors = detector()
     w, h = image.size

@@ -4,14 +4,14 @@ AI Manga Studio
   ./Studio.command -p "A fox in a garden"  Generate a reviewed 4K PNG
 
   -p, --prompt TEXT       Describe the scene in Chinese or English
-  -o, --output-dir DIR    Copy accepted files to DIR (one subfolder per release)
+  -o, --output-dir DIR    Copy delivered files to DIR (one subfolder per release)
   --style TEXT            Optional medium or style, e.g. anime-key-visual or "Japanese watercolor"
   --base-model MODEL      auto (default), qwen-image-2512 (four steps), or qwen-image-2512-full (50 steps)
   --aspect RATIO          auto (default), 2:3, 3:2, 9:16, 16:9, 1:1
   --seed N                Starting seed (default random)
   --candidates N          Drafts per round, 1 to 8 (default 2, deep repair 3)
   --max-redraws N           Limit corrective candidates per round (local edits and recompositions)
-  --max-rounds N          Maximum rounds this run (default 0, retry until accepted)
+  --max-rounds N          Maximum rounds this run (default 0, retry within the delivery window)
   --print-method METHOD   First 4K pass: auto (default), restoration (SeedVR2) or tiled
   --8k                    Also render, inspect and export an 8K PNG
   --deep-repair           Allow slow full-model Qwen retries after a failed edit
@@ -23,6 +23,7 @@ AI Manga Studio
   --from-image PNG        Start from an existing image
   --review-print PNG      Review an existing 4K print against its --reviewed-image draft
   --set-output-dir DIR    Save a default export folder; use --reset-output-dir to clear it
+  --batch                 Start or resume the 50-image anime wallpaper album
   --ui                    Open the local browser studio
   --menu                  Open the interactive terminal menu
   --retouch               Paint a local selection directly on a 4K or 8K original
@@ -33,3 +34,7 @@ AI Manga Studio
   -h, --help              Show this help without installing or starting any service
 
 Without an export folder, open images/new-jobs/<job>/4K.png (also 8K.png with --8k).
+
+Full jobs allow 15 minutes to first 4K and 15 more for review. On timeout or exhausted
+rounds, the latest complete image is delivered as 4K-needs-human-review.png (exit 3).
+A recovered draft is resized to 4K and its source dimensions are recorded.

@@ -105,7 +105,7 @@ def run(suite, label, budget, *, resume_after_update=False):
         for turn in range(budget):
             for case in cases:
                 name=case['id']; prior=result['cases'].get(name,{})
-                if prior.get('status') in ('passed','budget_exhausted','error'):
+                if prior.get('status') in ('passed','manual_review','budget_exhausted','error'):
                     continue
                 job=folder/name;job.mkdir(exist_ok=True)
                 state=read(job/'production.json') if (job/'production.json').exists() else {}
@@ -128,6 +128,7 @@ def run(suite, label, budget, *, resume_after_update=False):
                 exhausted=state.get('status')=='达到指定轮数，本次未产生新定稿'
                 used=sum(row['status'] not in ('运行中','运行中断') for row in state.get('rounds',[]))
                 status='passed' if passed else 'error'
+                if state.get('status')=='需要人工 review':status='manual_review'
                 if exhausted:
                     status='budget_exhausted' if used-baseline>=budget else 'retry_pending'
                 result['cases'][name]=dict(status=status,job=name,started_at=started,elapsed_seconds=round(time.time()-started,1),

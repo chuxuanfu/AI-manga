@@ -294,7 +294,12 @@ class Handler(BaseHTTPRequestHandler):
             proc=self.server.jobs.get(parts[1])
             done=state.get('status')=='已自动定稿'
             filename='8K.png' if state.get('delivery_edge')==7680 else '4K.png'
+            manual=(state.get('manual_delivery') or {}) if state.get('status')=='需要人工 review' else {}
+            if manual and manual.get('file')!='4K-needs-human-review.png':manual={}
             available=[name for name in ('4K.png','8K.png') if done and (job/name).is_file()]
+            if manual and (job/manual['file']).is_file():
+                available=[manual['file']]
+                filename=manual['file']
             if len(parts)==3:
                 name=filename if parts[2]=='image' else parts[2]
                 if name in available:
@@ -303,12 +308,13 @@ class Handler(BaseHTTPRequestHandler):
             ended=proc is not None and proc.poll() is not None
             rounds=state.get('rounds') or []
             last=rounds[-1] if rounds else {}
-            terminal=state.get('status','').startswith(('达到指定轮数','本地运行故障'))
+            terminal=state.get('status','').startswith(('达到指定轮数','本地运行故障','已结束','需要人工 review'))
             message=state.get('status') or '正在准备本地模型'
             if not done and not terminal and proc is None:
                 # A detached CLI worker can still own this job after the UI restarts.
-                lines=subprocess.check_output(['ps','-axo','command='],text=True).splitlines()
-                ended=not any(str(job) in line and ('studio.py' in line or 'run.py' in line) for line in lines)
+                import psutil
+                commands=(proc.info.get('cmdline') or [] for proc in psutil.process_iter(['cmdline'],ad_value=None))
+                ended=not any(str(job) in args and any(Path(arg).name in ('studio.py','run.py') for arg in args) for args in commands)
             if done and filename not in available:
                 message='定稿文件缺失，请查看任务目录'
             if ended and not done and not terminal:
@@ -319,8 +325,8 @@ class Handler(BaseHTTPRequestHandler):
                 with log.open('rb') as stream:
                     stream.seek(max(0,log.stat().st_size-4000))
                     detail=stream.read().decode('utf-8','replace').strip()[-2000:]
-            return self.reply(dict(status=message,reason=last.get('原因',''),round=len(rounds),log=detail,
-                                   done=ended or done or terminal,accepted=filename in available,folder=str(job),
+            return self.reply(dict(status=message,reason=state.get('delivery_reason') or last.get('原因',''),title=manual.get('title') or state.get('prompt',''),manual=bool(manual),round=len(rounds),log=detail,
+                                   done=ended or done or terminal,accepted=done and filename in available,folder=str(job),
                                    images=available,relative=job.relative_to(IMAGES).as_posix(),exported=state.get('exported_to')))
         self.reply({'error':'找不到页面。'},404)
 

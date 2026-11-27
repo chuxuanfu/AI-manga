@@ -11,6 +11,7 @@ import sys
 import time
 import uuid
 from urllib.parse import quote
+from deadlines import MANUAL, MANUAL_FILE, begin, boundary, manual_delivery, run_worker
 from print_judge import MODEL, REVISION, fingerprint, model_identity, complete_print_review, store
 
 
@@ -128,15 +129,19 @@ def export_release(job,state):
 
 
 def dashboard(job,state):
-    from library import IMAGES, published_cover, publication_label
+    from library import IMAGES, published_cover, publication_label, manual_cover
     art=published_cover(job,state)
-    parts=['<!doctype html><meta charset="utf-8"><title>离线出片</title>',
+    manual=manual_cover(job,state)
+    title=state['manual_delivery']['title'] if manual else state['prompt']
+    parts=['<!doctype html><meta charset="utf-8"><title>'+html.escape(title)+'</title>',
            '<style>body{max-width:58rem;margin:4rem auto;padding:0 1rem;font:18px/1.65 system-ui;background:#f7f5ef;color:#272923}a{color:#305647}li{margin:1rem 0}</style>',
-           '<h1>离线出片</h1><p>'+html.escape(state['prompt'])+'</p><strong>'+html.escape(publication_label(state,art))+'</strong>']
+           '<h1>离线出片</h1><p>'+html.escape(title)+'</p><strong>'+html.escape(publication_label(state,art))+'</strong>']
     if not state.get('rechecking_approved') and art is not None:
         eight='<a href="8K.png">打开 8K</a>　' if (job/'final/8K.png').is_file() else ''
         edit='<a href="http://127.0.0.1:8195/?image='+quote(str(art.relative_to(IMAGES)),safe='')+'">涂抹微调</a>　'
         parts.append('<p>'+edit+'<a href="4K.png">打开 4K</a>　'+eight+'<a href="final/review-receipt.json">终审凭据</a>　<a href="final/tile-inspection.json">逐块目检记录</a></p>')
+    if manual:
+        parts.append('<p><a href="'+MANUAL_FILE+'">打开 4K · '+MANUAL+'</a>　<a href="manual-review.json">交付记录</a></p>')
     parts.append('<ol>')
     for row in state['rounds']:
         loc=Path(row['directory'])
@@ -387,6 +392,10 @@ def run(args,job,entry):
             if args.candidates:options+=['--candidates',str(args.candidates)]
             state=dict(prompt=args.prompt.strip(),seed=args.seed if args.seed is not None else secrets.randbelow(2**45),
                        delivery_edge=7680 if args.eight_k else 3840,options=options,rounds=[],status='准备离线出片',port=args.port)
+        if state.get('status')==MANUAL and not (args.skip_focus is not None or args.eight_k and state.get('delivery_edge')==3840):
+            print(MANUAL,job/MANUAL_FILE,flush=True)
+            return 3
+        reset_window=state.get('status') in (MANUAL,'已自动定稿') or args.skip_focus is not None
         if getattr(args,'max_redraws',None) is not None:
             options=state['options']
             if '--max-redraws' in options:
@@ -434,9 +443,22 @@ def run(args,job,entry):
             state['rechecking_approved']=True
             state['status']='按新版标准重新审查'
             save(job,state)
+        aspect=state['options'][state['options'].index('--aspect')+1] if '--aspect' in state['options'] else 'auto'
+        from illustration import KEY_VISUAL
+        title=state['prompt'].removesuffix(' · '+KEY_VISUAL)
+        clock=begin(job,title,aspect,reset=reset_window,submitted=float(os.environ.get('STUDIO_SUBMITTED_AT',time.time())))
+        def finish_manual(reason):
+            if state.get('rounds') and state['rounds'][-1].get('status')=='运行中':
+                state['rounds'][-1].update(status='限时结束',原因=reason)
+            code=manual_delivery(job,state,reason)
+            save(job,state)
+            print(state['status'],job,reason,flush=True)
+            return code
         print('离线出片目录',job,flush=True)
         attempts=0
         while args.max_rounds==0 or attempts<args.max_rounds:
+            until,reason=boundary(job,clock)
+            if time.time()>=until:return finish_manual(reason)
             rounds=state['rounds']
             if edit or (rounds and rounds[-1]['status'] in ('运行中','运行中断')):
                 row=rounds[-1]
@@ -493,14 +515,15 @@ def run(args,job,entry):
                 if retry:
                     row['status']='运行中';state['status']='离线审图与返修中'
                     save(job,state)
-                code=subprocess.run(command).returncode
+                code,deadline=run_worker(command,job,folder,state['port'],clock)
+                if deadline:return finish_manual(deadline)
                 outcome=folder/'review.json'
                 record=json.loads(outcome.read_text()) if outcome.is_file() else {}
                 if code==0 and record.get('status')=='已通过离线终审':break
                 if code==2 and record.get('status','').startswith('未达标'):break
                 row['status']='运行中断';state['status']='本地运行中断，正在恢复' if retry<2 else '本地运行故障，已保存进度'
                 save(job,state)
-                if retry==2:return 1
+                if retry==2:return finish_manual('本地运行故障，已用完恢复次数')
                 time.sleep(3*(retry+1))
             row['status']=record['status']
             if record.get('终审退回原因'):row['原因']=record['终审退回原因']
@@ -513,5 +536,4 @@ def run(args,job,entry):
             attempts+=1;edit=False
             state['status']='本轮未达标，自动重试'
             save(job,state)
-        state['status']='达到指定轮数，本次未产生新定稿'
-        save(job,state);print(state['status'],flush=True);return 2
+        return finish_manual('达到指定轮数，终审未通过')

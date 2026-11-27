@@ -35,7 +35,6 @@ def material_terms(name):
     return f"surface of {name}, fine physically plausible finish, material-specific microstructure and reflected light", None
 
 
-@lru_cache(maxsize=1)
 def segmenter():
     from transformers import CLIPSegProcessor, CLIPSegForImageSegmentation
     folder = MODEL_ROOT / "clipseg"
@@ -44,6 +43,9 @@ def segmenter():
     return processor, model
 
 
+from model_slot import auxiliary
+
+@auxiliary
 def probabilities(image, labels):
     processor, model = segmenter()
     blocks = []

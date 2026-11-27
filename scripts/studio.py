@@ -43,12 +43,24 @@ def _ensure_server(port):
             return False
         if not args or Path(args[0]).resolve() != entry.resolve():
             raise SystemExit(f'Port {port} is in use by another installation.')
+        if not {'--cache-none','--disable-smart-memory'}.issubset(args):
+            raise SystemExit(f'请重启本项目在 {port} 的旧绘图服务，以启用模型串行运行。')
         with request.urlopen(address+'/object_info/MangaStudioAutoMaterialTiles',timeout=6) as response:
             if not json.load(response).get('MangaStudioAutoMaterialTiles'):
                 raise SystemExit('Missing studio nodes. Run Studio.command --install.')
         return True
     if not ready():
-        cmd=[PYTHON,entry,'--listen','127.0.0.1','--port',str(port),'--offline','--fp32-vae',
+        # Pulls update tracked nodes. Synchronize the local installation before import.
+        source=ROOT/'extensions/manga_materials'
+        dest=entry.parent/'custom_nodes/manga_materials'
+        dest.mkdir(parents=True,exist_ok=True)
+        for item in source.glob('*.py'):
+            target=dest/item.name
+            data=item.read_bytes()
+            if not target.exists() or target.read_bytes()!=data:
+                with tempfile.NamedTemporaryFile(dir=dest,delete=False) as stream:stream.write(data)
+                Path(stream.name).replace(target)
+        cmd=[PYTHON,entry,'--listen','127.0.0.1','--port',str(port),'--offline','--cache-none','--disable-smart-memory','--fp32-vae',
              '--extra-model-paths-config',RUNTIME/'model-paths.yaml','--output-directory',IMAGES,'--disable-auto-launch']
         with (RUNTIME/f'server-{port}.log').open('ab') as log:
             proc=subprocess.Popen(protected(cmd),stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
@@ -75,6 +87,7 @@ def set_output(value):
     print('默认成品位置',cfg.get('output_dir',IMAGES/'new-jobs'))
 
 def main(args):
+    submitted=time.time()
     if not args or args==['--ui']:
         from retouch import start
         print(start(page='/studio'))
@@ -96,6 +109,13 @@ def main(args):
             args=['--prompt',scene]+(['--draft'] if choice=='4' else [])
         elif choice in ('2','5','6'):args=[{'2':'--gallery','5':'--editor','6':'--retouch'}[choice]]
         else:raise SystemExit('请输入菜单中的数字')
+    if args==['--batch']:
+        folder=IMAGES/'anime-wallpapers-50'
+        folder.mkdir(parents=True,exist_ok=True)
+        with (folder/'batch.log').open('ab') as log:
+            subprocess.Popen((['/usr/bin/caffeinate','-i'] if sys.platform=='darwin' else [])+[PYTHON,ROOT/'scripts/batch.py'],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
+        print('串行画集',folder/'index.html')
+        return
     if args==['--advanced-help']:
         subprocess.run([PYTHON,PIPELINE/'run.py','--help'],check=True);return
     if args==['--retouch']:
@@ -125,7 +145,8 @@ def main(args):
         if arg=='--port' and i+1<len(args):port=int(args[i+1])
         elif arg.startswith('--port='):port=int(arg.split('=',1)[1])
     if port not in (8193,8194):raise SystemExit('Available ports: 8193 and 8194')
-    server(port)
+    os.environ['STUDIO_SUBMITTED_AT']=str(time.time() if interactive else submitted)
+    # Render requests lazily start the local server inside the timed worker.
     cmd=protected([PYTHON,PIPELINE/'run.py',*args])
     if MAC:cmd=['/usr/bin/caffeinate','-i',*cmd]
     if interactive or background:

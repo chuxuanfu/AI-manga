@@ -96,7 +96,6 @@ def dedicated_plan(prompt):
 
 @lru_cache(maxsize=12)
 def _plan(request):
-    from transformers import AutoModelForCausalLM, AutoTokenizer
     prompt = request.strip()
     if not prompt:
         raise ValueError("请填写一段中文或英文画面描述。")
@@ -105,6 +104,13 @@ def _plan(request):
         if structured:return structured
     except (ImportError,OSError,RuntimeError,ValueError,KeyError):
         pass
+    return fallback_plan(prompt)
+
+from model_slot import auxiliary
+
+@auxiliary
+def fallback_plan(prompt):
+    from transformers import AutoModelForCausalLM, AutoTokenizer
     location = MODEL_ROOT / "scene_planner"
     tokenizer = AutoTokenizer.from_pretrained(location, local_files_only=True)
     model = AutoModelForCausalLM.from_pretrained(location, local_files_only=True, dtype=torch.bfloat16).eval()

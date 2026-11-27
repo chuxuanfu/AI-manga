@@ -51,6 +51,9 @@ def refine_subject_mask(image, coarse):
     return _refine_subject_mask(image,coarse,model_dir)
 
 
+from model_slot import auxiliary
+
+@auxiliary
 def _refine_subject_mask(image,coarse,model_dir):
     import torch
     small=image.convert('RGB')
@@ -76,7 +79,6 @@ def _refine_subject_mask(image,coarse,model_dir):
     return Image.fromarray(np.uint8(mask)*255).resize(image.size,Image.Resampling.LANCZOS)
 
 
-@lru_cache(maxsize=1)
 def boundary_model(model_dir):
     from transformers import Sam2Model,Sam2Processor
     return (Sam2Processor.from_pretrained(model_dir,local_files_only=True),

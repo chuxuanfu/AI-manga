@@ -4,6 +4,7 @@ import subprocess
 
 import numpy as np
 from PIL import Image, ImageFilter
+from model_slot import auxiliary
 from graphs import Graph
 from illustration import TURBO
 
@@ -59,6 +60,7 @@ def fit_print_aspect(path, aspect, edge):
     return dest
 
 
+@auxiliary
 def neural_double(source,destination):
     subprocess.run([str(ENGINE/'realesrgan-ncnn-vulkan'),'-i',str(source),'-o',str(destination),
                     '-m',str(ENGINE),'-n','realesr-animevideov3','-s','2','-t','256'],

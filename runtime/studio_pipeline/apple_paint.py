@@ -13,6 +13,9 @@ from PIL import Image
 RUNTIME = Path(__file__).resolve().parents[1]
 
 
+from model_slot import auxiliary
+
+@auxiliary
 def paint_local_field(image, prompt, seed, directory, stage, strength=.28):
     binary = RUNTIME/'tools/bin/coreml-painter'
     weights = RUNTIME/'models/coreml-sd15'

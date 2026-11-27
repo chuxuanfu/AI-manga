@@ -39,7 +39,7 @@ pre{font-size:12px;max-height:15rem;overflow:auto;background:#f5f6f2;padding:10p
 </div>
 <div><label for="style">画风（可选）</label><input id="style" maxlength="500" placeholder="例如，日系商业插画、透明水彩"></div>
 <details><summary>生成设置</summary><div class="pair">
-<div><label for="rounds">最多尝试轮数</label><select id="rounds"><option value="1">1 轮</option><option value="2">2 轮</option><option value="3">3 轮</option><option value="0">持续至通过</option></select></div>
+<div><label for="rounds">最多尝试轮数</label><select id="rounds"><option value="1">1 轮</option><option value="2">2 轮</option><option value="3">3 轮</option><option value="0">时限内持续尝试</option></select></div>
 <div><label for="seed">起始种子</label><input id="seed" inputmode="numeric" pattern="[0-9]{1,19}" placeholder="随机"></div>
 </div></details>
 <button id="submit" type="submit">开始本地生成</button>
@@ -76,11 +76,12 @@ function display(id,data){
  el('folder').textContent=[data.folder,data.exported].filter(Boolean).join('\n');
  el('log').textContent=data.log||'等候运行日志…';
  el('actions').replaceChildren();
- if(data.accepted){
+ if(data.images.length&&(data.accepted||data.manual)){
+  if(data.manual)el('status').textContent=data.title;
   const prefix='/jobs/'+id+'/';
-  el('preview').src=prefix+'4K.png';el('preview').hidden=false;
+  el('preview').alt=data.title||'4K 成品';el('preview').src=prefix+data.images[0];el('preview').hidden=false;
   for(const file of data.images){
-   addAction('打开 '+file.replace('.png','')+' 原图',prefix+file,true);
+   addAction(data.manual?'打开 4K · 需要人工 review':'打开 '+file.replace('.png','')+' 原图',prefix+file,true);
    addAction('微调 '+file.replace('.png',''),'/?image='+encodeURIComponent(data.relative+'/'+file),false);
   }
  }

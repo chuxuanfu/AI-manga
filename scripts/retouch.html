@@ -79,7 +79,7 @@ async function follow(id){
  const stamp=++watch;$('job').hidden=false;$('result').hidden=true;
  async function read(){if(stamp!==watch)return;try{const data=await api('/jobs/'+id);if(stamp!==watch)return;
  $('progress').textContent=[data.status,data.reason].filter(Boolean).join(' · ');$('folder').textContent=data.folder;
- if(data.accepted){$('result').href='/jobs/'+id+'/image';$('result').hidden=false}
+ if(data.accepted||data.manual){$('result').textContent=data.manual?'打开 4K · 需要人工 review':'打开通过终审的原图';$('result').href='/jobs/'+id+'/image';$('result').hidden=false}
  if(!data.done)setTimeout(read,2500)
  }catch(e){$('progress').textContent=e.message}}
  await read();

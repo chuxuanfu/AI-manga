@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageOps
 from scipy import ndimage
 import torch
+from model_slot import auxiliary
 
 RUNTIME=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(RUNTIME/'ComfyUI/custom_nodes'))
@@ -55,7 +56,6 @@ def inspection_key(rubric,brief,parts,focus,reference,environment):
     return hashlib.sha256(data.encode()).hexdigest()
 
 
-@lru_cache(maxsize=1)
 def reviewer():
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
     model_dir=RUNTIME/'models/visual_reviewer'
@@ -127,6 +127,11 @@ def audit(im,request,candidates,proof_path=None,focus=None):
         try:return evidence.review(full,sheet,region_map,request,cells)
         except (RuntimeError, OSError, ValueError, KeyError) as exc:
             fallback=type(exc).__name__+': '+str(exc)[:180]
+    return _fallback_audit(im,full,sheet,cells,boxes,content,proof_path,fallback,request)
+
+
+@auxiliary
+def _fallback_audit(im,full,sheet,cells,boxes,content,proof_path,fallback,request):
     proc,model=reviewer()
     def ask(messages,limit):
         inputs=proc.apply_chat_template([{"role":"user","content":messages}],tokenize=True,add_generation_prompt=True,

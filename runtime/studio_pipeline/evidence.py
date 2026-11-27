@@ -1,5 +1,4 @@
 """Independent, prompt-blind image inventory and local print review."""
-import fcntl
 import hashlib
 import base64
 import io
@@ -17,6 +16,7 @@ from contextvars import ContextVar
 from functools import lru_cache
 from urllib import request
 import torch
+from model_slot import slot, auxiliary, before_auxiliary
 from counts import reconcile, animals, inventory_counts
 
 RUNTIME = Path(__file__).resolve().parents[1]
@@ -42,6 +42,7 @@ def available(tag=TAG):
     return bool(shutil.which('ollama') or Path('/Applications/Ollama.app/Contents/Resources/ollama').is_file()) and bool(model_identity(tag))
 
 
+_active_reader=ContextVar('active_reader',default=None)
 _inspection_session=ContextVar('inspection_session',default=None)
 
 
@@ -64,6 +65,11 @@ def review_session():
 
 @contextmanager
 def backend(tag=TAG):
+    reader=_active_reader.get()
+    if reader and reader['pid']==os.getpid():
+        if not model_identity(tag):raise RuntimeError('缺少本地视觉模型 '+tag)
+        yield reader['url']
+        return
     state=_inspection_session.get()
     if state is None or state['pid']!=os.getpid():
         with _local_service(tag) as address:
@@ -84,12 +90,10 @@ def _local_service(tag,timings=None):
         sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     address=f'127.0.0.1:{port}'
     env={**os.environ,'OLLAMA_HOST':address,'OLLAMA_MODELS':str(WEIGHTS),'OLLAMA_NO_CLOUD':'1','OLLAMA_NUM_PARALLEL':'1','OLLAMA_MAX_LOADED_MODELS':'1'}
-    with tempfile.TemporaryFile() as log, (RUNTIME/'vision-model-lock').open('a') as memory_lock:
-        waiting=time.monotonic()
-        fcntl.flock(memory_lock,fcntl.LOCK_EX)
+    with tempfile.TemporaryFile() as log, slot() as queued:
         acquired=time.monotonic()
         if timings is not None:
-            timings.update(queue_seconds=round(acquired-waiting,2),service_starts=1)
+            timings.update(queue_seconds=round(queued,2),service_starts=1)
         proc=subprocess.Popen([binary,'serve'],env=env,stdout=log,stderr=log)
         try:
             for _ in range(60):
@@ -100,7 +104,20 @@ def _local_service(tag,timings=None):
                 except OSError:pass
                 time.sleep(.3)
             else:raise RuntimeError('本地视觉模型未就绪')
-            yield 'http://'+address+'/api/chat'
+            url='http://'+address+'/api/chat'
+            active={'tag':None,'pid':os.getpid(),'url':url}
+            def unload():
+                if active['tag']:
+                    command=request.Request('http://'+address+'/api/generate',data=json.dumps(
+                        {'model':active['tag'],'keep_alive':0,'stream':False}).encode(),headers={'Content-Type':'application/json'})
+                    with request.urlopen(command,timeout=30) as reply:reply.read()
+                    active['tag']=None
+            token=_active_reader.set(active)
+            callback=before_auxiliary.set(unload)
+            try:yield url
+            finally:
+                before_auxiliary.reset(callback)
+                _active_reader.reset(token)
         finally:
             proc.terminate()
             try:proc.wait(timeout=15)
@@ -154,6 +171,10 @@ def ask(url,images,prompt,schema=None,tag=TAG,*,reason=False):
 
 
 def _model_answer(url,images,prompt,schema,tag,reason):
+    active=_active_reader.get()
+    if active is not None and active['tag']!=tag:
+        before_auxiliary.get()()
+        active['tag']=tag
     encoded=[]
     for image in images:
         buf=io.BytesIO()
@@ -188,7 +209,6 @@ def _model_answer(url,images,prompt,schema,tag,reason):
     raise ValueError('本地审图连续输出不完整，已保留校样')
 
 
-@lru_cache(maxsize=1)
 def detector():
     from torchvision.models.detection import fasterrcnn_mobilenet_v3_large_fpn, FasterRCNN_MobileNet_V3_Large_FPN_Weights
     net=fasterrcnn_mobilenet_v3_large_fpn(weights=None,weights_backbone=None).eval()
@@ -197,6 +217,7 @@ def detector():
     return net,FasterRCNN_MobileNet_V3_Large_FPN_Weights.DEFAULT.meta['categories']
 
 
+@auxiliary
 def objects(image):
     from torchvision.transforms.functional import pil_to_tensor
     net,names=detector()

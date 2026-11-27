@@ -1,4 +1,6 @@
 """Native-resolution material repainting nodes for the local MangaStudio."""
+import sys
+from functools import wraps
 import math
 from pathlib import Path
 import json
@@ -8,6 +10,32 @@ from PIL import Image, ImageDraw, ImageFilter
 import torch
 
 from .surface import surface_light
+
+_here=Path(__file__).resolve().parent
+_runtime=_here.parents[2] if _here.parent.name=='custom_nodes' else _here.parents[1]/'runtime'
+if str(_runtime/'studio_pipeline') not in sys.path:
+    sys.path.insert(0,str(_runtime/'studio_pipeline'))
+from model_slot import slot,release_memory
+
+# Both the node editor and API render on the same lease, including across ports.
+if _here.parent.name=='custom_nodes' and 'execution' in sys.modules:
+    import execution
+    import comfy.model_management as memory
+    def serialized(execute):
+        @wraps(execute)
+        def run(self,*args,**kwargs):
+            with slot():
+                try:return execute(self,*args,**kwargs)
+                finally:
+                    # Preserve graph success and status messages for the execution receipt.
+                    self.caches=execution.CacheSet(cache_type=self.cache_type,cache_args=self.cache_args)
+                    memory.unload_all_models()
+                    memory.soft_empty_cache(force=True)
+                    release_memory()
+        return run
+    if not getattr(execution.PromptExecutor.execute,'studio_serial',False):
+        execution.PromptExecutor.execute=serialized(execution.PromptExecutor.execute)
+        execution.PromptExecutor.execute.studio_serial=True
 
 HERE = Path(__file__).resolve().parent
 TILE = 1152

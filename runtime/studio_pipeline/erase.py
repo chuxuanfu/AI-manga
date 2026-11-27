@@ -7,6 +7,9 @@ from PIL import Image,ImageDraw,ImageFilter
 
 MODEL=Path(__file__).resolve().parents[1]/'models/inpaint/anime-manga-big-lama.pt'
 
+from model_slot import auxiliary
+
+@auxiliary
 def erase_region(image,mask):
     mask=mask.convert('L')
     bounds=mask.getbbox()

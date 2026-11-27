@@ -37,6 +37,9 @@ def preserve_instrument_scale(brief):
     return not re.search(prohibition,brief,re.I)
 
 
+from model_slot import auxiliary
+
+@auxiliary
 def lettering_polygons(image):
     from print_judge import axes, SIDE
     model=cv2.dnn_TextDetectionModel_DB(str(DETECTOR))
@@ -89,6 +92,7 @@ def decode_word(scores):
     return word, float(confidence.mean()) if len(chars) else 0.
 
 
+@auxiliary
 def recognized_words(image, quads):
     if not quads or not RECOGNIZER.is_file():
         return {}

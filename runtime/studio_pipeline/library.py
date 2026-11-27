@@ -13,7 +13,7 @@ IMAGES=STUDIO/'images'
 CACHE=IMAGES/'.thumbnails'
 HOME='gallery.html'
 ALBUM='index.html'
-LABELS={'fifty-scenes':'五十景画集','new-jobs':'新提示词与定稿','Wallpaper':'屏幕壁纸','Spring':'春日插画与修订版',
+LABELS={'anime-wallpapers-50':'少女插画壁纸 · 50 张','fifty-scenes':'五十景画集','new-jobs':'新提示词与定稿','Wallpaper':'屏幕壁纸','Spring':'春日插画与修订版',
         'Detail':'分块精绘','Draft':'构图草稿','SpringDraft':'春日底图','reference-studies':'参考画法实测','workflow-tests':'workflow-tests'}
 STYLE="""<meta name="viewport" content="width=device-width,initial-scale=1"><style>
 *{box-sizing:border-box}html{background:#f5f3ed;color:#232a26;font:16px/1.55 system-ui,sans-serif}body{max-width:1220px;margin:auto;padding:40px 5vw 80px}
@@ -92,6 +92,15 @@ def published_cover(job, data):
         return art
     return None
 
+def manual_cover(job,state):
+    from deadlines import MANUAL,MANUAL_FILE
+    receipt=state.get('manual_delivery') or {}
+    path=job/MANUAL_FILE
+    if state.get('status')==MANUAL and receipt.get('file')==MANUAL_FILE and path.is_file():
+        return path
+    return None
+
+
 def publication_label(state, art):
     if art is None and state.get('status')=='已自动定稿':return '旧版定稿，等待按当前标准复查'
     return state.get('status','等待审查')
@@ -103,9 +112,9 @@ def jobs(folder):
         data=record(job/'production.json') or record(job/'review.json')
         dashboard=job/'proofs.html'
         if not dashboard.exists():continue
-        art=published_cover(job,data)
+        art=published_cover(job,data) or manual_cover(job,data)
         if art and cover is None:cover=art
-        tiles.append(card(folder,data.get('prompt',job.name),dashboard,art,publication_label(data,art)))
+        tiles.append(card(folder,(data.get('manual_delivery') or {}).get('title') if manual_cover(job,data) else data.get('prompt',job.name),dashboard,art,publication_label(data,art)))
     page(folder/ALBUM,'新提示词与定稿',grid(tiles) if tiles else '<p>新任务会出现在这里。</p>')
     return folder/ALBUM,cover
 
