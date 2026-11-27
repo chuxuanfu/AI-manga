@@ -104,7 +104,13 @@ runtime/venv/bin/python runtime/studio_pipeline/confirmed_issues.py artwork.png 
   --fix "Clarify the overlap and carry the material to its visible edge."
 ```
 
-人工检查后，要在现有 4K 图上微调，可以用同尺寸的黑白 PNG 画出选区。白色允许改变，黑色锁定，灰色可柔化初次合成的边缘。带透明度的遮罩使用其 Alpha 通道。运行以下命令会为修订建立一个新任务。
+### 在原图上涂抹微调
+
+双击 `Studio.command`，选择 **6 在原图上涂抹微调**。打开或拖入项目生成的 4K / 8K PNG，在原图上涂出选区，填写修改要求，点击 **提交本地微调**。可放大、调笔刷、用橡皮擦或撤销。页面会显示任务进度和通过终审的原图。每次提交最多运行一轮。
+
+也可以通过 `./Studio.command --retouch` 打开编辑器。从菜单打开图库后，可直接点击支持的原图旁边的「涂抹微调」。原图和选区保存在新任务的 `inputs/` 目录。
+
+已有遮罩的命令行用法如下。
 
 ```sh
 ./Studio.command --from-image original-4k.png --selection-mask mask.png \

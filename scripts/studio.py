@@ -81,7 +81,7 @@ def main(args):
         args=[arg for arg in args if arg!='--background']
         if not args:raise SystemExit('--background requires a prompt or --job')
     if interactive:
-        print('AI Manga Studio\n\n1  生成 4K 壁纸（默认）\n2  打开图库\n3  设置成品位置\n4  仅生成底图\n5  打开节点编辑器\n0  退出')
+        print('AI Manga Studio\n\n1  生成 4K 壁纸（默认）\n2  打开图库\n3  设置成品位置\n4  仅生成底图\n5  打开节点编辑器\n6  在原图上涂抹微调\n0  退出')
         choice=input('选择 [1] ').strip() or '1'
         if choice=='0':return
         if choice=='3':
@@ -90,11 +90,16 @@ def main(args):
             scene=input('画面描述：').strip()
             if not scene:return
             args=['--prompt',scene]+(['--draft'] if choice=='4' else [])
-        elif choice in ('2','5'):args=['--gallery' if choice=='2' else '--editor']
+        elif choice in ('2','5','6'):args=[{'2':'--gallery','5':'--editor','6':'--retouch'}[choice]]
         else:raise SystemExit('请输入菜单中的数字')
     if args==['--advanced-help']:
         subprocess.run([PYTHON,PIPELINE/'run.py','--help'],check=True);return
+    if args==['--retouch']:
+        from retouch import start
+        print(start());return
     if args==['--gallery']:
+        from retouch import start
+        start(open_page=False)
         subprocess.run([PYTHON,PIPELINE/'library.py'],check=True)
         webbrowser.open((IMAGES/'gallery.html').as_uri());return
     if args==['--editor']:

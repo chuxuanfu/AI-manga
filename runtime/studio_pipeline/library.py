@@ -51,10 +51,18 @@ def card(folder,title,href,cover=None,subtitle=''):
     t=html.escape(title);dest=relative(href,folder)
     img=thumbnail(cover)
     visual=('<img loading="lazy" alt="" src="'+relative(img,folder)+'">') if img else '<span class="empty">查看任务</span>'
-    return f'<a class="card" href="{dest}">{visual}<strong>{t}</strong><small>{html.escape(subtitle)}</small></a>'
+    edit=''
+    if cover and href==cover and img:
+        with Image.open(cover) as picture:
+            supported=max(picture.size) in (3840,7680)
+        if supported:edit='<a href="http://127.0.0.1:8195/?image='+quote(str(cover.relative_to(IMAGES)),safe='')+'">涂抹微调</a>'
+    content=f'<a class="card" href="{dest}">{visual}<strong>{t}</strong><small>{html.escape(subtitle)}</small></a>'
+    return '<div>'+content+edit+'</div>' if edit else content
 
 def page(path,title,contents):
     nav='' if path.parent==IMAGES else '<nav><a href="'+relative(IMAGES/HOME,path.parent)+'">返回图片库</a></nav>'
+    if path==IMAGES/HOME:
+        nav+='<nav><a href="http://127.0.0.1:8195/">打开原图涂抹微调</a></nav>'
     write(path,'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+html.escape(title)+'</title>'+STYLE+nav+'<h1>'+html.escape(title)+'</h1>'+contents+'</html>')
 
 def grid(cards):
@@ -130,6 +138,8 @@ def refresh():
             elif name=='new-jobs':entry,cover=jobs(folder)
             elif name=='fifty-scenes':
                 entry=folder/'index.html';cover=folder/'proofs/01-cherry-rain-post-office.jpg'
+            elif (folder/ALBUM).is_file() and STYLE not in (folder/ALBUM).read_text():
+                entry,cover=folder/ALBUM,None
             else:entry,cover=history(folder)
             if entry.is_file():albums.append(card(IMAGES,LABELS.get(name,name),entry,cover,name))
         page(IMAGES/HOME,'本地图片库',grid(albums))

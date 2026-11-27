@@ -128,14 +128,15 @@ def export_release(job,state):
 
 
 def dashboard(job,state):
-    from library import published_cover, publication_label
+    from library import IMAGES, published_cover, publication_label
     art=published_cover(job,state)
     parts=['<!doctype html><meta charset="utf-8"><title>离线出片</title>',
            '<style>body{max-width:58rem;margin:4rem auto;padding:0 1rem;font:18px/1.65 system-ui;background:#f7f5ef;color:#272923}a{color:#305647}li{margin:1rem 0}</style>',
            '<h1>离线出片</h1><p>'+html.escape(state['prompt'])+'</p><strong>'+html.escape(publication_label(state,art))+'</strong>']
     if not state.get('rechecking_approved') and art is not None:
         eight='<a href="8K.png">打开 8K</a>　' if (job/'final/8K.png').is_file() else ''
-        parts.append('<p><a href="4K.png">打开 4K</a>　'+eight+'<a href="final/review-receipt.json">终审凭据</a>　<a href="final/tile-inspection.json">逐块目检记录</a></p>')
+        edit='<a href="http://127.0.0.1:8195/?image='+quote(str(art.relative_to(IMAGES)),safe='')+'">涂抹微调</a>　'
+        parts.append('<p>'+edit+'<a href="4K.png">打开 4K</a>　'+eight+'<a href="final/review-receipt.json">终审凭据</a>　<a href="final/tile-inspection.json">逐块目检记录</a></p>')
     parts.append('<ol>')
     for row in state['rounds']:
         loc=Path(row['directory'])

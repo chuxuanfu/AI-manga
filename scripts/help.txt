@@ -22,6 +22,7 @@ AI Manga Studio
   --from-image PNG        Start from an existing image
   --review-print PNG      Review an existing 4K print against its --reviewed-image draft
   --set-output-dir DIR    Save a default export folder; use --reset-output-dir to clear it
+  --retouch               Paint a local selection directly on a 4K or 8K original
   --gallery               Open the offline gallery
   --editor                Open the node editor
   --install               Install or verify dependencies and models

@@ -1,0 +1,94 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>局部微调 · AI Manga Studio</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f4ef;color:#222c28;font:16px/1.5 "Source Sans 3","PingFang SC",system-ui,sans-serif}header{background:#fff;border-bottom:1px solid #d7dad1;padding:18px 4vw;display:flex;gap:18px;align-items:baseline}header span{font-weight:750;letter-spacing:.04em;font-size:14px;color:#416257}h1{font-size:23px;margin:0}main{margin:24px auto;padding:0 3vw;max-width:1600px;display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:18px}.work,aside{background:white;border:1px solid #d5d9d1;border-radius:12px;overflow:hidden}.bar{padding:12px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}.meta{color:#53635c;font-size:13px;overflow-wrap:anywhere;margin-right:auto}button,.pick,a.action{font:inherit;cursor:pointer;display:inline-block;border:1px solid #ccd4cb;background:#fff;border-radius:7px;padding:7px 12px;color:#233a31}button:disabled{opacity:.45;cursor:default}button[aria-pressed=true],.submit,.pick{background:#205647;color:white;border-color:#205647}.viewport{height:clamp(360px,72vh,940px);overflow:auto;background:#e7e9e1;position:relative;border-top:1px solid #d5d9d1}.board{margin:auto;position:relative;line-height:0;touch-action:none}.board img{width:100%;height:100%;display:block;user-select:none;pointer-events:none}.cursor{position:absolute;pointer-events:none;border:1px solid white;box-shadow:0 0 0 1px #263d34;border-radius:50%;transform:translate(-50%,-50%)}.board canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;opacity:.52}.empty{height:100%;display:grid;place-content:center;text-align:center;gap:12px;color:#56655e}.empty b{font-size:19px;color:#273c32}.empty label{justify-self:center}.over{outline:3px dashed #205647;outline-offset:-8px}aside{padding:20px;align-self:start}h2{font-size:16px;margin:0 0 10px}aside section+section{border-top:1px solid #dce1d9;margin-top:18px;padding-top:18px}textarea{width:100%;resize:vertical;border:1px solid #b8c5ba;border-radius:7px;font:inherit;padding:10px;min-height:82px}input[type=range]{width:100%;accent-color:#205647}output{float:right}details{margin:10px 0;color:#42564c}summary{cursor:pointer}.submit{width:100%;margin-top:8px;font-weight:650;padding:11px}#message{margin:12px 0 0;color:#345744;white-space:pre-line;overflow-wrap:anywhere}#job{overflow-wrap:anywhere;font-size:14px}footer{padding:0 4vw 22px;color:#5c6960;font-size:13px}.file{position:absolute;width:1px;height:1px;opacity:0}.pick:focus-within,button:focus-visible,textarea:focus-visible{outline:3px solid #ecaa52}.zoom{max-width:80px}[hidden]{display:none!important}
+@media(max-width:850px){main{grid-template-columns:1fr}.viewport{height:55vh}header{padding:12px 3vw}.bar{padding:8px}}
+</style>
+<header><span>AI Manga Studio</span><h1>局部微调</h1></header>
+<main><div class="work"><div class="bar"><label class="pick">打开原图<input type="file" id="file" class="file" accept="image/png"></label><span class="meta" id="meta">4K / 8K PNG</span><button id="minus" disabled aria-label="缩小">−</button><button id="fit" disabled>适应窗口</button><button id="plus" disabled aria-label="放大">＋</button></div>
+<div class="viewport" id="viewport"><div class="empty" id="empty"><b>把原图拖到这里</b><span>也可以点击上方的「打开原图」</span></div><div class="board" id="board" hidden><img id="art" alt="待微调的原图"><canvas id="overlay" aria-label="在原图上涂抹修改区域"></canvas><i class="cursor" id="cursor" hidden></i></div></div></div>
+<aside><section><h2>画出选区</h2><div class="bar" style="padding:0 0 12px"><button id="paint" aria-pressed="true">画笔</button><button id="erase" aria-pressed="false">橡皮</button><button id="undo" disabled>撤销</button></div><label for="width">笔刷大小</label><output id="value">28 px</output><input type="range" id="width" min="2" max="120" value="28"></section>
+<section><h2><label for="change">想怎么改？</label></h2><textarea id="change" placeholder="例如，把涂到的袖口改成两道细罗纹，沿用现有的受光方向。"></textarea><details><summary>原画描述（可选）</summary><textarea id="brief" aria-label="原画描述"></textarea></details><button class="submit" id="submit" disabled>提交本地微调</button><p id="message" role="status"></p></section><section id="job" hidden><h2>本次任务</h2><p id="progress" aria-live="polite"></p><a class="action" id="result" hidden>打开通过终审的原图</a><details><summary>任务文件夹</summary><span id="folder"></span></details></section></aside></main>
+<footer>彩色覆盖处为修改区域。放大后可用滚动条或触控板移动画布。</footer>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const canvas=$('overlay'),ctx=canvas.getContext('2d'),view=$('viewport');
+let source=null,strokes=[],tool='paint',zoom=1,current=null,loading=false,sending=false,serial=0,requestId=null,watch=0;
+function message(text){$('message').textContent=text}
+function controls(){
+ $('submit').disabled=loading||sending||!source||!strokes.some(s=>s.tool==='paint')||!$('change').value.trim();
+ $('undo').disabled=!strokes.length||sending;for(const id of ['minus','fit','plus'])$(id).disabled=!source;
+}
+async function api(path,body){
+ const options=body===undefined?{}:{method:'POST',headers:{'X-Studio-Retouch':'1'},body};
+ const rsp=await fetch(path,options);const data=await rsp.json();
+ if(!rsp.ok)throw new Error(data.error||'本地请求失败。');return data;
+}
+function point(ev){
+ const r=canvas.getBoundingClientRect();
+ return [Math.max(0,Math.min(source.width,(ev.clientX-r.left)*source.width/r.width)),
+         Math.max(0,Math.min(source.height,(ev.clientY-r.top)*source.height/r.height))];
+}
+function segment(stroke,a,b){
+ const sx=canvas.width/source.width,sy=canvas.height/source.height;
+ ctx.setTransform(sx,0,0,sy,0,0);ctx.globalCompositeOperation=stroke.tool==='paint'?'source-over':'destination-out';
+ ctx.fillStyle=ctx.strokeStyle='#ef426d';ctx.lineWidth=stroke.width;ctx.lineCap=ctx.lineJoin='round';
+ ctx.beginPath();if(a[0]===b[0]&&a[1]===b[1]){ctx.arc(a[0],a[1],stroke.width/2,0,Math.PI*2);ctx.fill()}
+ else{ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke()}
+}
+function repaint(){ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);
+ for(const s of strokes){s.points.forEach((p,i)=>segment(s,s.points[Math.max(0,i-1)],p))}}
+function layout(){if(!source)return;
+ const scale=Math.min((view.clientWidth-8)/source.width,(view.clientHeight-8)/source.height)*zoom;
+ const w=Math.max(1,Math.round(source.width*scale)),h=Math.max(1,Math.round(source.height*scale));
+ $('board').style.width=w+'px';$('board').style.height=h+'px';
+ const density=Math.min(window.devicePixelRatio||1,2,3200/Math.max(w,h));
+ canvas.width=Math.max(1,Math.round(w*density));canvas.height=Math.max(1,Math.round(h*density));repaint()}
+async function load(file,library){
+ if(sending)return;
+ const ticket=++serial;loading=true;controls();message('正在打开原图…');
+ try{
+  const info=await api(library?'/library-source?image='+encodeURIComponent(library):'/source',library?'':file);
+  const img=new Image();img.src='/source/'+info.id;await img.decode();if(ticket!==serial)return;
+  $('art').src=img.src;source=info;strokes=[];current=null;requestId=null;zoom=1;
+  $('meta').textContent=(file?.name||library.split('/').pop())+' · '+info.width+' × '+info.height;
+  $('empty').hidden=true;$('board').hidden=false;$('brief').value=info.prompt;$('change').value='';
+  layout();message('在原图上涂出要改的部分。');
+ }catch(e){if(ticket===serial)message(e.message)}finally{if(ticket===serial){loading=false;controls()}}
+}
+$('file').onchange=e=>{if(e.target.files[0])load(e.target.files[0]);e.target.value=''};
+view.ondragover=e=>{e.preventDefault();view.classList.add('over')};view.ondragleave=()=>view.classList.remove('over');
+view.ondrop=e=>{e.preventDefault();view.classList.remove('over');if(e.dataTransfer.files[0])load(e.dataTransfer.files[0])};
+for(const id of ['paint','erase'])$(id).onclick=()=>{tool=id;for(const item of ['paint','erase'])$(item).setAttribute('aria-pressed',String(item===id))};
+$('width').oninput=()=>{$('value').value=$('width').value+' px'};
+$('change').oninput=$('brief').oninput=()=>{requestId=null;controls()};
+$('undo').onclick=()=>{strokes.pop();requestId=null;repaint();controls()};
+$('plus').onclick=()=>{zoom=Math.min(8,zoom*1.5);layout()};$('minus').onclick=()=>{zoom=Math.max(1,zoom/1.5);layout()};$('fit').onclick=()=>{zoom=1;layout()};
+new ResizeObserver(layout).observe(view);
+canvas.onpointerdown=e=>{if(!source||sending||loading||current||e.button!==0)return;e.preventDefault();canvas.setPointerCapture(e.pointerId);
+ const p=point(e);current={id:e.pointerId,tool,width:Math.min(Math.max(source.width,source.height),Number($('width').value)*source.width/canvas.getBoundingClientRect().width),points:[p]};
+ strokes.push(current);requestId=null;segment(current,p,p);controls()};
+canvas.onpointerleave=()=>{$('cursor').hidden=true};
+canvas.onpointermove=e=>{
+ const rect=canvas.getBoundingClientRect(),cursor=$('cursor');cursor.hidden=e.pointerType==='touch';
+ cursor.style.left=(e.clientX-rect.left)+'px';cursor.style.top=(e.clientY-rect.top)+'px';
+ cursor.style.width=cursor.style.height=$('width').value+'px';
+ if(current?.id!==e.pointerId)return;const p=point(e),a=current.points.at(-1);segment(current,a,p);current.points.push(p)};
+canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=e=>{if(current?.id===e.pointerId)current=null};
+async function follow(id){
+ const stamp=++watch;$('job').hidden=false;$('result').hidden=true;
+ async function read(){if(stamp!==watch)return;try{const data=await api('/jobs/'+id);if(stamp!==watch)return;
+ $('progress').textContent=[data.status,data.reason].filter(Boolean).join(' · ');$('folder').textContent=data.folder;
+ if(data.accepted){$('result').href='/jobs/'+id+'/image';$('result').hidden=false}
+ if(!data.done)setTimeout(read,2500)
+ }catch(e){$('progress').textContent=e.message}}
+ await read();
+}
+$('submit').onclick=async()=>{if($('submit').disabled)return;sending=true;controls();message('正在保存选区并提交…');
+ try{requestId??=crypto.randomUUID().replaceAll('-','');
+ const data=await api('/jobs',JSON.stringify({request:requestId,source:source.id,change:$('change').value,prompt:$('brief').value,strokes}));
+ location.hash=data.job;message('已提交。可以关闭此页，任务会继续在本机运行。');await follow(data.job)
+ }catch(e){message(e.message)}finally{sending=false;controls()}};
+const chosen=new URLSearchParams(location.search).get('image');if(chosen)load(null,chosen);
+if(/^[0-9a-f]{32}$/.test(location.hash.slice(1)))follow(location.hash.slice(1));
+</script></html>
