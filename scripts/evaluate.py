@@ -70,7 +70,8 @@ def run(suite, label, budget, *, resume_after_update=False):
         if (result['suite_sha256'],result['max_rounds'])!=(key,budget):
             raise ValueError('Use a new run name when the suite or round budget changes.')
         version=pipeline_identity()
-        if result.setdefault('pipeline_sha256',version)!=version:
+        upgrading=result.setdefault('pipeline_sha256',version)!=version
+        if upgrading:
             if not resume_after_update:
                 raise ValueError('The workflow changed. Start a new named run for a clean comparison, or use --resume-after-update to continue saved work.')
             history=dict(pipeline_sha256=result['pipeline_sha256'],cases=result['cases'],ended_at=time.time())
@@ -92,6 +93,11 @@ def run(suite, label, budget, *, resume_after_update=False):
             if prior['status']=='error':
                 prior['status']='queued'
         store(report_file,result)
+        if upgrading:
+            def priority(case):
+                state=history['cases'].get(case['id'],{}).get('status','queued')
+                return 0 if state=='running' else (1 if state=='queued' else 2)
+            cases=sorted(cases,key=priority)
         for turn in range(budget):
             for case in cases:
                 name=case['id']; prior=result['cases'].get(name,{})

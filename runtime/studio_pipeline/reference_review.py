@@ -7,6 +7,7 @@ from evidence import ask, backend, available, TAG
 from illustration import REFERENCE
 
 BENCHMARK=Path(__file__).resolve().parents[1]/'ComfyUI/input'/REFERENCE
+DETAIL_REVIEW_VERSION='subject-crops-v2'
 AXES=('form_and_contact','material_construction','lighting','depth_and_finish')
 GRADE={'type':'object','properties':{'level':{'type':'string','enum':['left','right','tie','unclear']},'evidence':{'type':'string'}},'required':['level','evidence']}
 SIDE_GRADE={'type':'object','properties':{**GRADE['properties'],'left_detail':{'type':'string'},
@@ -301,7 +302,7 @@ def compare(im,regions,path,brief='',*,final=False,medium=None):
                               independent_review=independent)
                 if independent.get('consistent_deficits'):
                     result['consistent_deficits']=independent['consistent_deficits']
-            result.update(assessment_model=tag,separate_material_evidence=final,reference_on_left=forward,reference_on_right=backward)
+            result.update(detail_review_version=DETAIL_REVIEW_VERSION,assessment_model=tag,separate_material_evidence=final,reference_on_left=forward,reference_on_right=backward)
             if result['decision']=='below':
                 result['redraw_direction']=redraw_direction(result,brief,address=url if brief else None,tag=tag,medium=medium)
         return result

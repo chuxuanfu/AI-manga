@@ -98,6 +98,28 @@ def previous_print_pair(job,source,record):
     return [str(baseline.resolve()),str(printed)]
 
 
+def held_workmanship_pair(folder, brief):
+    """Reinspect exact saved pixels when the subject-detail comparison changed."""
+    from reference_review import DETAIL_REVIEW_VERSION
+    file=folder/'review.json'
+    if not file.exists():return None
+    record=json.loads(file.read_text())
+    if (record.get('prompt')!=brief or record.get('delivery_edge')!=3840
+            or record.get('status')!='未达标 · 终审退回' or not record.get('4K') or not record.get('底图')):
+        return None
+    master=(folder/record['4K']).resolve()
+    baseline=(folder/record['底图']).resolve()
+    if (not master.is_relative_to(folder.resolve()) or not master.is_file() or not baseline.is_file()
+            or fingerprint(baseline)!=record.get('当前4K重建底图指纹')):return None
+    digest=fingerprint(master)
+    assessment=next((row['review'] for row in reversed(record.get('reviews',[]))
+                     if row['stage'].endswith('final-art') and row['hash']==digest),{})
+    comparison=assessment.get('参考比较') or {}
+    if (comparison.get('decision') not in ('below','review') or comparison.get('detail_review_version')==DETAIL_REVIEW_VERSION
+            or not assessment.get('note') or assessment['note']!=record.get('终审退回原因')):return None
+    return [str(baseline),str(master)]
+
+
 def export_release(job,state):
     if state.get('output_dir'):
         from delivery import export_files
@@ -426,6 +448,11 @@ def run(args,job,entry):
             if pending_pair:row['reinspection_pair']=pending_pair
             retained_four=state.pop('retained_4k_source',None)
             if retained_four:row['reinspection_source']=retained_four
+            if (len(rounds)>1 and '--from-image' not in options and not edit and state['delivery_edge']==3840
+                    and not row.get('reinspection_pair') and not rounds[-2].get('reinspection_pair')
+                    and not any(flag in options for flag in ('--reviewed-image','--review-print','--repair-box','--candidate-image'))):
+                pair=held_workmanship_pair(job/rounds[-2]['directory'],state['prompt'])
+                if pair:row['reinspection_pair']=pair
             if row.get('reinspection_source'):
                 # Use only the previously checked 4K master as the native composition.
                 aspect=options[options.index('--aspect')+1] if '--aspect' in options else 'auto'
