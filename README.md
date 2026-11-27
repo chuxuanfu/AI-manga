@@ -36,7 +36,7 @@ bash Studio.command
 | `--review-print PNG --reviewed-image DRAFT` | 对已有 4K 修订稿核验同源构图、实际像素和全部终审项。默认从底图精绘 |
 | `--base-model MODEL` | 自动混合底图候选。支持的设备可指定 `qwen-image-2512` 四步起稿或 `qwen-image-2512-full` 五十步起稿 |
 | `--seed N` | 随机选择起始种子 |
-| `--candidates 1…8` | 完整流程每轮 3 张初始候选，快捷底图模式 1 张 |
+| `--candidates 1…8` | 完整流程默认每轮最多 2 张初始候选，深度返工模式 3 张，快捷底图模式 1 张 |
 | `--deep-repair` | 允许 Qwen 返工升级到 40 步、文字起稿升级到完整采样。默认使用蒸馏模型，整幅返工后仍被退回会换构图 |
 | `--max-rounds N` | 0，持续尝试至通过。达到显式上限时保留进度 |
 | `-o, --output-dir DIR` | 使用菜单保存的成品目录，未设置时使用任务目录 |
@@ -44,7 +44,7 @@ bash Studio.command
 | `--native-4k` | 常规底图尺寸，例如竖幅 1248 × 1872 |
 | `--full-8k-diffusion` | 默认不启用。指定后开启 8K 并使用全幅分块扩散 |
 | `--draft` | 完整出片。加此参数可只做底图和选片 |
-| `--from-image PNG` | 从提示词生成新构图 |
+| `--from-image PNG` | 从指定本地图片开始检查与返工 |
 
 使用 `--help` 查看日常参数，`--advanced-help` 查看局部返修选项。节点编辑器使用本机地址 127.0.0.1:8193。
 
