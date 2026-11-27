@@ -60,6 +60,15 @@ def fit_print_aspect(path, aspect, edge):
     return dest
 
 
+def prepare_composition_review(source,restored,record):
+    """Bind the structural review to the exact 4K raster used for release."""
+    from print_judge import fingerprint
+    master=fit_print_aspect(restored,record.get('aspect','auto'),3840)
+    record['待在4K复查的底图']=fingerprint(source)
+    record['单候选成品初审']=fingerprint(master)
+    return master
+
+
 @auxiliary
 def neural_double(source,destination):
     subprocess.run([str(ENGINE/'realesrgan-ncnn-vulkan'),'-i',str(source),'-o',str(destination),

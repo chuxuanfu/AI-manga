@@ -733,6 +733,7 @@ def main(resources):
                 raise SystemExit(2)
         reserve_redraw(stage)
 
+    from focus_print import prepare_composition_review
     prepared_prints={}
     def reconstruct_print(source_path,stage,print_seed):
         from restoration import restoration_graph
@@ -759,8 +760,8 @@ def main(resources):
         with Image.open(path) as image:
             restore=prefer_source_reconstruction(args.print_method,max(image.size),RUNTIME/'ComfyUI/models')
         if restore:
-            reconstruct_print(path,label+'-restoration',seed+28601)
-        return restore
+            return reconstruct_print(path,label+'-restoration',seed+28601)
+        return None
 
     def build_draft(caption,draw_seed,label,index):
         from page_layout import retry_direction
@@ -1178,11 +1179,7 @@ def main(resources):
                         path=prepare_full_bleed(path,prompt)
                         early=reconstruct_print(path,'first-source-restoration',seed+28601)
                         if count==1:
-                            from focus_print import fit_print_aspect
-                            from print_judge import fingerprint
-                            prepared_print=fit_print_aspect(early,rec.get('aspect','auto'),3840)
-                            rec['待在4K复查的底图']=fingerprint(path)
-                            rec['单候选成品初审']=fingerprint(prepared_print)
+                            prepared_print=prepare_composition_review(path,early,rec)
                             save(manifest,rec)
                 path,result=check_composition(path,label,prepared_print)
                 if prepared_print and result.get('status')=='global':
@@ -1258,8 +1255,17 @@ def main(resources):
                 new_path=output_image(hist[str(len(graph.nodes))])
                 remember(new_path,label)
                 new_path=color_candidate(new_path,label,seed+1173+i)
-                prepare_repaint(new_path,label)
-                new_path,result=check_composition(new_path,label)
+                if args.round_worker and four_only and not args.proof_only and not args.native_only and not rec.get('原生4K'):
+                    from framing import prepare_full_bleed
+                    new_path=prepare_full_bleed(new_path,prompt)
+                restored=prepare_repaint(new_path,label)
+                prepared=prepare_composition_review(new_path,restored,rec) if restored and not args.proof_only else None
+                if prepared:save(manifest,rec)
+                new_path,result=check_composition(new_path,label,prepared)
+                if prepared and result['status']=='global':
+                    from reference_review import final_repaint_direction
+                    if final_repaint_direction(result.get('参考比较') or {}):
+                        approved=new_path;break
                 if usable(check_draft_structure(new_path,result)):
                     approved=new_path;break
     if not approved:
