@@ -381,6 +381,7 @@ def run(args,job,entry):
             if args.candidates:options+=['--candidates',str(args.candidates)]
             state=dict(prompt=args.prompt.strip(),seed=args.seed if args.seed is not None else secrets.randbelow(2**45),
                        delivery_edge=7680 if args.eight_k else 3840,options=options,rounds=[],status='准备离线出片',port=args.port)
+        if args.deep_repair:state['deep_repair']=True
         if args.eight_k and state.get('delivery_edge',7680)==3840:
             if args.skip_focus is not None:
                 raise SystemExit('--skip-focus 需要已有 8K 精绘结果')
@@ -468,6 +469,7 @@ def run(args,job,entry):
             command=[sys.executable,str(entry),'--round-worker','--job',str(folder),'--prompt',state['prompt'],
                      '--port',str(state['port']),'--seed',str(row['seed']),*options]
             if state.get('delivery_edge',7680)==7680:command.append('--8k')
+            if state.get('deep_repair'):command.append('--deep-repair')
             if len(rounds)>1 and state.get('delivery_edge')==3840 and not edit:
                 command+=['--retry-round',str(job/rounds[-2]['directory'])]
             if len(rounds)>1 and rounds[-2].get('原因'):

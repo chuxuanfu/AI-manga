@@ -517,6 +517,7 @@ def main(resources):
     parser.add_argument('--skip-focus',nargs='*',type=int,choices=(1,2,3),default=None,help='对照后撤回指定编号的8K局部采样；不带编号可全部恢复。')
     parser.add_argument('--8k',dest='eight_k',action='store_true',help='在默认 4K 成品之外生成并审查 8K')
     parser.add_argument('--full-8k-diffusion',action='store_true',help='4K、8K 两级均进行全幅重叠分块扩散')
+    parser.add_argument('--deep-repair',action='store_true',help='允许自动返工升级为慢速的完整 Qwen 采样')
     parser.add_argument('--native-4k',action='store_true',help='直接在长边 3840 的画布采样，耗时较长')
     parser.add_argument('--native-only',action='store_true',help='生成并保留各张原生底图，供原尺寸查看')
     parser.add_argument('--proof-only',action='store_true',help='先选片纠错并保存校样，稍后可继续精绘')
@@ -663,7 +664,7 @@ def main(resources):
     if reference_style and rec['画法参考']!=hashlib.sha256((INPUT/REFERENCE).read_bytes()).hexdigest():
         parser.error('该任务的画法参考已更换，请为新参考建立新任务。')
     args.candidates_explicit=args.candidates is not None
-    args.candidates=args.candidates or rec.get('候选数',3)
+    args.candidates=args.candidates or rec.get('候选数',3 if args.deep_repair else 2)
     if args.from_image:
         rec['输入底图']=[str(p.resolve()) for p in args.from_image]
     else:
@@ -706,14 +707,18 @@ def main(resources):
         # both an independent layout and a text-only alternative to select from.
         borrow=any(term in prompt.lower() for term in ('参考图','参考画','像图','reference image','reference illustration'))
         own_first=rec.get('画法自适应') and bool(rec.get('画材')) and not borrow and not rec.get('原生4K') and not args.native_only
-        text_slot=(index==1 or (args.candidates==1 and args.retry_round and index==0))
-        automatic_text=text_slot and not borrow and not rec.get('原生4K') and not args.native_only and not args.from_image
-        requested=rec.get('base_model','auto')
         from illustration import medium_study
         study=medium_study(rec.get('画材'))
+        # Prefer the distilled text model for a new independent composition.
+        # Retain the first slot for an actual material reference when available.
+        text_first=(not study and not borrow and not rec.get('原生4K') and not args.native_only
+                    and not args.from_image and has_drawing_model(RUNTIME/'ComfyUI/models'))
+        text_slot=index==(0 if text_first else 1) or (args.candidates==1 and args.retry_round and index==0)
+        automatic_text=text_slot and not borrow and not rec.get('原生4K') and not args.native_only and not args.from_image
+        requested=rec.get('base_model','auto')
         # After two rejected rounds, devote one independent text candidate to the base
         # denoiser when production actually requests a new composition.
-        full=(requested=='qwen-image-2512-full' or (requested=='auto' and automatic_text
+        full=(requested=='qwen-image-2512-full' or (requested=='auto' and automatic_text and args.deep_repair
               and args.retry_round and args.retry_round.name.isdigit() and int(args.retry_round.name)>=2))
         if requested!='auto' or (automatic_text and has_drawing_model(RUNTIME/'ComfyUI/models',full=bool(full))):
             # The text generator can reconstruct the relationships directly from the
@@ -731,7 +736,7 @@ def main(resources):
                 sample=local_image(technique.convert('RGB'))
             graph=reference_draft(caption,draw_seed,*size,name,reference=sample,layout=True)
             rec['画材技法样片']=study.name
-        elif (own_first and index==0) or (not own_first and index==2 and rec.get('画法自适应')):
+        elif (text_first and index==1) or (own_first and index==0) or (not own_first and index==2 and rec.get('画法自适应')):
             direction=('Follow the medium and palette in the request. When unspecified, draw a finished Japanese storybook illustration. '
                        'Place each principal subject once. At every overlap, keep the nearer contour legible. Show a plausible support or occluding surface for visible figures, tools and animals. Preserve all requested interactions. ')
             graph=text_draft(direction+caption,draw_seed,*size,name)
@@ -1290,7 +1295,7 @@ def main(resources):
                 # The specialist reproduced a known geometric error. The next attempt
                 # rebuilds the interior using a cleared visual reference.
                 if 3 not in strategies:strategies.append(3)
-            if (strategy==3 and recurring and verdict.get('verdict') in ('unchanged','still_present')
+            if (args.deep_repair and strategy==3 and recurring and verdict.get('verdict') in ('unchanged','still_present')
                     and installed_editor(RUNTIME/'ComfyUI/models')):
                 # A sequence of rejected short edits can repeat the same geometry. Give
                 # the full base editor one attempt before a complete scene redraw.
@@ -1322,7 +1327,13 @@ def main(resources):
             with Image.open(sample) as image:
                 study=local_image(image.convert('RGB'))
         prior=args.retry_round/'review.json' if args.retry_round else None
-        full=bool(prior and prior.is_file() and json.loads(prior.read_text()).get('画法整图返工'))
+        earlier=json.loads(prior.read_text()).get('画法整图返工',{}) if prior and prior.is_file() else {}
+        repeated=earlier.get('重绘指纹')==fingerprint(approved) or earlier.get('前一版本指纹')==fingerprint(master)
+        if repeated and not args.deep_repair:
+            # The same composition already received a full-frame edit. Return
+            # its rejection so that the next round can draw a different layout.
+            return None
+        full=bool(repeated and args.deep_repair)
         graph=finish_repaint_graph(prompt,instruction,seed+882501,local_image(drawing),
                                   prefix+'/'+stage,editor,study=study,full=full)
         save(job/(stage+'-workflow.json'),graph.ui())

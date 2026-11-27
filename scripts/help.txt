@@ -9,10 +9,11 @@ AI Manga Studio
   --base-model MODEL      auto (default), qwen-image-2512 (four steps), or qwen-image-2512-full (50 steps)
   --aspect RATIO          auto (default), 2:3, 3:2, 9:16, 16:9, 1:1
   --seed N                Starting seed (default random)
-  --candidates N          Drafts per round, 1 to 8 (default 3)
+  --candidates N          Drafts per round, 1 to 8 (default 2, deep repair 3)
   --max-rounds N          Maximum rounds this run (default 0, retry until accepted)
   --print-method METHOD   First 4K pass: auto (default), restoration (SeedVR2) or tiled
   --8k                    Also render, inspect and export an 8K PNG
+  --deep-repair           Allow slow full-model Qwen retries after a failed edit
   --native-4k             Draw on a native 4K canvas
   --full-8k-diffusion     Enable 8K and use full-canvas tiled diffusion
   --draft                 Stop after producing and checking drafts
