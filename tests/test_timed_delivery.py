@@ -148,3 +148,15 @@ with model_slot.slot():Path(sys.argv[3]).touch()
             self.assertEqual(produce.call_count,1)
             self.assertEqual(produce.call_args.args[-1],3)
             self.assertEqual(deadlines.read(root/'progress.json')['delivered'],2)
+
+    def test_supervisor_adopts_exact_worker_without_submitting_again(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as tmp:
+            folder=Path(tmp)
+            deadlines.save(folder/'review.json',{'status':'已通过离线终审'})
+            clock={'run':'adopt','started':time.time(),'seconds':2}
+            worker=Mock()
+            worker.is_running.return_value=False
+            with patch.object(deadlines,'previous_worker',return_value=worker),patch('deadlines.subprocess.Popen') as launch:
+                self.assertEqual(deadlines.run_worker(['unused'],folder,folder,8193,clock),(0,None))
+                launch.assert_not_called()

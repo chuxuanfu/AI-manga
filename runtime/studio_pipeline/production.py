@@ -448,6 +448,9 @@ def run(args,job,entry):
         title=state['prompt'].removesuffix(' · '+KEY_VISUAL)
         clock=begin(job,title,aspect,reset=reset_window,submitted=float(os.environ.get('STUDIO_SUBMITTED_AT',time.time())))
         def finish_manual(reason):
+            if state.get('rounds'):
+                from deadlines import stop_previous_worker
+                stop_previous_worker(job/state['rounds'][-1]['directory'],state['port'])
             if state.get('rounds') and state['rounds'][-1].get('status')=='运行中':
                 state['rounds'][-1].update(status='限时结束',原因=reason)
             code=manual_delivery(job,state,reason)

@@ -121,25 +121,55 @@ def stop_group(pid,folder,port):
     stop_graphs(folder,port)
 
 
+def previous_worker(folder):
+    """Find only the isolated round worker for this exact job after supervisor loss."""
+    import psutil
+    entry=str(Path(__file__).with_name('run.py'))
+    for proc in psutil.process_iter(['cmdline'],ad_value=None):
+        args=proc.info.get('cmdline') or []
+        if len(args)<6 or args[1:5]!=[entry,'--round-worker','--job',str(folder)]:continue
+        try:
+            if os.getpgid(proc.pid)==proc.pid and proc.status()!=psutil.STATUS_ZOMBIE:return proc
+        except (ProcessLookupError,psutil.NoSuchProcess):pass
+    return None
+
+
+def stop_previous_worker(folder,port):
+    worker=previous_worker(folder)
+    if worker is not None:stop_group(worker.pid,folder,port)
+
+
 def run_worker(command, job, folder, port, clock):
     """The parent stays responsive during a blocked GPU call, lock wait or slow VLM request."""
     until,reason=boundary(job,clock)
     if time.time()>=until:return None,reason
-    proc=subprocess.Popen(command,start_new_session=True)
+    import psutil
+    adopted=previous_worker(folder)
+    proc=adopted or subprocess.Popen(command,start_new_session=True)
+    def alive():
+        if not adopted:return proc.poll() is None
+        try:return proc.is_running() and proc.status()!=psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:return False
     try:
         while True:
             until,reason=boundary(job,clock)
             left=until-time.time()
             if left<=0:return None,reason
-            try:
-                code=proc.wait(timeout=min(.25,left))
-            except subprocess.TimeoutExpired:continue
+            if adopted:
+                if alive():
+                    time.sleep(min(.25,left))
+                    continue
+                status=read(folder/'review.json').get('status','')
+                code=0 if status=='已通过离线终审' else (2 if status.startswith('未达标') else 1)
+            else:
+                try:code=proc.wait(timeout=min(.25,left))
+                except subprocess.TimeoutExpired:continue
             until,reason=boundary(job,clock)
             return (code,None) if time.time()<=until else (None,reason)
     finally:
-        if proc.poll() is None:
+        if alive():
             stop_group(proc.pid,folder,port)
-            proc.wait()
+            if not adopted:proc.wait()
 
 
 def manual_delivery(job,state,reason):
