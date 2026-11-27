@@ -294,7 +294,7 @@ def count_conflict(wanted,seen,locations,wanted_species=(),visible_species=()):
     return evidence
 
 
-def recount_apparent_absences(url, full, seen, conflicts, locations):
+def recount_apparent_absences(url, full, seen, locations):
     """A text extractor can mistake 'no other people' for an empty scene."""
     from construction_review import LARGE
     resolved=dict(seen)
@@ -303,9 +303,9 @@ def recount_apparent_absences(url, full, seen, conflicts, locations):
             'subjects':{'type':'array','items':{'type':'object','properties':{
                 'appearance':{'type':'string'},'center':{'type':'array','items':{'type':'integer'},'minItems':2,'maxItems':2}},
                 'required':['appearance','center']}}},'required':['certainty','subjects']}
-    for conflict in conflicts:
-        if not (conflict['observed']==0 and 0<conflict['detected']==conflict['requested']):continue
-        name=conflict['object']
+    for name,count in seen.items():
+        boxes=[row['box'] for row in locations if row['name']==name]
+        if count!=0 or not boxes:continue
         prompt=(f"Inspect the entire image independently. List each physically present {name} visible in the depicted scene, "
                 "including background subjects. Exclude portraits, printed decorations, reflections and shadows. "
                 "For each distinct subject describe its visible appearance and give a point near its center in [x,y], "
@@ -317,7 +317,6 @@ def recount_apparent_absences(url, full, seen, conflicts, locations):
             receipts[name]={'reader':LARGE,'confirmed':False,'error':str(exc)[:160],'original_count':0}
             continue
         subjects=reading.get('subjects')
-        boxes=[row['box'] for row in locations if row['name']==name]
         receipts[name]={'reader':LARGE,'reading':reading,'confirmed':False,'original_count':0}
         if reading.get('certainty')!='clear' or not isinstance(subjects,list) or len(subjects)!=len(boxes):continue
         matched=set()
@@ -341,9 +340,8 @@ def review(full,sheet,regions,request_text,native=None):
         inventory=ask(url,[full],INVENTORY)
         wanted,wanted_species=classified_counts(url,request_text,True)
         seen,visible_species=classified_counts(url,inventory,False)
+        seen,recounts=recount_apparent_absences(url,full,seen,locations)
         conflicts=count_conflict(wanted,seen,locations,wanted_species,visible_species)
-        seen,recounts=recount_apparent_absences(url,full,seen,conflicts,locations)
-        if recounts:conflicts=count_conflict(wanted,seen,locations,wanted_species,visible_species)
         if conflicts:
             details='；'.join(f"{c['object']} 要求 {c['requested']}，独立读图得到 {c['observed'] if c['observed'] is not None else '不确定'}，检测框 {c['detected']}" for c in conflicts)
             decisive=any(c['observed'] is not None and c['observed']>c['requested'] and c['detected']>=c['observed'] for c in conflicts)
