@@ -77,14 +77,21 @@ def assessment_result(evaluation,brief):
 def retouch_note(path,brief,report):
     """Keep the accepted composition when the crop is cosmetic or still inconclusive."""
     issue=report.get('issue') or {}
-    box=issue.get('box')
-    if (report.get('status') not in ('local','uncertain') or report.get('overlay_check') or not issue.get('symptom')
-            or issue.get('operation')=='remove_forbidden' or not isinstance(box,(list,tuple))
-            or len(box)!=4 or not all(type(x) in (int,float) for x in box)):
+    if (report.get('status') not in ('local','uncertain') or report.get('overlay_check')
+            or not issue.get('symptom') or issue.get('operation')=='remove_forbidden'):
         return None
-    l,t,r,b=box
-    if not (0<=l<r<=1000 and 0<=t<b<=1000):return None
+    box=issue.get('box')
     with Image.open(path) as im:
+        if box is None and report.get('status')=='uncertain' and list(im.size)==report.get('size'):
+            # The print judge can identify a disputed focus tile without drawing a tighter box.
+            from focal_edit import failed_focus
+            pixels=failed_focus(report)
+            if pixels:
+                box=[round(v*1000/span) for v,span in zip(pixels,im.size*2)]
+        if not isinstance(box,(list,tuple)) or len(box)!=4 or not all(type(x) in (int,float) for x in box):
+            return None
+        l,t,r,b=box
+        if not (0<=l<r<=1000 and 0<=t<b<=1000):return None
         art=im.convert('RGB')
         whole=ImageOps.contain(art,(1200,1200),Image.Resampling.LANCZOS)
         rect=tuple(round(n*s/1000) for n,s in zip(box,art.size*2))

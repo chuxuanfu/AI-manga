@@ -56,6 +56,26 @@ class ArtDirectionTests(unittest.TestCase):
                 reader.side_effect=RuntimeError('reader timed out')
                 self.assertEqual(art.retouch_note(path,'A cafe',report)['impact'],'uncertain')
 
+    def test_uncertain_focus_crop_reaches_reviewer_without_an_issue_box(self):
+        report=dict(status='uncertain',size=[800,400],
+                    issue=dict(category='unresolved_focus',operation='none',symptom='Soft reflection'),
+                    views=[dict(view='comparison',pixels=[320,100,480,200])])
+        with TemporaryDirectory() as root:
+            path=Path(root)/'master.png'
+            image=Image.new('RGB',(800,400))
+            image.paste('red',(320,100,480,200))
+            image.save(path)
+            with patch('art_direction.backend',return_value=nullcontext('local')),patch('art_direction.ask') as reader:
+                reader.return_value='{"impact":"cosmetic","evidence":"Intentional soft reflection."}'
+                note=art.retouch_note(path,'Reflections in rain',report)
+                self.assertEqual(note['box'],[400,250,600,500])
+                self.assertEqual(reader.call_args.args[1][1].getextrema(),((255,255),(0,0),(0,0)))
+                with patch.dict(report,{'size':[400,800]}):
+                    self.assertIsNone(art.retouch_note(path,'Reflections in rain',report))
+                with patch.dict(report,{'status':'global'}):
+                    self.assertIsNone(art.retouch_note(path,'Reflections in rain',report))
+                reader.assert_called_once()
+
     def test_retouch_delivery_preserves_pixels_and_explains_why_in_receipt(self):
         import json
         from PIL import ImageChops
