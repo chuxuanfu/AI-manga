@@ -16,7 +16,7 @@ import uuid
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 import torch
 
-from deadlines import checkpoint, insufficient_repair_time, REPAIR_WINDOW_CLOSED
+from deadlines import checkpoint, insufficient_repair_time, REPAIR_WINDOW_CLOSED, RETOUCH
 from gallery import write_gallery, write_focus_proof
 from graphs import UP, draft, finish
 from illustration import pigment_edit, has_drawing_model, text_composition, DRAW_UNET, installed_editor, instruction_edit, detail_canvas, NATURAL_UP, continuous_tone, continuous_tone_double, KEY_VISUAL, ANIME_PAINT, anime_color_pass, BRUSHWORK, REFERENCE, reference_draft, independent_draft, text_draft, print_graph, paint_key_visual
@@ -684,10 +684,13 @@ def main(resources):
     if rec and rec['prompt']!=prompt: parser.error('请为新的 prompt 开始一个新任务')
     seed = rec.get('seed',args.seed if args.seed is not None else secrets.randbelow(2**45))
     print('任务目录',job,flush=True)
+    from art_direction import POLICY as ART_POLICY, DIRECTION as ART_DIRECTION, anime_finish
     if not rec:
         positive,raw=plan_scene(prompt)
         rec=dict(prompt=prompt,seed=seed,positive=positive,parts=json.loads(raw),reviews=[],status='选片',工作流='reference-illustration-v1',原生4K=(args.native_4k or any(t in prompt.lower().replace(' ','') for t in ('原生4k','native4k'))),画法参考=hashlib.sha256((INPUT/REFERENCE).read_bytes()).hexdigest())
         rec['画法自适应']=True
+        if not (args.reviewed_image or args.review_print or args.repair_box or args.selection_mask):
+            rec['art_policy']=ART_POLICY
         rec['画材']=KEY_VISUAL if KEY_VISUAL in prompt else requested_medium(prompt)
         rec['delivery_edge']=7680 if args.eight_k else 3840
         rec['输出模式']=('全幅双级扩散' if args.full_8k_diffusion else '全幅4K扩散与8K焦点精修') if args.eight_k else '全幅4K精绘'
@@ -698,6 +701,10 @@ def main(resources):
     if args.aspect!='auto':rec['aspect']=args.aspect
     if args.round_worker:rec['执行模式']='离线自动定稿'
     reference_style=rec.get('工作流')=='reference-illustration-v1'
+    art_first=(rec.get('art_policy')==ART_POLICY and not (args.selection_mask or args.repair_box
+               or args.review_print or args.reviewed_image or rec.get('指定修正')))
+    anime_painting=(KEY_VISUAL in prompt or (art_first and anime_finish(rec.get('画材')) and
+                   rec.get('base_model',args.base_model)=='auto'))
     if args.native_4k and not rec.get('原生4K'):
         parser.error('继续原任务时请保持原画幅，新画幅请建立新任务。')
     if reference_style and rec['画法参考']!=hashlib.sha256((INPUT/REFERENCE).read_bytes()).hexdigest():
@@ -772,6 +779,8 @@ def main(resources):
         if not direction and not rec.get('reviews') and args.retry_round:
             earlier=args.retry_round/'review.json'
             if earlier.is_file():direction=last_finish_direction(json.loads(earlier.read_text()))
+        if art_first:
+            caption+=' '+ART_DIRECTION
         if direction:caption+=' '+direction
         from brief_check import drawing_identity_details
         landmarks=drawing_identity_details(prompt)
@@ -804,7 +813,12 @@ def main(resources):
         # denoiser when production actually requests a new composition.
         full=(requested=='qwen-image-2512-full' or (requested=='auto' and automatic_text and args.deep_repair
               and args.retry_round and args.retry_round.name.isdigit() and int(args.retry_round.name)>=2))
-        if requested!='auto' or (automatic_text and has_drawing_model(RUNTIME/'ComfyUI/models',full=bool(full))):
+        preferred_anime=(art_first and anime_painting and index==0 and requested=='auto'
+                         and not borrow and not args.native_only and not rec.get('原生4K')
+                         and (RUNTIME/'models/checkpoints'/ANIME_PAINT).is_file())
+        if preferred_anime:
+            graph=text_draft(caption,draw_seed,*size,name)
+        elif requested!='auto' or (automatic_text and has_drawing_model(RUNTIME/'ComfyUI/models',full=bool(full))):
             # The text generator can reconstruct the relationships directly from the
             # brief, independently of any earlier image or rejected silhouette.
             native={(832,1248):(1088,1632),(1248,832):(1632,1088),(720,1280):(1008,1792),(1280,720):(1792,1008),
@@ -833,7 +847,7 @@ def main(resources):
         save(job/(label+'workflow.json'),graph.ui())
         return graph
     def color_candidate(path,label,draw_seed):
-        if KEY_VISUAL not in prompt or not reference_style or args.repair_box or args.from_image:
+        if not anime_painting or not reference_style or args.repair_box or args.from_image:
             return path
         with Image.open(path) as layout:
             try:
@@ -873,6 +887,27 @@ def main(resources):
         args.proof_only=True
     def check(path,stage,focus=None):
         key = hashlib.sha256(path.read_bytes()).hexdigest()
+        if art_first:
+            from art_direction import assess, assessment_result, REFERENCE as art_reference
+            from evidence import model_identity
+            from print_judge import MODEL as art_reader
+            identity=model_identity(art_reader)
+            reference_id=hashlib.sha256(art_reference.read_bytes()).hexdigest()
+            for row in reversed(rec['reviews']):
+                evidence=row['review'].get('art_direction',{})
+                if (row.get('hash')==key and evidence.get('model_id')==identity and identity
+                        and evidence.get('policy')==ART_POLICY and evidence.get('reference_sha256')==reference_id):
+                    if row['stage']!=stage:
+                        rec['reviews'].append(dict(row,stage=stage,file=os.path.relpath(path,job),elapsed_seconds=0))
+                        save(manifest,rec)
+                    return row['review']
+            started=time.monotonic()
+            result=assessment_result(assess(path,prompt),prompt)
+            rec['reviews'].append(dict(file=os.path.relpath(path,job),hash=key,stage=stage,
+                                       elapsed_seconds=round(time.monotonic()-started,2),review=result))
+            save(manifest,rec)
+            print(stage,result['status'],result['note'],flush=True)
+            return result
         rubric=hashlib.sha256((CHECKS+('-construction-zoom-v17-count-triage' if rec.get('画法自适应') else '')+'-independent-inventory-v6'+('body-support-v5-grounded-figures'+rec['画法参考'] if reference_style else '')).encode()).hexdigest()[:12]
         from page_layout import gutters,unrequested_panels
         with Image.open(path) as probe:overview,gaps=gutters(probe)
@@ -999,9 +1034,18 @@ def main(resources):
         print(stage,result['status'],result['note'],flush=True)
         return result
     def usable(assessment):
-        return assessment['status']=='pass' and assessment['score']>=75
+        return assessment['status']=='pass' and (art_first or assessment['score']>=75)
     approved=None
     focus=args.repair_box
+    def painting_feedback(assessment):
+        from reference_review import final_repaint_direction
+        if art_first:
+            reading=assessment.get('art_direction',{}).get('reading',{})
+            if reading.get('brief_and_structure')=='sound' and reading.get('overall_finish')=='needs_art_direction':
+                return reading.get('direction','')
+            return ''
+        return final_repaint_direction(assessment.get('参考比较') or {})
+
     def check_composition(path,label,prepared_print=None):
         if not args.from_image and not args.repair_box:
             from framing import prepare_full_bleed
@@ -1009,7 +1053,7 @@ def main(resources):
             if prepared_print is None and not rec.get('原生4K') and not args.native_only:
                 path=prepare_full_bleed(path,prompt)
         result=check(prepared_print,'final-art') if prepared_print else check(path,label)
-        if result.get('visual_triage',{}).get('issue'):
+        if art_first or result.get('visual_triage',{}).get('issue'):
             return path,result
         if not args.from_image and not args.repair_box and usable(result):
             cleaned=clean_lettering(path,prompt,job,label,before_edit=reserve_redraw)
@@ -1038,7 +1082,7 @@ def main(resources):
         return path,result
 
     def check_draft_structure(path,result):
-        if not usable(result) or not args.round_worker or args.proof_only:return result
+        if art_first or not usable(result) or not args.round_worker or args.proof_only:return result
         from print_judge import inspect, fingerprint
         if rec.get('待在4K复查的底图')==fingerprint(path):
             # The draft has already passed the composition and structure screen.
@@ -1142,7 +1186,7 @@ def main(resources):
         # A selection belongs to the supplied picture. New unrelated layouts
         # cannot establish whether a patch improves that selected area.
         count=len(paths) if args.repair_box or holder else max(args.candidates,len(paths))
-        streaming=args.round_worker and not args.candidates_explicit and not args.from_image
+        streaming=args.round_worker and not args.candidates_explicit and not args.from_image and not art_first
         for i in range(count):
             label=f'draft-{i+1}'
             if i<len(paths):
@@ -1183,8 +1227,7 @@ def main(resources):
                             save(manifest,rec)
                 path,result=check_composition(path,label,prepared_print)
                 if prepared_print and result.get('status')=='global':
-                    from reference_review import final_repaint_direction
-                    if final_repaint_direction(result.get('参考比较') or {}):
+                    if painting_feedback(result):
                         # Route the recorded rejection into the final repair stage.
                         # The exact print still needs its complete release receipt.
                         approved=path
@@ -1263,8 +1306,7 @@ def main(resources):
                 if prepared:save(manifest,rec)
                 new_path,result=check_composition(new_path,label,prepared)
                 if prepared and result['status']=='global':
-                    from reference_review import final_repaint_direction
-                    if final_repaint_direction(result.get('参考比较') or {}):
+                    if painting_feedback(result):
                         approved=new_path;break
                 if usable(check_draft_structure(new_path,result)):
                     approved=new_path;break
@@ -1463,8 +1505,7 @@ def main(resources):
         return None
 
     def repaint_finish(master,approved,assessment):
-        from reference_review import final_repaint_direction
-        instruction=final_repaint_direction(assessment.get('参考比较') or {})
+        instruction=painting_feedback(assessment)
         if (not instruction or not args.round_worker or rec.get('原生4K') or args.keep_native
                 or args.repair_box or args.selection_mask):
             return None
@@ -1718,12 +1759,21 @@ def main(resources):
                          '4K指纹':judged['sha256'] if four_only else judged['comparison_sha256'],
                          '对照指纹':judged['comparison_sha256'],'终审报告':judged['report'],'审图版本':judged['revision'],
                          '原像素图块':judged['planned_native'],'已看视图':len(judged['views'])}
+            if art_first:rec['自动定稿']['art_direction']=final['art_direction']
             rec.pop('终审退回原因',None)
             rec['status']='已通过离线终审'
             if not args.round_worker:publish(job,job,rec)
             save(manifest,rec);print(rec['status'],flush=True);return 0
         # A localized, actionable suspicion can produce a *candidate*; it still has
         # to beat the source on the native crop and pass the full review to be released.
+        if art_first and usable(final) and judged['status'] in ('local','uncertain'):
+            from art_direction import retouch_note
+            note=retouch_note(master,prompt,judged)
+            if note:
+                rec.update(status=RETOUCH,retouch_note=note,终审退回原因=note['evidence'])
+                save(manifest,rec)
+                print(RETOUCH,note['evidence'],flush=True)
+                return 2
         finding=judged.get('issue',{})
         if judged['status']=='local' or (judged['status']=='uncertain' and finding.get('operation') in ('redraw','remove_forbidden')):
             candidates=[finding]

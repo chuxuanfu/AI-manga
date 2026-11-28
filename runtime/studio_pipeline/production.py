@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 from urllib.parse import quote
-from deadlines import MANUAL, MANUAL_FILE, begin, boundary, manual_delivery, run_worker
+from deadlines import MANUAL, MANUAL_FILE, RETOUCH, begin, boundary, manual_delivery, run_worker
 from print_judge import MODEL, REVISION, fingerprint, model_identity, complete_print_review, store
 
 
@@ -30,6 +30,10 @@ def workmanship_confirmed(record, digest):
     for row in reversed(record.get('reviews',[])):
         if row.get('hash')==digest and row.get('stage','').endswith('final-art'):
             review=row.get('review',{})
+            if 'art_direction' in review:
+                from art_direction import POLICY, ready
+                return (record.get('art_policy')==POLICY and review.get('status')=='pass'
+                        and ready(review['art_direction']))
             from reference_review import confirmed_final_comparison
             return review.get('status')=='pass' and confirmed_final_comparison(review.get('参考比较') or {})
     return False
@@ -141,6 +145,12 @@ def dashboard(job,state):
         edit='<a href="http://127.0.0.1:8195/?image='+quote(str(art.relative_to(IMAGES)),safe='')+'">涂抹微调</a>　'
         parts.append('<p>'+edit+'<a href="4K.png">打开 4K</a>　'+eight+'<a href="final/review-receipt.json">终审凭据</a>　<a href="final/tile-inspection.json">逐块目检记录</a></p>')
     if manual:
+        note=state['manual_delivery'].get('retouch')
+        if note:
+            parts.append('<p>整体审美已通过 · '+html.escape(note['evidence'])+'</p>')
+            if manual.is_relative_to(IMAGES):
+                edit='http://127.0.0.1:8195/?image='+quote(str(manual.relative_to(IMAGES)),safe='')
+                parts.append('<p><a href="'+edit+'">打开局部微调</a></p>')
         parts.append('<p><a href="'+MANUAL_FILE+'">打开 4K · '+MANUAL+'</a>　<a href="manual-review.json">交付记录</a></p>')
     parts.append('<ol>')
     for row in state['rounds']:
@@ -447,13 +457,13 @@ def run(args,job,entry):
         from illustration import KEY_VISUAL
         title=state['prompt'].removesuffix(' · '+KEY_VISUAL)
         clock=begin(job,title,aspect,reset=reset_window,submitted=float(os.environ.get('STUDIO_SUBMITTED_AT',time.time())))
-        def finish_manual(reason):
+        def finish_manual(reason,retouch=None):
             if state.get('rounds'):
                 from deadlines import stop_previous_worker
                 stop_previous_worker(job/state['rounds'][-1]['directory'],state['port'])
             if state.get('rounds') and state['rounds'][-1].get('status')=='运行中':
                 state['rounds'][-1].update(status='限时结束',原因=reason)
-            code=manual_delivery(job,state,reason)
+            code=manual_delivery(job,state,reason,retouch=retouch)
             save(job,state)
             print(state['status'],job,reason,flush=True)
             return code
@@ -523,12 +533,15 @@ def run(args,job,entry):
                 outcome=folder/'review.json'
                 record=json.loads(outcome.read_text()) if outcome.is_file() else {}
                 if code==0 and record.get('status')=='已通过离线终审':break
-                if code==2 and record.get('status','').startswith('未达标'):break
+                if code==2 and (record.get('status')==RETOUCH or record.get('status','').startswith('未达标')):break
                 row['status']='运行中断';state['status']='本地运行中断，正在恢复' if retry<2 else '本地运行故障，已保存进度'
                 save(job,state)
                 if retry==2:return finish_manual('本地运行故障，已用完恢复次数')
                 time.sleep(3*(retry+1))
             from deadlines import REPAIR_WINDOW_CLOSED
+            if code==2 and record['status']==RETOUCH:
+                row.update(status=RETOUCH,原因=record['retouch_note']['evidence'])
+                return finish_manual(RETOUCH+' · '+record['retouch_note']['evidence'],record['retouch_note'])
             if code==2 and record['status']==REPAIR_WINDOW_CLOSED:
                 return finish_manual(REPAIR_WINDOW_CLOSED)
             row['status']=record['status']

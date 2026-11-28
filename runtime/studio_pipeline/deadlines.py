@@ -13,6 +13,7 @@ from PIL import Image, ImageOps, PngImagePlugin
 
 SECONDS=15*60
 MANUAL='需要人工 review'
+RETOUCH='整体审美通过 · 局部待人工复核'
 MANUAL_FILE='4K-needs-human-review.png'
 CLOCK='delivery-window.json'
 LATEST='delivery-candidate.json'
@@ -181,7 +182,7 @@ def run_worker(command, job, folder, port, clock):
                     time.sleep(min(.25,left))
                     continue
                 status=read(folder/'review.json').get('status','')
-                code=0 if status=='已通过离线终审' else (2 if status.startswith('未达标') else 1)
+                code=0 if status=='已通过离线终审' else (2 if status==RETOUCH or status.startswith('未达标') else 1)
             else:
                 try:code=proc.wait(timeout=min(.25,left))
                 except subprocess.TimeoutExpired:continue
@@ -193,7 +194,7 @@ def run_worker(command, job, folder, port, clock):
             if not adopted:proc.wait()
 
 
-def manual_delivery(job,state,reason):
+def manual_delivery(job,state,reason,*,retouch=None):
     from delivery import export_files
     clock=read(job/CLOCK)
     last=read(job/LATEST)
@@ -212,6 +213,7 @@ def manual_delivery(job,state,reason):
     receipt=dict(status=MANUAL,title=last['title'],file=MANUAL_FILE,source=last['identity'][0],source_size=last['source_size'],
                  size=last['size'],sha256=digest,reason=reason,stage=last['stage'],started=clock['started'],
                  first_4k_at=last['first_4k_at'],delivered_at=time.time(),approved=False)
+    if retouch:receipt['retouch']=retouch
     save(job/'manual-review.json',receipt)
     state.update(status=MANUAL,manual_delivery=receipt)
     if state.get('output_dir'):

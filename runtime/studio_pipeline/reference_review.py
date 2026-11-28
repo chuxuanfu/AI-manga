@@ -266,7 +266,10 @@ def review_finish_changes(original,candidate,brief):
 
 def last_finish_direction(record):
     for row in reversed(record.get('reviews',[])):
-        assessment=row.get('review',{}).get('参考比较') or {}
+        review=row.get('review',{})
+        if 'art_direction' in review:
+            return review['art_direction'].get('reading',{}).get('direction','') if review.get('status')=='global' else ''
+        assessment=review.get('参考比较') or {}
         if assessment:
             return (assessment.get('redraw_direction') or redraw_direction(assessment,'')) if assessment.get('decision')=='below' else ''
     return ''
